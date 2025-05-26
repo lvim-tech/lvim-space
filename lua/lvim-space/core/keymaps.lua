@@ -1,17 +1,8 @@
--- Configuration module
 local config = require("lvim-space.config")
-
--- State management
 local state = require("lvim-space.api.state")
-
--- UI modules
 local projects = require("lvim-space.ui.projects")
 local workspaces = require("lvim-space.ui.workspaces")
-
--- Data module
 local data = require("lvim-space.api.data")
-
-local ui = require("lvim-space.ui")
 
 local M = {}
 
@@ -21,15 +12,12 @@ function M.init()
 		if pr == false then
 			return false
 		elseif pr == nil then
-			vim.notify("aaa")
 			state.project = nil
 			projects.init()
 			-- всички проекти - няма активен
 		else
-			vim.notify("bbb")
-			vim.notify(vim.inspect(pr[1].id))
 			state.project_id = pr[1].id
-			local ws = data.find_current_workspace()
+			local ws = data.find_project_workspaces()
 			if ws == false then
 				projects.init()
 			else
@@ -43,8 +31,6 @@ function M.init()
 	})
 end
 
--- Добавете тази функция в съществуващия core/keymaps.lua файл
-
 function M.enable_base_maps(buf)
 	vim.api.nvim_buf_set_keymap(buf, "n", "<Esc>", "", {
 		nowait = true,
@@ -57,22 +43,6 @@ function M.enable_base_maps(buf)
 end
 
 M.disable_all_maps = function(buf)
-	-- local modes = { "n", "i", "v", "x", "s", "o", "c", "t" }
-	--
-	-- for _, mode in ipairs(modes) do
-	-- 	for _, map in ipairs(vim.api.nvim_get_keymap(mode)) do
-	-- 		pcall(function()
-	-- 			vim.keymap.del(mode, map.lhs, { buffer = buf })
-	-- 		end)
-	-- 	end
-	--
-	-- 	for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
-	-- 		pcall(function()
-	-- 			vim.keymap.del(mode, map.lhs, { buffer = buf })
-	-- 		end)
-	-- 	end
-	-- end
-	--
 	local letters = {}
 	for c = string.byte("a"), string.byte("z") do
 		local ch = string.char(c)

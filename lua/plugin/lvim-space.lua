@@ -1,4 +1,3 @@
--- Load and initialize the plugin
 if vim.fn.has("nvim-0.11.0") == 0 then
     print("Lvim space required Neovim >= 0.11.0")
 	return

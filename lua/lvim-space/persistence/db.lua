@@ -1,16 +1,11 @@
--- Configuration module
 local config = require("lvim-space.config")
-
--- Notification, logging and state modules
 local notify = require("lvim-space.api.notify")
 local log = require("lvim-space.api.log")
 local state = require("lvim-space.api.state")
 
--- SQLite modules
 local sqlite = require("sqlite.db")
 local tbl = require("sqlite.tbl")
 
--- Database URI
 local uri = config.save .. "/lvimspace.db"
 
 local M = {}

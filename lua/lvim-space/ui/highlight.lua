@@ -1,4 +1,3 @@
--- Configuration module
 local config = require("lvim-space.config")
 
 local M = {}

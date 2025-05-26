@@ -1,16 +1,9 @@
--- Configuration
 local config = require("lvim-space.config")
-
--- Core modules
-local utils = require("lvim-space.utils")
 local autocommands = require("lvim-space.core.autocommands")
 local keymaps = require("lvim-space.core.keymaps")
-
--- State module
 local state = require("lvim-space.api.state")
-
--- UI modules
 local highlight = require("lvim-space.ui.highlight")
+local utils = require("lvim-space.utils")
 
 local M = {}
 

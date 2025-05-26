@@ -409,7 +409,7 @@ function M.create_input_field(prompt, default_value, callback)
 			vim.api.nvim_buf_set_var(buf, "prompt_win", prompt_win)
 			vim.api.nvim_buf_set_var(buf, "prompt_buf", prompt_buf)
 			vim.keymap.set("i", "<Esc>", function()
-				require("lvim-space.ui").cancel_input()
+				M.cancel_input()
 			end, {
 				buffer = buf,
 				noremap = true,
@@ -417,7 +417,7 @@ function M.create_input_field(prompt, default_value, callback)
 				nowait = true,
 			})
 			vim.keymap.set("i", "<CR>", function()
-				require("lvim-space.ui").submit_input()
+				M.submit_input()
 			end, {
 				buffer = buf,
 				noremap = true,
@@ -438,7 +438,7 @@ function M.create_input_field(prompt, default_value, callback)
 							vim.api.nvim_set_current_win(win)
 							vim.cmd("startinsert!")
 						elseif current_win ~= win then
-							require("lvim-space.ui").cancel_input()
+							M.cancel_input()
 						end
 					end)
 				end,

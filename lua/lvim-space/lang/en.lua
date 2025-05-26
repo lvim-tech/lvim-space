@@ -4,11 +4,17 @@ return {
 	INFO_LINE_PROJECTS = "➤ Press: [j] [k] | [a]dd [r]ename [p]ath [d]elete | [w]orkspaces [t]abs | 󱁐 cwd 󰌑 enter project",
 	INFO_LINE_PROJECTS_EMPTY = "➤ Press: [a]dd",
 	INFO_LINE_WORKSPACES = "➤ Press: [a]dd, [r]ename, [d]elete",
+	INFO_LINE_WORKSPACES_EMPTY = "➤ Press: [a]dd",
 	PROJECT_PATH = "➤ Project path",
 	PROJECT_NAME = "➤ Project name",
 	PROJECT_NEW_NAME = "➤ Project new name",
 	PROJECT_DELETE = "➤ Delete project '%s'? (y/n)",
-    PROJECTS_EMPTY = "No projects added",
+	PROJECTS_EMPTY = "No projects added",
+	WORKSPACES = "Workspaces",
+	WORKSPACES_EMPTY = "No workspaces added",
+	WORKSPACE_NAME = "➤ Workspace name",
+	WORKSPACE_NEW_NAME = "➤ Workspace new name",
+	WORKSPACE_DELETE = "➤ Delete workspace '%s'? (y/n)",
 
 	-- BASE
 	FAILED_TO_CREATE_SAVE_DIRECTORY = "Failed to create the database file",
@@ -24,16 +30,19 @@ return {
 	DIRECTORY_NOT_ACCESS = "Directory exists, but you do not have permission to access it",
 	NAME_NOT_CHANGED = "Name not changed",
 	PATH_NOT_CHANGED = "Path not changed",
-	PROJECT_DELETE_FAILED = "Failed to delete project",
+    PROJECT_ADD_FAILED = "Failed to add project",
 	PROJECT_RENAME_FAILED = "Failed to rename project",
-	PROJECT_ADD_FAILED = "Failed to add project",
+    PROJECT_DELETE_FAILED = "Failed to delete project",
 	PROJECT_NAME_LEN = "The project name cannot be shorter than 3 characters",
 	PROJECT_NAME_EXIST = "The project name cannot match the name of another project",
 	PROJECT_PATH_EXIST = "The project path cannot match the name of another project",
 	PROJECT_PATH_EMPTY = "The project path cannot be empty",
-	-- PROJECT_NAME_EMPTY = "The project name cannot be empty",
-	-- PROJECT_PATH_INVALID = "Invalid path: '%s'",
-
+    -- WORKSPACES
+	WORKSPACE_NAME_LEN = "The workspace name cannot be shorter than 3 characters",
+	WORKSPACE_NAME_EXIST = "The workspace name cannot match the name of another project",
+	WORKSPACE_ADD_FAILED = "Failed to add workspace",
+	WORKSPACE_RENAME_FAILED = "Failed to rename workspace",
+    WORKSPACE_DELETE_FAILED = "Failed to delete workspace",
 
 	--
 

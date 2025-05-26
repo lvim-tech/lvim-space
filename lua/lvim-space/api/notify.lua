@@ -1,9 +1,7 @@
--- Configuration module
 local config = require("lvim-space.config")
 
 local M = {}
 
----@private
 local function notify(msg, level)
 	if not config.notify then
 		return
@@ -18,19 +16,14 @@ local function notify(msg, level)
 	end)
 end
 
--- Public helpers -------------------------------------------------------------
-
----@param msg string
 function M.info(msg)
 	notify(msg, vim.log.levels.INFO)
 end
 
----@param msg string
 function M.warn(msg)
 	notify(msg, vim.log.levels.WARN)
 end
 
----@param msg string
 function M.error(msg)
 	notify(msg, vim.log.levels.ERROR)
 end

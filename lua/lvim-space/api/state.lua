@@ -1,5 +1,3 @@
--- local M = {}
-
 return {
 	project_id = nil,
 	ui = {
@@ -7,5 +5,3 @@ return {
 		status_line = {},
 	},
 }
-
--- return M

@@ -123,8 +123,8 @@ add_project = function()
 	ui.create_input_field(state.lang.PROJECT_PATH, "", handle_project_path)
 end
 
-local rename_project_db = function(project_name, new_name)
-	local status = data.update_project_name(project_name, new_name)
+local rename_project_db = function(project_id, project_new_name)
+	local status = data.update_project_name(project_id, project_new_name)
 	if status then
 		vim.schedule(function()
 			M.init()
@@ -135,11 +135,11 @@ local rename_project_db = function(project_name, new_name)
 end
 
 local rename_project = function()
-	local id = get_project_id_at_cursor()
-	local project = data.find_project_by_id(id)
-	local name = project[1].name
-	ui.create_input_field(state.lang.PROJECT_NEW_NAME, name, function(new_name)
-		local result = rename_project_db(name, new_name)
+	local project_id = get_project_id_at_cursor()
+	local project = data.find_project_by_id(project_id)
+	local project_name = project[1].name
+	ui.create_input_field(state.lang.PROJECT_NEW_NAME, project_name, function(project_new_name)
+		local result = rename_project_db(project_id, project_new_name)
 		if result == "LEN_NAME" then
 			notify.error(state.lang.PROJECT_NAME_LEN)
 		elseif result == "EXIST_NAME" then
@@ -150,8 +150,8 @@ local rename_project = function()
 	end)
 end
 
-local remove_project_db = function(project_name)
-	local status = data.remove_project(project_name)
+local delete_project_db = function(project_id)
+	local status = data.delete_project(project_id)
 	if status then
 		vim.schedule(function()
 			M.init()
@@ -160,13 +160,13 @@ local remove_project_db = function(project_name)
 	return status
 end
 
-local remove_project = function()
-	local id = get_project_id_at_cursor()
-	local project = data.find_project_by_id(id)
+local delete_project = function()
+	local project_id = get_project_id_at_cursor()
+	local project = data.find_project_by_id(project_id)
 	local name = project[1].name
 	ui.create_input_field(string.format(state.lang.PROJECT_DELETE, name), "", function(answer)
 		if answer:lower() == "y" or answer:lower() == "yes" then
-			local result = remove_project_db(name)
+			local result = delete_project_db(project_id)
 			if not result then
 				notify.error(state.lang.PROJECT_DELETE_FAILED)
 			end
@@ -272,7 +272,7 @@ M.init = function()
 		if is_empty then
 			return
 		end
-		remove_project()
+		delete_project()
 		if is_empty then
 			return
 		end

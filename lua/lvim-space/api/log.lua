@@ -1,7 +1,4 @@
--- Configuration module
 local config = require("lvim-space.config")
-
--- State module
 local state = require("lvim-space.api.state")
 
 local M = {}

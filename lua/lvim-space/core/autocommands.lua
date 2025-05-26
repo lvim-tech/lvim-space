@@ -1,10 +1,6 @@
--- Neovim API
 local api = vim.api
-
--- Database module
 local db = require("lvim-space.persistence.db")
 
--- Autocommand group
 local group = api.nvim_create_augroup("NvimCtrlSpaceAutocommands", { clear = true })
 
 local M = {}
@@ -17,15 +13,6 @@ function M.init()
 			if db_success == false then
 				return
 			end
-			--
-			-- local projects = db.find("projects")
-			-- if projects == false then
-			-- 	return
-			-- elseif projects == nil then
-			-- 	state.projects = {}
-			-- else
-			-- 	state.projects = projects
-			-- end
 		end,
 	})
 
