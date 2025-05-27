@@ -37,7 +37,6 @@ local add_project_db = function(project_path, project_name)
 			M.init()
 		end)
 	end
-
 	return status
 end
 
@@ -53,7 +52,6 @@ local function handle_project_name(project_path, default_name, project_name)
 		end)
 		return
 	end
-
 	local existing = data.is_project_name_exist(project_name)
 	if existing and #existing > 0 then
 		notify.error(state.lang.PROJECT_NAME_EXIST)
@@ -64,7 +62,6 @@ local function handle_project_name(project_path, default_name, project_name)
 		end)
 		return
 	end
-
 	if not utils.has_permission(project_path) then
 		notify.error(state.lang.DIRECTORY_NOT_ACCESS)
 		vim.schedule(function()
@@ -72,9 +69,8 @@ local function handle_project_name(project_path, default_name, project_name)
 				handle_project_name(project_path, default_name, new_name)
 			end)
 		end)
-        return
+		return
 	end
-
 	local result = add_project_db(project_path, project_name)
 	if not result then
 		notify.error(state.lang.PROJECT_ADD_FAILED)
@@ -123,14 +119,13 @@ add_project = function()
 	ui.create_input_field(state.lang.PROJECT_PATH, "", handle_project_path)
 end
 
-local rename_project_db = function(project_id, project_new_name)
+local rename_project_db = function(project_id, project_new_name, selected_line)
 	local status = data.update_project_name(project_id, project_new_name)
 	if status then
 		vim.schedule(function()
-			M.init()
+			M.init(selected_line)
 		end)
 	end
-
 	return status
 end
 
@@ -138,8 +133,11 @@ local rename_project = function()
 	local project_id = get_project_id_at_cursor()
 	local project = data.find_project_by_id(project_id)
 	local project_name = project[1].name
-	ui.create_input_field(state.lang.PROJECT_NEW_NAME, project_name, function(project_new_name)
-		local result = rename_project_db(project_id, project_new_name)
+	ui.create_input_field(state.lang.PROJECT_NEW_NAME, project_name, function(project_new_name, selected_line)
+		if project_new_name == project_name then
+			return
+		end
+		local result = rename_project_db(project_id, project_new_name, selected_line)
 		if result == "LEN_NAME" then
 			notify.error(state.lang.PROJECT_NAME_LEN)
 		elseif result == "EXIST_NAME" then
@@ -183,12 +181,10 @@ local switch_cwd = function()
 		notify.error(state.lang.DIRECTORY_NOT_FOUND)
 		return
 	end
-
 	if not utils.has_permission(project_path) then
 		notify.error(state.lang.DIRECTORY_NOT_ACCESS)
 		return
 	end
-
 	if project and project[1] then
 		local ok = pcall(function()
 			vim.api.nvim_set_current_dir(project_path)
@@ -202,7 +198,7 @@ local switch_cwd = function()
 	end
 end
 
-M.init = function()
+M.init = function(selected_line)
 	is_empty = false
 	local projects = data.find_projects() or {}
 	local lines = {}
@@ -224,7 +220,10 @@ M.init = function()
 		active_idx = 1
 	end
 
-	local buf, win = ui.open_main(lines, state.lang.PROJECTS, active_idx)
+	local cursor_line = selected_line or active_idx
+	cursor_line = math.max(1, math.min(cursor_line, #lines))
+
+	local buf, win = ui.open_main(lines, state.lang.PROJECTS, cursor_line)
 	if not buf or not win then
 		return
 	end
@@ -283,7 +282,7 @@ M.init = function()
 		nowait = true,
 	})
 
-	vim.keymap.set("n", "<Space>", function()
+	vim.keymap.set("n", config.keymappings.action.switch, function()
 		if is_empty then
 			return
 		end
@@ -295,11 +294,10 @@ M.init = function()
 		nowait = true,
 	})
 
-	vim.keymap.set("n", "<CR>", function()
+	vim.keymap.set("n", config.keymappings.action.enter, function()
 		if is_empty then
 			return
 		end
-		-- local id = get_project_id_at_cursor()
 	end, {
 		buffer = buf,
 		noremap = true,
@@ -323,4 +321,4 @@ end
 
 return M
 
--- vim: foldmethod=indent foldlevel=0
+-- vim: foldmethod=indent foldlevel=1

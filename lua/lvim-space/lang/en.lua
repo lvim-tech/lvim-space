@@ -1,9 +1,9 @@
 return {
 	-- UI
 	PROJECTS = "Projects",
-	INFO_LINE_PROJECTS = "➤ Press: [j] [k] | [a]dd [r]ename [p]ath [d]elete | [w]orkspaces [t]abs | 󱁐 cwd 󰌑 enter project",
+	INFO_LINE_PROJECTS = "➤ Press: [j] [k] | 󱁐 cwd 󰌑 project | [a]dd [r]ename [d]elete | [w]orkspaces [t]abs",
 	INFO_LINE_PROJECTS_EMPTY = "➤ Press: [a]dd",
-	INFO_LINE_WORKSPACES = "➤ Press: [a]dd, [r]ename, [d]elete",
+	INFO_LINE_WORKSPACES = "➤ Press: [j] [k] | 󰌑 workspace | [a]dd, [r]ename, [d]elete | [p]projects [t]abs",
 	INFO_LINE_WORKSPACES_EMPTY = "➤ Press: [a]dd",
 	PROJECT_PATH = "➤ Project path",
 	PROJECT_NAME = "➤ Project name",

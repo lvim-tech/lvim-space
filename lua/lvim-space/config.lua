@@ -56,6 +56,8 @@ M = {
 			delete = "d",
 			rename = "r",
 			path = "p",
+            switch = "<Space>",
+            enter = "<CR>",
 		},
 	},
 }

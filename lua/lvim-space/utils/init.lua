@@ -34,9 +34,33 @@ M.is_array = function(t)
 end
 
 M.has_permission = function(path)
-  local cmd = string.format('[ -d "%s" ] && [ -r "%s" ] && [ -x "%s" ]', path, path, path)
-  local ok = os.execute(cmd)
-  return ok == 0
+	local cmd = string.format('[ -d "%s" ] && [ -r "%s" ] && [ -x "%s" ]', path, path, path)
+	local ok = os.execute(cmd)
+	return ok == 0
+end
+
+M.to_superscript = function(num)
+	local smallNumbers = {
+		"\u{2070}",
+		"\u{00b9}",
+		"\u{00b2}",
+		"\u{00b3}",
+		"\u{2074}",
+		"\u{2075}",
+		"\u{2076}",
+		"\u{2077}",
+		"\u{2078}",
+		"\u{2079}",
+	}
+	local numberStr = tostring(num)
+	local numberToShow = ""
+	for i = 1, #numberStr do
+		local digit = tonumber(numberStr:sub(i, i))
+		if digit then
+			numberToShow = numberToShow .. smallNumbers[digit + 1]
+		end
+	end
+	return numberToShow
 end
 
 return M

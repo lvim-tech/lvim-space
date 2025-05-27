@@ -100,12 +100,15 @@ M.add_workspace = function(workspace_name, workspace_tabs, project_id)
 	if exist_name then
 		return "EXIST_NAME"
 	end
-	vim.notify(vim.inspect(project_id))
-	return db.insert("workspaces", {
-		project_id = project_id,
-		name = workspace_name,
-		tabs = workspace_tabs,
-	})
+	if M.set_workspaces_inactive(project_id) then
+		return db.insert("workspaces", {
+			project_id = project_id,
+			name = workspace_name,
+			tabs = workspace_tabs,
+			active = true,
+		})
+	end
+	return false
 end
 
 M.update_workspace_name = function(workspace_id, workspace_new_name, project_id)
@@ -121,6 +124,33 @@ M.update_workspace_name = function(workspace_id, workspace_new_name, project_id)
 		project_id = project_id,
 	}, {
 		name = workspace_new_name,
+	})
+end
+
+M.set_workspaces_inactive = function(project_id)
+	return db.update("workspaces", {
+		project_id = project_id,
+	}, {
+		active = false,
+	})
+end
+
+M.set_workspace_active = function(workspace_id, project_id)
+	if M.set_workspaces_inactive(project_id) then
+		return db.update("workspaces", {
+            id = workspace_id,
+            project_id = project_id,
+		}, {
+			active = true,
+		})
+	end
+    return false
+end
+
+M.get_workspace_active_id = function (project_id)
+	return db.find("workspaces", {
+		project_id = project_id,
+		active = true,
 	})
 end
 

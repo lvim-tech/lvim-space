@@ -1,8 +1,9 @@
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
-local ui = require("lvim-space.ui")
 local state = require("lvim-space.api.state")
 local data = require("lvim-space.api.data")
+local ui = require("lvim-space.ui")
+local utils = require("lvim-space.utils")
 
 local M = {}
 
@@ -21,12 +22,16 @@ end
 
 local add_workspace_db = function(workspace_name, workspace_tabs, project_id)
 	local status = data.add_workspace(workspace_name, workspace_tabs, project_id)
+	local idx = 1
 	if status then
 		vim.schedule(function()
-			M.init()
+			local workspace_active = data.get_workspace_active_id(project_id)
+			if workspace_active then
+				idx = workspace_active.id
+			end
+			M.init(idx)
 		end)
 	end
-
 	return status
 end
 
@@ -46,11 +51,11 @@ local function add_workspace()
 	end)
 end
 
-local rename_workspace_db = function(workspace_id, workspace_new_name, project_id)
+local rename_workspace_db = function(workspace_id, workspace_new_name, project_id, selected_line)
 	local status = data.update_workspace_name(workspace_id, workspace_new_name, project_id)
 	if status then
 		vim.schedule(function()
-			M.init()
+			M.init(selected_line)
 		end)
 	end
 
@@ -62,8 +67,9 @@ local rename_workspace = function()
 	local workspace_id = get_workspace_id_at_cursor()
 	local workspace = data.find_workspace_by_id(workspace_id, project_id)
 	local workspace_name = workspace[1].name
-	ui.create_input_field(state.lang.WORKSPACE_NEW_NAME, workspace_name, function(workspace_new_name)
-		local result = rename_workspace_db(workspace_id, workspace_new_name, project_id)
+
+	ui.create_input_field(state.lang.WORKSPACE_NEW_NAME, workspace_name, function(workspace_new_name, selected_line)
+		local result = rename_workspace_db(workspace_id, workspace_new_name, project_id, selected_line)
 		if result == "LEN_NAME" then
 			notify.error(state.lang.WORKSPACE_NAME_LEN)
 		elseif result == "EXIST_NAME" then
@@ -74,11 +80,11 @@ local rename_workspace = function()
 	end)
 end
 
-local delete_workspace_db = function(workspace_id, project_id)
+local delete_workspace_db = function(workspace_id, project_id, selected_line)
 	local status = data.delete_workspace(workspace_id, project_id)
 	if status then
 		vim.schedule(function()
-			M.init()
+			M.init(selected_line)
 		end)
 	end
 	return status
@@ -89,9 +95,10 @@ local delete_workspace = function()
 	local workspace_id = get_workspace_id_at_cursor()
 	local workspace = data.find_workspace_by_id(workspace_id)
 	local name = workspace[1].name
-	ui.create_input_field(string.format(state.lang.WORKSPACE_DELETE, name), "", function(answer)
+
+	ui.create_input_field(string.format(state.lang.WORKSPACE_DELETE, name), "", function(answer, selected_line)
 		if answer:lower() == "y" or answer:lower() == "yes" then
-			local result = delete_workspace_db(workspace_id, project_id)
+			local result = delete_workspace_db(workspace_id, project_id, selected_line)
 			if not result then
 				notify.error(state.lang.WORKSPACE_DELETE_FAILED)
 			end
@@ -99,7 +106,24 @@ local delete_workspace = function()
 	end)
 end
 
-M.init = function()
+local switch_workspace = function()
+	local workspace_id = get_workspace_id_at_cursor()
+	local project_id = state.project_id
+	local status = data.set_workspace_active(workspace_id, project_id)
+	local idx = 1
+	if status then
+		vim.schedule(function()
+			local workspace_active = data.get_workspace_active_id(project_id)
+			if workspace_active then
+				idx = workspace_active.id
+			end
+			M.init(idx)
+		end)
+	end
+	return status
+end
+
+M.init = function(selected_line)
 	is_empty = false
 	local workspaces = data.find_project_workspaces() or {}
 	local lines = {}
@@ -108,7 +132,11 @@ M.init = function()
 
 	local active_idx = 1
 	for i, workspace in ipairs(workspaces) do
-		local line = string.format(" %s ", workspace.name)
+		local tabs_raw = workspace.tabs
+		local tabs = vim.fn.json_decode(tabs_raw)
+		local num_tabs = tabs and #tabs or 0
+		local num_tabs_script = utils.to_superscript(num_tabs)
+		local line = string.format(" %s%s ", workspace.name, num_tabs_script)
 		table.insert(lines, line)
 		M.workspace_ids[i] = workspace.id
 		if workspace.active then
@@ -121,7 +149,10 @@ M.init = function()
 		active_idx = 1
 	end
 
-	local buf, win = ui.open_main(lines, state.lang.WORKSPACES, active_idx)
+	local cursor_line = selected_line or active_idx
+	cursor_line = math.max(1, math.min(cursor_line, #lines))
+
+	local buf, win = ui.open_main(lines, state.lang.WORKSPACES, cursor_line)
 	if not buf or not win then
 		return
 	end
@@ -180,6 +211,18 @@ M.init = function()
 		nowait = true,
 	})
 
+	vim.keymap.set("n", config.keymappings.action.switch, function()
+		if is_empty then
+			return
+		end
+		switch_workspace()
+	end, {
+		buffer = buf,
+		noremap = true,
+		silent = true,
+		nowait = true,
+	})
+
 	vim.keymap.set("n", config.keymappings.global.projects, function()
 		ui.close_all()
 		require("lvim-space.ui.projects").init()
@@ -192,3 +235,5 @@ M.init = function()
 end
 
 return M
+
+-- vim: foldmethod=indent foldlevel=0
