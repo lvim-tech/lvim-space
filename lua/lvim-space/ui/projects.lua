@@ -7,42 +7,41 @@ local utils = require("lvim-space.utils")
 
 local M = {}
 
-local is_empty
+local is_empty = true
+local project_id_line = 1
+local project_ids = {}
 
-local function get_project_id_at_cursor()
+local get_project_id_at_cursor = function()
 	if state.ui and state.ui.content and state.ui.content.win and vim.api.nvim_win_is_valid(state.ui.content.win) then
 		local cursor_pos = vim.api.nvim_win_get_cursor(state.ui.content.win)
 		local cursor_line = cursor_pos[1]
-		return M.project_ids[cursor_line]
+		return project_ids[cursor_line]
 	end
 	local cursor_pos = vim.api.nvim_win_get_cursor(0)
 	local cursor_line = cursor_pos[1]
-	return M.project_ids[cursor_line]
+	return project_ids[cursor_line]
 end
 
 local add_project_db = function(project_path, project_name)
-	local status = data.add_project(project_path, project_name)
-	if status then
+	local row_id = data.add_project(project_path, project_name)
+	if row_id then
 		vim.schedule(function()
 			local cwd = vim.loop.cwd()
 			if cwd ~= nil and not cwd:match("/$") then
 				cwd = cwd .. "/"
 			end
 			if cwd == project_path then
-				local project = data.find_project_by_path(project_path)
-				if project and project[1] then
-					state.project_id = project[1].id
-				end
+                state.project_id = row_id
 			end
 			M.init()
 		end)
 	end
-	return status
+	return row_id
 end
 
-local add_project
+local add_project, handle_project_name
 
-local function handle_project_name(project_path, default_name, project_name)
+handle_project_name = function(project_path, default_name, project_name)
 	if not project_name or vim.fn.strchars(project_name) < 3 then
 		notify.error(state.lang.PROJECT_NAME_LEN)
 		vim.schedule(function()
@@ -81,7 +80,7 @@ local function handle_project_name(project_path, default_name, project_name)
 	end
 end
 
-local function handle_project_path(project_path)
+local handle_project_path = function(project_path)
 	if not project_path or project_path == "" then
 		notify.error(state.lang.PROJECT_PATH_EMPTY)
 		add_project()
@@ -132,7 +131,7 @@ end
 local rename_project = function()
 	local project_id = get_project_id_at_cursor()
 	local project = data.find_project_by_id(project_id)
-	local project_name = project[1].name
+	local project_name = project.name
 	ui.create_input_field(state.lang.PROJECT_NEW_NAME, project_name, function(project_new_name, selected_line)
 		if project_new_name == project_name then
 			return
@@ -161,7 +160,7 @@ end
 local delete_project = function()
 	local project_id = get_project_id_at_cursor()
 	local project = data.find_project_by_id(project_id)
-	local name = project[1].name
+	local name = project.name
 	ui.create_input_field(string.format(state.lang.PROJECT_DELETE, name), "", function(answer)
 		if answer:lower() == "y" or answer:lower() == "yes" then
 			local result = delete_project_db(project_id)
@@ -174,8 +173,12 @@ end
 
 local switch_cwd = function()
 	local id = get_project_id_at_cursor()
-	local project = data.find_project_by_id(id)
-	local project_path = project[1].path
+	local current_project = data.find_project_by_id(id)
+	if not current_project then
+		notify.error(state.lang.DIRECTORY_NOT_FOUND)
+		return
+	end
+	local project_path = current_project.path
 	local path_exists = vim.fn.isdirectory(vim.fn.expand(project_path)) == 1
 	if not path_exists then
 		notify.error(state.lang.DIRECTORY_NOT_FOUND)
@@ -185,42 +188,44 @@ local switch_cwd = function()
 		notify.error(state.lang.DIRECTORY_NOT_ACCESS)
 		return
 	end
-	if project and project[1] then
-		local ok = pcall(function()
-			vim.api.nvim_set_current_dir(project_path)
-		end)
-		if not ok then
-			notify.error(state.lang.DIRECTORY_NOT_FOUND)
-			return
-		end
-		state.project_id = project[1].id
-		M.init()
+	local ok = pcall(function()
+		vim.api.nvim_set_current_dir(project_path)
+	end)
+	if not ok then
+		notify.error(state.lang.DIRECTORY_NOT_FOUND)
+		return
 	end
+	state.project_id = current_project.id
+	M.init()
 end
 
 M.init = function(selected_line)
 	is_empty = false
 	local projects = data.find_projects() or {}
 	local lines = {}
-	M.project_ids = {}
+	project_ids = {}
 	local icons = config.ui.icons
 
-	local active_idx = 1
+	local found = false
 	for i, project in ipairs(projects) do
 		local line = string.format(" %s [%s] ", project.name, project.path)
 		table.insert(lines, line)
-		M.project_ids[i] = project.id
+		project_ids[i] = project.id
 		if tostring(project.id) == tostring(state.project_id) then
-			active_idx = i
+			project_id_line = i
+			found = true
 		end
 	end
 	if #lines == 0 then
 		table.insert(lines, " " .. state.lang.PROJECTS_EMPTY)
 		is_empty = true
-		active_idx = 1
+	end
+	if not found then
+		project_id_line = 1
+		state.project_id = nil
 	end
 
-	local cursor_line = selected_line or active_idx
+	local cursor_line = selected_line or project_id_line
 	cursor_line = math.max(1, math.min(cursor_line, #lines))
 
 	local buf, win = ui.open_main(lines, state.lang.PROJECTS, cursor_line)
@@ -307,6 +312,31 @@ M.init = function(selected_line)
 
 	vim.keymap.set("n", config.keymappings.global.workspaces, function()
 		if is_empty then
+			return
+		end
+		if not state.project_id then
+			notify.info(state.lang.PROJECT_NOT_ACTIVE)
+			return
+		end
+		ui.close_all()
+		require("lvim-space.ui.workspaces").init()
+	end, {
+		buffer = buf,
+		noremap = true,
+		silent = true,
+		nowait = true,
+	})
+
+	vim.keymap.set("n", config.keymappings.global.tabs, function()
+		if is_empty then
+			return
+		end
+		if not state.project_id then
+			notify.info(state.lang.PROJECT_NOT_ACTIVE)
+			return
+		end
+		if not state.workspace_id then
+			notify.info(state.lang.WORKSPACE_NOT_ACTIVE)
 			return
 		end
 		ui.close_all()

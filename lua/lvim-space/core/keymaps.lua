@@ -2,26 +2,34 @@ local config = require("lvim-space.config")
 local state = require("lvim-space.api.state")
 local projects = require("lvim-space.ui.projects")
 local workspaces = require("lvim-space.ui.workspaces")
+local tabs = require("lvim-space.ui.tabs")
 local data = require("lvim-space.api.data")
 
 local M = {}
 
 function M.init()
 	vim.keymap.set("n", config.keymappings.main, function()
-		local pr = data.find_current_project()
-		if pr == false then
-			return false
-		elseif pr == nil then
+		local current_project = data.find_project_by_cwd()
+		if current_project == false or current_project == nil then
 			state.project = nil
 			projects.init()
 			-- всички проекти - няма активен
 		else
-			state.project_id = pr[1].id
-			local ws = data.find_project_workspaces()
-			if ws == false then
+			state.project_id = current_project.id
+			local current_workspace = data.find_current_workspace(state.project_id)
+			if current_workspace == false or current_workspace == nil then
 				projects.init()
 			else
-				workspaces.init()
+				state.workspace_id = current_workspace.id
+                local workspace_tabs = vim.fn.json_decode(current_workspace.tabs)
+                state.tab_ids = workspace_tabs.tab_ids
+				state.tab_active = workspace_tabs.tab_active
+                -- vim.notify(vim.inspect(state))
+				if not state.tab_active then
+					workspaces.init()
+				else
+					tabs.init()
+				end
 			end
 		end
 	end, {

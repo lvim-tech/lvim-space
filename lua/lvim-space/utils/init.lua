@@ -63,4 +63,16 @@ M.to_superscript = function(num)
 	return numberToShow
 end
 
+-- Пример: Качи Tab2 (индекс 2) преди Tab1 (индекс 1)
+-- move_tab(tabs, 2, 1)
+M.move_tab = function(tabs, from_idx, to_idx)
+  if from_idx == to_idx or not tabs[from_idx] or not tabs[to_idx] then return end
+  tabs[from_idx], tabs[to_idx] = tabs[to_idx], tabs[from_idx]
+  if tabs.active == from_idx then
+    tabs.active = to_idx
+  elseif tabs.active == to_idx then
+    tabs.active = from_idx
+  end
+end
+
 return M

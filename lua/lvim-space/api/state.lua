@@ -1,7 +1,37 @@
 return {
-	project_id = nil,
-	ui = {
-		content = {},
-		status_line = {},
-	},
+	-- project_id = nil,
+	-- ui = {
+	-- 	content = {},
+	-- 	status_line = {},
+	-- },
+	-- tabs = {
+	-- 	[1] = {
+ --            name = "Tab1",
+	-- 		windows = {
+	-- 			{
+	-- 				buf = "/home/user/project/file1.lua",
+	-- 				cursor = { 10, 5 },
+	-- 				folds = { { start = 5, stop = 10 }, { start = 21, stop = 30 } },
+	-- 			},
+	-- 			{
+	-- 				buf = "/home/user/project/file2.py",
+	-- 				cursor = { 1, 0 },
+	-- 				folds = {},
+	-- 			},
+	-- 		},
+	-- 		active_win = 1,
+	-- 	},
+	-- 	[2] = {
+ --            name = "Tab2",
+	-- 		windows = {
+	-- 			{
+	-- 				buf = "/home/user/project/file3.lua",
+	-- 				cursor = { 8, 2 },
+	-- 				folds = {},
+	-- 			},
+	-- 		},
+	-- 		active_win = 1,
+	-- 	},
+	-- 	active = 2, -- <--- индекс на активния таб
+	-- },
 }

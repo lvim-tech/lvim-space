@@ -5,7 +5,6 @@ local M = {}
 
 -- Cache frequently used values
 local api = vim.api
-local fn = vim.fn
 local cmd = vim.cmd
 
 -- State management
@@ -317,37 +316,60 @@ M.open_actions = function(line)
 end
 
 -- Input handling
+local function build_border(config_border)
+	local left = config_border.left and config.ui.border.sign or ""
+	local right = config_border.right and config.ui.border.sign or ""
+	return {
+		"",
+		"",
+		"",
+		right,
+		"",
+		"",
+		"",
+		left,
+	}
+end
 local function calculate_input_dimensions(prompt)
 	local total_width = vim.o.columns
 	local prompt_separator = config.ui.border.prompt.separate or ": "
 	local prompt_text = prompt .. prompt_separator
-	local prompt_width = fn.strdisplaywidth(prompt_text)
+	local prompt_width = vim.fn.strdisplaywidth(prompt_text)
+
+	local prompt_border_width = 0
+	if config.ui.border.prompt.left then
+		prompt_border_width = prompt_border_width + 1
+	end
+	if config.ui.border.prompt.right then
+		prompt_border_width = prompt_border_width + 1
+	end
+
+	local input_border_width = 0
+	if config.ui.border.input.left then
+		input_border_width = input_border_width + 1
+	end
+	if config.ui.border.input.right then
+		input_border_width = input_border_width + 1
+	end
+
+	local prompt_content_width = prompt_width
+	local prompt_total_width = prompt_content_width + prompt_border_width
+	local input_col = prompt_total_width
+	local min_input_width = 20
+	local input_content_width = math.max(min_input_width, total_width - input_col - input_border_width)
 
 	return {
 		prompt_text = prompt_text,
-		prompt_width = prompt_width,
-		input_col = prompt_width + (config.ui.border.prompt.left and 1 or 0),
-		input_width = math.max(20, total_width - prompt_width - (config.ui.border.input.right and 1 or 0)),
-		prompt_border = {
-			config.ui.border.prompt.left and config.ui.border.sign or "",
-			"",
-			"",
-			config.ui.border.prompt.right and config.ui.border.sign or "",
-			"",
-			"",
-			"",
-			"",
-		},
-		input_border = {
-			config.ui.border.input.left and config.ui.border.sign or "",
-			"",
-			"",
-			config.ui.border.input.right and config.ui.border.sign or "",
-			"",
-			"",
-			"",
-			"",
-		},
+		prompt_width = prompt_content_width,
+		prompt_total_width = prompt_total_width,
+		input_col = input_col,
+		input_width = input_content_width,
+		prompt_border_left = config.ui.border.prompt.left,
+		prompt_border_right = config.ui.border.prompt.right,
+		input_border_left = config.ui.border.input.left,
+		input_border_right = config.ui.border.input.right,
+		prompt_border = build_border(config.ui.border.prompt),
+		input_border = build_border(config.ui.border.input),
 	}
 end
 
@@ -441,13 +463,13 @@ function M.create_input_field(prompt, default_value, callback)
 			})
 
 			-- Focus handling
-			vim.schedule(function()
+			vim.defer_fn(function()
 				if is_valid_win(win) then
 					api.nvim_win_set_cursor(win, { 1, #(default_value or "") })
 					api.nvim_set_current_win(win)
 					cmd("startinsert!")
 				end
-			end)
+			end, 10)
 		end,
 	})
 

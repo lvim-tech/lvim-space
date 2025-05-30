@@ -50,6 +50,7 @@ M = {
 			projects = "p",
 			workspaces = "w",
 			tabs = "t",
+			files = "f",
 		},
 		action = {
 			add = "a",

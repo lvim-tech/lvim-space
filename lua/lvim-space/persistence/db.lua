@@ -23,39 +23,52 @@ M.find = function(table, conditions)
 	return result
 end
 
+-- Return: ~
+-- boolean|integer: boolean (true == success), and the last inserted row id.
 M.insert = function(table, values)
-	local status, error = pcall(function()
-		M[table]:insert(values)
+	local ok, row_id = pcall(function()
+		return M[table]:insert(values)
 	end)
-	if error then
-		log.logger(error)
+	if not ok then
+		log.logger(ok)
+		return false
 	end
-
-	return status
+	return row_id
 end
 
+-- Return: ~
+-- boolean
 M.update = function(table, conditions, values)
-	local status, error = pcall(function()
+	local ok = pcall(function()
 		M[table]:update({ where = conditions, set = values })
 	end)
-
-	if error then
-		log.logger(error)
+	if not ok then
+		log.logger(ok)
+		return false
 	end
-
-	return status
+	return true
 end
 
 M.remove = function(table, conditions)
-	local status, error = pcall(function()
+	local ok = pcall(function()
 		M[table]:remove(conditions)
 	end)
-
-	if error then
-		log.logger(error)
+	if not ok then
+		log.logger(ok)
+		return false
 	end
+	return true
+end
 
-	return status
+M.last_insert_id = function(table)
+	local id = pcall(function()
+		M[table]:last_insert_rowid()
+	end)
+	if not id then
+		log.logger(id)
+		return false
+	end
+	return true
 end
 
 M.init = function()
@@ -71,7 +84,9 @@ M.init = function()
 	local ok, error = pcall(function()
 		M.db = sqlite({
 			uri = uri,
-			opts = {},
+			opts = {
+				foreign_keys = "ON", -- Задаване на PRAGMA чрез sqlite_opts
+			},
 		})
 
 		M.projects = tbl("projects", {
@@ -101,8 +116,8 @@ M.init = function()
 				reference = "workspaces.id",
 				on_delete = "cascade",
 			},
-			data = { "text", required = true },
-			timestamp = { "real", default = "julianday('now')" },
+			name = { "text", required = true },
+			data = { "text", serialize = "json" },
 		}, M.db)
 
 		-- M.insert("projects", {
