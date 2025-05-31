@@ -245,12 +245,52 @@ M.delete_tab = function(tab_id, workspace_id)
 	})
 end
 
+M.update_tab_data = function(tab_id, tab_data, workspace_id)
+	if not tab_id or not tab_data or not workspace_id then
+		return false
+	end
+
+	local result = db.update("tabs", {
+		id = tab_id,
+		workspace_id = workspace_id,
+	}, {
+		data = tab_data,
+	})
+
+	return result
+end
+
 M.update_workspace_tabs = function(workspace_tabs, workspace_id)
 	return db.update("workspaces", {
 		id = workspace_id,
 	}, {
 		tabs = workspace_tabs,
 	})
+end
+
+-- FILES
+
+M.find_files = function(workspace_id, tab_id)
+    local tab = M.find_tab_by_id(tab_id, workspace_id)
+    if not tab or not tab.data then
+        return {}
+    end
+
+    local ok, tab_data = pcall(vim.fn.json_decode, tab.data)
+    if not ok or not tab_data or not tab_data.buffers then
+        return {}
+    end
+
+    local files = {}
+    for _, buf in ipairs(tab_data.buffers) do
+        if buf.bufnr and buf.filePath then
+            table.insert(files, {
+                id = buf.bufnr,
+                path = buf.filePath,
+            })
+        end
+    end
+    return files
 end
 
 return M

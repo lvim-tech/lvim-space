@@ -6,6 +6,8 @@ return {
 	INFO_LINE_WORKSPACES_EMPTY = "➤ Press: [a]dd",
 	INFO_LINE_TABS = "➤ Press: [j] [k] | 󰌑 tab | [a]dd, [r]ename, [d]elete | [p]projects [w]orkspaces",
 	INFO_LINE_TABS_EMPTY = "➤ Press: [a]dd",
+	INFO_LINE_FILES = "➤ Press: [j] [k] | 󰌑 tab | [a]dd, [r]ename, [d]elete | [p]projects [w]orkspaces",
+	INFO_LINE_FILES_EMPTY = "➤ Press: [a]dd",
 	PROJECTS = "Projects",
 	PROJECT_PATH = "➤ Project path",
 	PROJECT_NAME = "➤ Project name",
@@ -22,6 +24,11 @@ return {
 	TAB_NAME = "➤ Tab name",
 	TAB_NEW_NAME = "➤ Tab new name",
 	TAB_DELETE = "➤ Delete tab '%s'? (y/n)",
+	FILES = "Files",
+	FILES_EMPTY = "No files added",
+	FILES_NAME = "➤ File name",
+	FILES_NEW_NAME = "➤ File new name",
+	FILES_DELETE = "➤ Delete file '%s'? (y/n)",
 
 	-- BASE
 	FAILED_TO_CREATE_SAVE_DIRECTORY = "Failed to create the database file",
@@ -33,33 +40,41 @@ return {
 	CANNOT_OPEN_ERROR_LOG_FILE = "Cannot open error log file: ",
 
 	-- PROJECTS
-    PROJECT_NOT_ACTIVE = "No active project",
-    PROJECT_ADD_FAILED = "Failed to add project",
+	PROJECT_NOT_ACTIVE = "No active project",
+	PROJECT_ADD_FAILED = "Failed to add project",
 	PROJECT_RENAME_FAILED = "Failed to rename project",
-    PROJECT_DELETE_FAILED = "Failed to delete project",
+	PROJECT_DELETE_FAILED = "Failed to delete project",
 	PROJECT_NAME_LEN = "The project name cannot be shorter than 3 characters",
 	PROJECT_NAME_EXIST = "The project name cannot match the name of another project",
 	PROJECT_PATH_EXIST = "The project path cannot match the name of another project",
 	PROJECT_PATH_EMPTY = "The project path cannot be empty",
-    -- PROJECTS DIRECTORY
+	-- PROJECTS DIRECTORY
 	DIRECTORY_NOT_FOUND = "Directory not found",
 	DIRECTORY_NOT_ACCESS = "Directory exists, but you do not have permission to access it",
 
-    -- WORKSPACES
-    WORKSPACE_NOT_ACTIVE = "No active workspace",
+	-- WORKSPACES
+	WORKSPACE_NOT_ACTIVE = "No active workspace",
 	WORKSPACE_NAME_LEN = "The workspace name cannot be shorter than 3 characters",
 	WORKSPACE_NAME_EXIST = "The workspace name cannot match the name of another workspace",
 	WORKSPACE_ADD_FAILED = "Failed to add workspace",
 	WORKSPACE_RENAME_FAILED = "Failed to rename workspace",
-    WORKSPACE_DELETE_FAILED = "Failed to delete workspace",
+	WORKSPACE_DELETE_FAILED = "Failed to delete workspace",
 
-    -- TABS
-    TAB_NOT_ACTIVE = "No active tab",
+	-- TABS
+	TAB_NOT_ACTIVE = "No active tab",
 	TAB_NAME_LEN = "The tab name cannot be empty",
 	TAB_NAME_EXIST = "The tab name cannot match the name of another tab",
 	TAB_ADD_FAILED = "Failed to add tab",
 	TAB_RENAME_FAILED = "Failed to rename tab",
-    TAB_DELETE_FAILED = "Failed to delete tab",
+	TAB_DELETE_FAILED = "Failed to delete tab",
+
+	-- FILES
+	FILE_NOT_ACTIVE = "No active file",
+	FILE_PATH_LEN = "The file path cannot be empty",
+	FILE_PATH_EXIST = "The file path cannot match the path of another file in this tab",
+	FILE_ADD_FAILED = "Failed to add file",
+	FILE_RENAME_FAILED = "Failed to rename file",
+	FILE_DELETE_FAILED = "Failed to delete file",
 
 	--
 
