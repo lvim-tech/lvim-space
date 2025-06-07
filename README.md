@@ -1,4 +1,4 @@
-# LVIM SPACE
+# LVIM SPACE - v1.0.0
 
 **LVIM SPACE** is a Neovim plugin for advanced management of projects, workspaces, tabs, and files, featuring a visual UI, persistent sessions, NerdFont icons, and both automatic and manual save options.
 
