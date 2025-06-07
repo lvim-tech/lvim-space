@@ -6,6 +6,43 @@ https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
 
 ---
 
+## Installation
+
+### Lazy
+
+```lua
+{
+    "lvim-tech/lvim-space",
+    dependencies = {
+        "kkharji/sqlite.lua",
+    },
+    config = function()
+        require("lvim-space").setup({
+            -- Your configuration here
+        })
+    end
+}
+```
+
+### Packer
+
+```lua
+
+use {
+    "lvim-tech/lvim-space",
+    requires = {
+        "kkharji/sqlite.lua",
+    },
+    config = function()
+        require("lvim-space").setup({
+            -- Your configuration here
+        })
+    end
+}
+```
+
+---
+
 ## Features
 
 - **Projects**: Manage multiple projects, each with its own workspaces, tabs, and files.
@@ -94,10 +131,10 @@ Below are the default keybindings, as set in your config. You can customize thes
 
 ## User Commands
 
-- `:LvimSpaceSave`  
+- `:LvimSpaceSave`
   Manually save the full state (projects, workspaces, tabs, files) if autosave is disabled.
 
-- `:LvimSpaceTabs`  
+- `:LvimSpaceTabs`
   Display information about all tabs in the current workspace (debugging command).
 
 ---
@@ -198,6 +235,7 @@ to persist the full state (projects, workspaces, tabs, files, layouts, etc).
 
 - **Neovim 0.10+**
 - **NerdFont** enabled terminal (for icons)
+- **Dependencies**: sqlite.lua
 
 ---
 
