@@ -521,21 +521,21 @@ M.init = function(selected_line_num)
     if not state.project_id then
         notify.error(state.lang.PROJECT_NOT_ACTIVE)
         common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
-        ui.open_actions(state.lang.INFO_LINE_GENERIC_QUIT)
+        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win)
         return
     end
 
     if not state.workspace_id then
         notify.error(state.lang.WORKSPACE_NOT_ACTIVE)
         common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
-        ui.open_actions(state.lang.INFO_LINE_GENERIC_QUIT)
+        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win)
         return
     end
 
-    if not state.tab_id then
-        notify.error(state.lang.WORKSPACE_NOT_ACTIVE)
+    if not state.tab_active then
+        notify.error(state.lang.TAB_NOT_ACTIVE)
         common.open_entity_error("file", "TAB_NOT_ACTIVE")
-        ui.open_actions(state.lang.INFO_LINE_GENERIC_QUIT)
+        common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win)
         return
     end
 

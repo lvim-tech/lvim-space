@@ -22,7 +22,7 @@ M.entity_types = {
         delete_confirm = "PROJECT_DELETE",
         delete_failed = "PROJECT_DELETE_FAILED",
         not_active = "PROJECT_NOT_ACTIVE",
-        error_message = "PROJECT_ERROR", -- добавено
+        error_message = "PROJECT_ERROR",
     },
     workspace = {
         name = "workspace",
@@ -40,7 +40,7 @@ M.entity_types = {
         delete_confirm = "WORKSPACE_DELETE",
         delete_failed = "WORKSPACE_DELETE_FAILED",
         not_active = "WORKSPACE_NOT_ACTIVE",
-        error_message = "WORKSPACE_ERROR", -- добавено
+        error_message = "WORKSPACE_ERROR",
     },
     tab = {
         name = "tab",
@@ -58,7 +58,7 @@ M.entity_types = {
         delete_confirm = "TAB_DELETE",
         delete_failed = "TAB_DELETE_FAILED",
         not_active = "TAB_NOT_ACTIVE",
-        error_message = "TAB_ERROR", -- добавено
+        error_message = "TAB_ERROR",
     },
     file = {
         name = "file",
@@ -76,7 +76,7 @@ M.entity_types = {
         delete_confirm = "FILE_DELETE",
         delete_failed = "FILE_DELETE_FAILED",
         not_active = "FILE_NOT_ACTIVE",
-        error_message = "FILE_ERROR", -- добавено
+        error_message = "FILE_ERROR",
     },
 }
 
@@ -308,6 +308,89 @@ end
 
 M.clear_icon_cache = function()
     icon_cache = {}
+end
+
+local function setup_error_navigation_keymaps(ctx, error_type)
+    local buf = ctx.buf
+    local opts = { buffer = buf, silent = true, nowait = true }
+    vim.keymap.set("n", "q", function()
+        require("lvim-space.ui").close_all()
+        if ctx.last_real_win and vim.api.nvim_win_is_valid(ctx.last_real_win) then
+            vim.api.nvim_set_current_win(ctx.last_real_win)
+        end
+    end, opts)
+    vim.keymap.set("n", "<Esc>", function()
+        require("lvim-space.ui").close_all()
+        if ctx.last_real_win and vim.api.nvim_win_is_valid(ctx.last_real_win) then
+            vim.api.nvim_set_current_win(ctx.last_real_win)
+        end
+    end, opts)
+    if error_type == "PROJECT_NOT_ACTIVE" then
+        vim.keymap.set("n", config.keymappings.global.projects or "p", function()
+            require("lvim-space.ui.projects").init()
+        end, opts)
+    elseif error_type == "WORKSPACE_NOT_ACTIVE" then
+        vim.keymap.set("n", config.keymappings.global.projects or "p", function()
+            require("lvim-space.ui.projects").init()
+        end, opts)
+
+        if state.project_id then
+            vim.keymap.set("n", config.keymappings.global.workspaces or "w", function()
+                require("lvim-space.ui.workspaces").init()
+            end, opts)
+        end
+    elseif error_type == "TAB_NOT_ACTIVE" then
+        vim.keymap.set("n", config.keymappings.global.projects or "p", function()
+            require("lvim-space.ui.projects").init()
+        end, opts)
+
+        if state.project_id then
+            vim.keymap.set("n", config.keymappings.global.workspaces or "w", function()
+                require("lvim-space.ui.workspaces").init()
+            end, opts)
+        end
+
+        if state.project_id and state.workspace_id then
+            vim.keymap.set("n", config.keymappings.global.tabs or "t", function()
+                require("lvim-space.ui.tabs").init()
+            end, opts)
+        end
+    end
+end
+
+local function get_error_info_line(error_type)
+    local lang = state.lang
+    if error_type == "PROJECT_NOT_ACTIVE" then
+        return lang.INFO_LINE_PROJECT_ERROR
+    elseif error_type == "WORKSPACE_NOT_ACTIVE" then
+        if state.project_id then
+            return lang.INFO_LINE_WORKSPACE_ERROR
+        else
+            return lang.INFO_LINE_PROJECT_ERROR
+        end
+    elseif error_type == "TAB_NOT_ACTIVE" then
+        if state.project_id and state.workspace_id then
+            return lang.INFO_LINE_TAB_ERROR
+        elseif state.project_id then
+            return lang.INFO_LINE_WORKSPACE_ERROR
+        else
+            return lang.INFO_LINE_PROJECT_ERROR
+        end
+    end
+    return lang.INFO_LINE_GENERIC_QUIT
+end
+
+M.setup_error_navigation = function(error_type, last_real_win)
+    local current_win = vim.api.nvim_get_current_win()
+    local current_buf = vim.api.nvim_get_current_buf()
+    local error_ctx = {
+        win = current_win,
+        buf = current_buf,
+        error_state = error_type,
+        last_real_win = last_real_win,
+    }
+    setup_error_navigation_keymaps(error_ctx, error_type)
+    ui.open_actions(get_error_info_line(error_type))
 end
 
 return M

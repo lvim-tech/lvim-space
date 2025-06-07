@@ -27,6 +27,7 @@ return {
 
     INFO_LINE_PROJECTS = "➤ Press: [j] [k] | 󱁐 project load 󰌑 project enter | [a]dd [r]ename [d]elete | [w]orkspaces [t]abs [f]iles",
     INFO_LINE_PROJECTS_EMPTY = "➤ Press: [a]dd",
+    INFO_LINE_PROJECT_ERROR = "➤ Press: [Esc] quit | [p]rojects",
     PROJECTS = "Projects",
     PROJECT_NAME = "➤ Project name",
     PROJECT_NEW_NAME = "➤ Project new name",
@@ -45,7 +46,8 @@ return {
     DIRECTORY_NOT_ACCESS = "No access to directory",
 
     INFO_LINE_WORKSPACES = "➤ Press: [j] [k] | 󱁐 workspace load 󰌑 workspace enter | [a]dd, [r]ename, [d]elete | [p]projects [t]abs [f]iles",
-    INFO_LINE_WORKSPACES_EMPTY = "➤ Press: [a]dd",
+    INFO_LINE_WORKSPACES_EMPTY = "➤ Press: [a]dd | [p]projects",
+    INFO_LINE_WORKSPACE_ERROR = "➤ Press: [Esc] quit | [p]rojects | [w]orkspaces",
     WORKSPACES = "Workspaces",
     WORKSPACE_NAME = "➤ Workspace name",
     WORKSPACE_NEW_NAME = "➤ Workspace new name",
@@ -62,7 +64,8 @@ return {
     WORKSPACE_NOT_FOUND = "Workspace not found",
 
     INFO_LINE_TABS = "➤ Press: [j] [k] | 󱁐 tab load 󰌑 tab enter | [a]dd, [r]ename, [d]elete | [p]projects [w]orkspaces [f]iles",
-    INFO_LINE_TABS_EMPTY = "➤ Press: [a]dd",
+    INFO_LINE_TABS_EMPTY = "➤ Press: [a]dd | [p]projects [w]orkspaces",
+    INFO_LINE_TAB_ERROR = "➤ Press: [Esc] quit | [p]rojects | [w]orkspaces | [t]abs",
     TABS = "Tabs",
     TABS_EMPTY = "No tabs added",
     TAB_NAME = "➤ Tab name",
@@ -78,7 +81,7 @@ return {
     TAB_SWITCH_FAILED = "Failed to switch tab",
 
     INFO_LINE_FILES = "➤ Press: [j] [k] | 󱁐 file load 󰌑 file enter | [v]split [h]split | [a]dd, [d]elete | [p]projects [w]orkspaces [t]abs",
-    INFO_LINE_FILES_EMPTY = "➤ Press: [a]dd",
+    INFO_LINE_FILES_EMPTY = "➤ Press: [a]dd | [p]projects [w]orkspaces [t]abs",
     FILES = "Files",
     FILES_EMPTY = "No files added",
     FILES_NAME = "➤ File name",
