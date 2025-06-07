@@ -17,7 +17,55 @@ https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
 - **NerdFont Icons**: Visual indicators for all entities (project, workspace, tab, file, empty, etc).
 - **Autosave**: Choose between automatic or manual session saving.
 - **User Commands**: Save state manually with `:LvimSpaceSave`.
+- **API Integration**: Public API for integration with other plugins and status lines.
 - **Highly Configurable**: Icons, keymaps, UI appearance, and more.
+
+---
+
+## API Integration
+
+LVIM SPACE provides a public API for integration with other plugins, status lines, and custom configurations.
+
+### Tab Information API
+
+```lua
+local pub = require("lvim-space.pub")
+local tabs = pub.get_tab_info()
+```
+
+Returns an array of tab objects for the current workspace:
+
+```lua
+{
+  { id = 1, name = "main", active = true },
+  { id = 2, name = "feature", active = false },
+  { id = 3, name = "testing", active = false }
+}
+```
+
+**Properties:**
+
+- `id` - Unique identifier of the tab
+- `name` - Display name of the tab
+- `active` - Boolean indicating if this is the currently active tab
+
+**Use Cases:**
+
+- Integration with status line plugins (tabby.nvim, lualine.nvim, etc.)
+- Custom UI components showing workspace tabs
+- Building external tools that interact with LVIM SPACE
+
+**Example with tabby.nvim:**
+
+```lua
+local pub = require("lvim-space.pub")
+local tabs = pub.get_tab_info()
+
+for _, tab in ipairs(tabs) do
+    local hl = tab.active and active_highlight or inactive_highlight
+    -- Use tab.name and tab.active in your tabby configuration
+end
+```
 
 ---
 
@@ -49,6 +97,9 @@ Below are the default keybindings, as set in your config. You can customize thes
 - `:LvimSpaceSave`  
   Manually save the full state (projects, workspaces, tabs, files) if autosave is disabled.
 
+- `:LvimSpaceTabs`  
+  Display information about all tabs in the current workspace (debugging command).
+
 ---
 
 ## Configuration Example
@@ -78,17 +129,17 @@ require("lvim-space").setup({
             input = { left = true, right = true },
         },
         icons = {
-            error = " ",
-            warn = " ",
-            info = " ",
-            project = " ",
-            project_active = " ",
-            workspace = " ",
-            workspace_active = " ",
-            tab = " ",
-            tab_active = " ",
-            file = " ",
-            file_active = " ",
+            error = " ",
+            warn = " ",
+            info = " ",
+            project = " ",
+            project_active = " ",
+            workspace = " ",
+            workspace_active = " ",
+            tab = " ",
+            tab_active = " ",
+            file = " ",
+            file_active = " ",
             empty = "󰇘 ",
         },
         highlight = {
