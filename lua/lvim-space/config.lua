@@ -1,7 +1,7 @@
 local M = {}
 
 M = {
-    save = "/home/biserstoilov/.local/share/nvim/lvim-space",
+    save = "~/.local/share/nvim/lvim-space",
     lang = "en",
     notify = true,
     log = true,
