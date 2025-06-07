@@ -25,6 +25,13 @@ local level_enabled = {
     end,
 }
 
+local function ensure_directory(path)
+    local dir = path:match("(.*/)")
+    if dir then
+        vim.fn.mkdir(dir, "p")
+    end
+end
+
 M.logger = function(level, msg)
     if not level or not M.levels[level] then
         level = M.levels.ERROR
@@ -42,11 +49,11 @@ M.logger = function(level, msg)
     if not config.save or config.save == "" then
         vim.schedule(function()
             vim.notify(
-                "LVIM CTRLSPACE: Log directory (config.save) is not configured. Cannot write logs.",
+                "LVIM SPACE: Log directory (config.save) is not configured. Cannot write logs.",
                 vim.log.levels.ERROR,
                 {
-                    title = "LVIM CTRLSPACE",
-                    icon = " ",
+                    title = "LVIM SPACE",
+                    icon = " ",
                     timeout = 7000,
                 }
             )
@@ -54,7 +61,10 @@ M.logger = function(level, msg)
         return
     end
 
-    local log_path = config.save .. "/ctrlspace.log"
+    local log_path = config.save .. "/lvim-space.log"
+
+    ensure_directory(log_path)
+
     local file, err_open = io.open(log_path, "a")
 
     if file then
@@ -86,8 +96,8 @@ M.logger = function(level, msg)
         end
         vim.schedule(function()
             vim.notify(error_msg_text, vim.log.levels.ERROR, {
-                title = "LVIM CTRLSPACE",
-                icon = " ",
+                title = "LVIM SPACE",
+                icon = " ",
                 timeout = 7000,
                 replace = "lvim_space_log_error",
             })

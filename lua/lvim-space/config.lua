@@ -12,7 +12,7 @@ M = {
     filetype = "lvim-space",
     title = "LVIM SPACE",
     title_position = "center",
-    status_space = 2,
+    status_space = 3,
     max_height = 10,
     autosave = true,
     ui = {
@@ -79,5 +79,9 @@ M = {
         },
     },
 }
+
+if M.save then
+    M.save = vim.fn.expand(M.save)
+end
 
 return M
