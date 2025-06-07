@@ -131,6 +131,9 @@ Below are the default keybindings, as set in your config. You can customize thes
 
 ## User Commands
 
+- `:LvimSpace (projects | workspaces | tabs | files)`
+  Manually save the full state (projects, workspaces, tabs, files) if autosave is disabled.
+
 - `:LvimSpaceSave`
   Manually save the full state (projects, workspaces, tabs, files) if autosave is disabled.
 

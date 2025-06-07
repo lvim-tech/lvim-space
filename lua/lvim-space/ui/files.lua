@@ -517,6 +517,28 @@ end
 
 M.init = function(selected_line_num)
     capture_current_window()
+
+    if not state.project_id then
+        notify.error(state.lang.PROJECT_NOT_ACTIVE)
+        common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
+        ui.open_actions(state.lang.INFO_LINE_GENERIC_QUIT)
+        return
+    end
+
+    if not state.workspace_id then
+        notify.error(state.lang.WORKSPACE_NOT_ACTIVE)
+        common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
+        ui.open_actions(state.lang.INFO_LINE_GENERIC_QUIT)
+        return
+    end
+
+    if not state.tab_id then
+        notify.error(state.lang.WORKSPACE_NOT_ACTIVE)
+        common.open_entity_error("file", "TAB_NOT_ACTIVE")
+        ui.open_actions(state.lang.INFO_LINE_GENERIC_QUIT)
+        return
+    end
+
     if
         not last_normal_win
         or not vim.api.nvim_win_is_valid(last_normal_win)
@@ -524,16 +546,9 @@ M.init = function(selected_line_num)
     then
         last_normal_win = get_last_normal_win()
     end
-    if not state.workspace_id or not state.tab_active then
-        notify.error(state.lang.TAB_NOT_ACTIVE)
-        local buf, _ = ui.open_main({ " " .. state.lang.TAB_NOT_ACTIVE }, state.lang.FILES, 1)
-        if buf then
-            vim.bo[buf].buftype = "nofile"
-        end
-        ui.open_actions(state.lang.INFO_LINE_GENERIC_QUIT)
-        return
-    end
+
     log.debug("files.M.init: Forcibly saved session for tab: " .. state.tab_active)
+
     session.save_current_state(state.tab_active, true)
     cache.files_from_db = data.find_files(state.workspace_id, state.tab_active) or {}
     cache.file_ids_map = {}

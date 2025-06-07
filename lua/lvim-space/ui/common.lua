@@ -22,6 +22,7 @@ M.entity_types = {
         delete_confirm = "PROJECT_DELETE",
         delete_failed = "PROJECT_DELETE_FAILED",
         not_active = "PROJECT_NOT_ACTIVE",
+        error_message = "PROJECT_ERROR", -- добавено
     },
     workspace = {
         name = "workspace",
@@ -39,6 +40,7 @@ M.entity_types = {
         delete_confirm = "WORKSPACE_DELETE",
         delete_failed = "WORKSPACE_DELETE_FAILED",
         not_active = "WORKSPACE_NOT_ACTIVE",
+        error_message = "WORKSPACE_ERROR", -- добавено
     },
     tab = {
         name = "tab",
@@ -56,6 +58,7 @@ M.entity_types = {
         delete_confirm = "TAB_DELETE",
         delete_failed = "TAB_DELETE_FAILED",
         not_active = "TAB_NOT_ACTIVE",
+        error_message = "TAB_ERROR", -- добавено
     },
     file = {
         name = "file",
@@ -73,6 +76,7 @@ M.entity_types = {
         delete_confirm = "FILE_DELETE",
         delete_failed = "FILE_DELETE_FAILED",
         not_active = "FILE_NOT_ACTIVE",
+        error_message = "FILE_ERROR", -- добавено
     },
 }
 
@@ -123,6 +127,11 @@ local function safe_get_cursor(win)
     end
     local ok, cur = pcall(vim.api.nvim_win_get_cursor, win)
     return ok and cur[1] or 1
+end
+
+local function format_error_message(message)
+    local error_icon = config.ui and config.ui.icons and config.ui.icons.empty or " "
+    return error_icon .. message
 end
 
 M.get_id_at_cursor = function(list)
@@ -237,6 +246,21 @@ M.init_entity_list = function(type_name, ents, id_list, _, active_id, id_field, 
     return { buf = buf, win = win, is_empty = empty, entities = ents, id_list = id_list, entity_type = dt }
 end
 
+M.open_entity_error = function(type_name, error_key)
+    local dt = M.entity_types[type_name]
+    if not dt then
+        notify.error(state.lang.UNKNOWN_ENTITY_TYPE)
+        return
+    end
+
+    local message = state.lang[error_key] or error_key
+    local formatted_message = format_error_message(message)
+    local buf, win = ui.open_main({ formatted_message }, state.lang[dt.title], 1)
+    if buf then
+        vim.bo[buf].buftype = "nofile"
+    end
+    return buf, win
+end
 M.validate_entity_name = function(type_name, name)
     local dt = M.entity_types[type_name]
     if not dt then

@@ -321,6 +321,14 @@ end
 
 M.init = function(selected_line_num, opts)
     capture_current_window()
+
+    if not state.project_id then
+        notify.error(state.lang.PROJECT_NOT_ACTIVE)
+        common.open_entity_error("workspace", "PROJECT_NOT_ACTIVE")
+        ui.open_actions(state.lang.INFO_LINE_GENERIC_QUIT)
+        return
+    end
+
     opts = opts or {}
     local select_workspace = (opts.select_workspace ~= false)
     if not state.project_id then

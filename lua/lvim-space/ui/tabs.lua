@@ -10,6 +10,15 @@ local log = require("lvim-space.api.log")
 
 local M = {}
 local cache = { tab_ids_map = {}, tabs_from_db = {}, ctx = nil, workspace_display_name = "" }
+local last_real_win = nil
+
+local function capture_current_window()
+    local current_win = vim.api.nvim_get_current_win()
+    if not ui.is_plugin_window(current_win) and vim.api.nvim_win_is_valid(current_win) then
+        last_real_win = current_win
+        log.debug("Remembered active window: " .. tostring(last_real_win))
+    end
+end
 
 local function validate_tab_name(tab_name)
     local ok, err = common.validate_entity_name("tab", tab_name)
@@ -250,36 +259,23 @@ function M.handle_tab_switch(opts)
 end
 
 function M.navigate_to_projects()
-    session.close_all_file_windows_and_buffers()
-    local main_win = state.ui and state.ui.content and state.ui.content.win
-    if main_win and vim.api.nvim_win_is_valid(main_win) then
-        vim.api.nvim_set_current_win(main_win)
-        vim.cmd("enew")
-    end
+    capture_current_window()
     ui.close_all()
     require("lvim-space.ui.projects").init()
 end
 
 function M.navigate_to_workspaces()
-    session.close_all_file_windows_and_buffers()
-    local main_win = state.ui and state.ui.content and state.ui.content.win
-    if main_win and vim.api.nvim_win_is_valid(main_win) then
-        vim.api.nvim_set_current_win(main_win)
-        vim.cmd("enew")
-    end
+    capture_current_window()
     ui.close_all()
     require("lvim-space.ui.workspaces").init()
 end
 
 function M.navigate_to_files()
-    if not state.workspace_id then
-        notify.info(state.lang.WORKSPACE_NOT_ACTIVE)
-        return
-    end
     if not state.tab_active then
         notify.info(state.lang.TAB_NOT_ACTIVE)
         return
     end
+    capture_current_window()
     ui.close_all()
     require("lvim-space.ui.files").init()
 end
@@ -308,6 +304,22 @@ local function setup_keymaps(ctx)
 end
 
 M.init = function(selected_line_num)
+    capture_current_window()
+
+    if not state.project_id then
+        notify.error(state.lang.PROJECT_NOT_ACTIVE)
+        common.open_entity_error("tab", "PROJECT_NOT_ACTIVE")
+        ui.open_actions(state.lang.INFO_LINE_GENERIC_QUIT)
+        return
+    end
+
+    if not state.workspace_id then
+        notify.error(state.lang.WORKSPACE_NOT_ACTIVE)
+        common.open_entity_error("tab", "WORKSPACE_NOT_ACTIVE")
+        ui.open_actions(state.lang.INFO_LINE_GENERIC_QUIT)
+        return
+    end
+
     cache.tabs_from_db = data.find_tabs(state.workspace_id) or {}
 
     cache.tab_ids_map = {}

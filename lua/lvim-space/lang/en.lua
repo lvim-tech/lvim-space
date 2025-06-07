@@ -17,7 +17,7 @@ return {
     UNKNOWN_ENTITY_TYPE = "Unknown entity type",
     OPERATION_CANCELLED = "Operation cancelled",
     NO_CHANGES = "No changes made",
-    INFO_LINE_GENERIC_QUIT = "Press 'q' to quit",
+    INFO_LINE_GENERIC_QUIT = "➤ Press 'Esc' to quit",
     DELETION_CANCELLED = "Deletion cancelled",
     INVALID_ID_LIST = "Invalid id_list provided",
     FAILED_TO_CREATE_UI = "Failed to create UI",
