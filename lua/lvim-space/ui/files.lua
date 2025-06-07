@@ -208,11 +208,17 @@ local function delete_file_db(file_id, workspace_id, tab_id, selected_line_num)
         log.warn("delete_file_db: File ID " .. tostring(file_id) .. " not found in tab")
         return nil
     end
-    local current_buf_info = get_current_buffer_info()
+
     local candidate_path = file_to_remove.path or file_to_remove.filePath
-    local is_current_file = current_buf_info.name
-        and candidate_path
-        and vim.fn.fnamemodify(candidate_path, ":p") == current_buf_info.name
+    local buffer_to_delete = file_to_remove.bufnr or file_id
+
+    local windows_with_buffer = {}
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buffer_to_delete then
+            table.insert(windows_with_buffer, win)
+        end
+    end
+
     table.remove(tab_data.buffers, index_to_remove)
     log.info(
         string.format(
@@ -221,32 +227,37 @@ local function delete_file_db(file_id, workspace_id, tab_id, selected_line_num)
             tostring(candidate_path)
         )
     )
+
     if update_tab_data(tab_id, workspace_id, tab_data) then
         update_files_state_in_db()
         vim.schedule(function()
-            if is_current_file then
-                log.info("delete_file_db: Deleted file was active, creating empty buffer")
-                local windows_with_buffer = {}
-                for _, win in ipairs(vim.api.nvim_list_wins()) do
-                    if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == current_buf_info.bufnr then
-                        table.insert(windows_with_buffer, win)
-                    end
-                end
+            if #windows_with_buffer > 0 then
+                log.info(
+                    "delete_file_db: File was open in "
+                        .. #windows_with_buffer
+                        .. " window(s), replacing with empty buffer"
+                )
                 local new_buf = vim.api.nvim_create_buf(true, false)
                 vim.bo[new_buf].buftype = ""
                 vim.bo[new_buf].filetype = ""
+
                 for _, win in ipairs(windows_with_buffer) do
                     if vim.api.nvim_win_is_valid(win) then
                         vim.api.nvim_win_set_buf(win, new_buf)
                     end
                 end
-                pcall(vim.api.nvim_buf_delete, current_buf_info.bufnr, { force = true })
+
+                pcall(vim.api.nvim_buf_delete, buffer_to_delete, { force = true })
+
                 if tostring(state.file_active) == tostring(file_id) then
                     state.file_active = nil
                 end
                 notify.info(state.lang.FILE_REMOVE_REPLACE)
             else
-                pcall(vim.api.nvim_buf_delete, file_id, { force = false })
+                pcall(vim.api.nvim_buf_delete, buffer_to_delete, { force = true })
+                if tostring(state.file_active) == tostring(file_id) then
+                    state.file_active = nil
+                end
             end
             M.init(selected_line_num)
         end)
