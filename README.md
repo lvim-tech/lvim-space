@@ -74,9 +74,12 @@ Returns an array of tab objects for the current workspace:
 
 ```lua
 {
-  { id = 1, name = "main", active = true },
-  { id = 2, name = "feature", active = false },
-  { id = 3, name = "testing", active = false }
+  tabs = {
+    { id = 1, name = "main", active = true },
+    { id = 2, name = "feature", active = false },
+    { id = 3, name = "testing", active = false }
+  },
+  workspace_name = "Core"
 }
 ```
 

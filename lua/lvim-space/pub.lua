@@ -7,14 +7,22 @@ function M.get_tab_info()
     local tabs = data.find_tabs and data.find_tabs(workspace_id) or {}
     local active_id = state.tab_active
 
-    local result = {}
+    local workspace = data.find_workspace_by_id and data.find_workspace_by_id(workspace_id, state.project_id)
+    local workspace_name = workspace and workspace.name or "Unknown"
+
+    local result = {
+        workspace_name = workspace_name,
+        tabs = {},
+    }
+
     for _, tab in ipairs(tabs) do
-        table.insert(result, {
+        table.insert(result.tabs, {
             id = tab.id,
             name = tab.name,
             active = tostring(tab.id) == tostring(active_id),
         })
     end
+
     return result
 end
 
