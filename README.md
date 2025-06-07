@@ -211,7 +211,7 @@ to persist the full state (projects, workspaces, tabs, files, layouts, etc).
 
 ## License
 
-MIT
+BSD 3-Clause
 
 ---
 
