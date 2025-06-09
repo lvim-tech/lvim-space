@@ -55,16 +55,13 @@ local function initialize()
         return
     end
 
-    -- Initialize database
     if not db.init() then
         notify.error("Failed to initialize database")
         return
     end
 
-    -- Load context
     load_context()
 
-    -- Initialize session
     local success, err = pcall(session.init)
     if not success then
         log.error("Failed to initialize session: " .. tostring(err))
@@ -79,12 +76,10 @@ local function cleanup()
         vim.fn.timer_stop(cache.save_timer)
     end
 
-    -- Save current session
     if state.tab_active then
         pcall(session.save_current_state, state.tab_active, true)
     end
 
-    -- Close database
     pcall(db.close_db_connection)
 end
 
@@ -117,7 +112,6 @@ M.init = function()
         desc = "LVIM Space: Reload context on directory change",
     })
 
-    -- User command for manual save
     api.nvim_create_user_command("LvimSpaceSave", function()
         if state.tab_active then
             local success = pcall(session.save_current_state, state.tab_active, true)
@@ -134,7 +128,6 @@ M.init = function()
     log.info("LVIM Space autocommands initialized")
 end
 
--- Public API functions
 M.force_save = function()
     if state.tab_active then
         return pcall(session.save_current_state, state.tab_active, true)

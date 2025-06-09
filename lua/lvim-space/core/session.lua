@@ -1,3 +1,4 @@
+local config = require("lvim-space.config")
 local data = require("lvim-space.api.data")
 local state = require("lvim-space.api.state")
 local ui = require("lvim-space.ui")
@@ -265,7 +266,7 @@ local function force_single_window()
     end
 
     local t = wins[1]
-    -- НОВА ЛОГИКА: Затваряй само ако има повече от 1 прозорец
+
     if #wins > 1 then
         for i = 2, #wins do
             pcall(vim.api.nvim_win_close, wins[i], true)
@@ -304,12 +305,10 @@ local function cleanup_old_session_buffers(keep)
         end
     end
 
-    -- НОВА ЛОГИКА: Винаги запази поне 1 buffer за нормалните прозорци
     if #del <= 1 then
         return
     end
 
-    -- Провери колко нормални прозорци има
     local normal_windows = 0
     for _, win in ipairs(vim.api.nvim_list_wins()) do
         if vim.api.nvim_win_is_valid(win) and not ui.is_plugin_window(win) then
@@ -317,10 +316,8 @@ local function cleanup_old_session_buffers(keep)
         end
     end
 
-    -- Ако има само 1 нормален прозорец, запази поне 1 buffer
     local buffers_to_delete = normal_windows > 1 and del or {}
     if normal_windows == 1 and #del > 0 then
-        -- Запази последния buffer, изтрий останалите
         for i = 1, #del - 1 do
             table.insert(buffers_to_delete, del[i])
         end
@@ -530,10 +527,8 @@ M.close_all_file_windows_and_buffers = function()
         end
     end
 
-    -- НОВА ЛОГИКА: Винаги запази поне 1 нормален прозорец
     local windows_to_close = {}
     if #normal_windows > 1 then
-        -- Запази първия, затвори останалите
         for i = 2, #normal_windows do
             table.insert(windows_to_close, normal_windows[i])
         end
@@ -567,11 +562,9 @@ M.close_all_file_windows_and_buffers = function()
         end
     end
 
-    -- НОВА ЛОГИКА: Ако няма нормални прозорци, създай празен buffer
     if #normal_windows == 0 then
         vim.cmd("new")
     elseif #buffers_to_delete > 0 then
-        -- Запази поне 1 buffer, но ако има само 1 нормален прозорец
         local remaining_normal_windows = 0
         for _, win in ipairs(vim.api.nvim_list_wins()) do
             if vim.api.nvim_win_is_valid(win) and not ui.is_plugin_window(win) then
@@ -580,12 +573,10 @@ M.close_all_file_windows_and_buffers = function()
         end
 
         if remaining_normal_windows == 1 and #buffers_to_delete >= 1 then
-            -- Запази последния buffer
             for i = 1, math.max(0, #buffers_to_delete - 1) do
                 pcall(vim.api.nvim_buf_delete, buffers_to_delete[i], { force = true })
             end
         else
-            -- Изтрий всички buffers
             for _, buf in ipairs(buffers_to_delete) do
                 pcall(vim.api.nvim_buf_delete, buf, { force = true })
             end
@@ -651,7 +642,9 @@ M.setup_autocmds = function()
                         return
                     end
                 end
-                require("lvim-space.ui.files").add_current_buffer_to_tab()
+                if config.open_panel_on_add_file then
+                    require("lvim-space.ui.files").add_current_buffer_to_tab()
+                end
             end)
         end,
     })

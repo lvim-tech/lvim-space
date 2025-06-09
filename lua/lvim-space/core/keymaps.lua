@@ -82,25 +82,53 @@ function M.enable_base_maps(buf)
 end
 
 M.disable_all_maps = function(buf)
-    local letters = {}
-    for c = string.byte("a"), string.byte("z") do
-        local ch = string.char(c)
-        if ch ~= "j" and ch ~= "k" then
-            table.insert(letters, ch)
+    local key_conf = config.key_control or {}
+    local allowed_keys_map = {}
+    for _, k_allowed in ipairs(key_conf.allowed or {}) do
+        allowed_keys_map[k_allowed] = true
+    end
+
+    local keys_to_potentially_disable = {}
+    local categories = key_conf.disable_categories
+        or {
+            lowercase_letters = true,
+            uppercase_letters = true,
+            digits = true,
+        }
+
+    if categories.lowercase_letters then
+        for c = string.byte("a"), string.byte("z") do
+            table.insert(keys_to_potentially_disable, string.char(c))
         end
     end
-    for c = string.byte("A"), string.byte("Z") do
-        table.insert(letters, string.char(c))
+    if categories.uppercase_letters then
+        for c = string.byte("A"), string.byte("Z") do
+            table.insert(keys_to_potentially_disable, string.char(c))
+        end
     end
-    for d = 0, 9 do
-        table.insert(letters, tostring(d))
+    if categories.digits then
+        for d = 0, 9 do
+            table.insert(keys_to_potentially_disable, tostring(d))
+        end
     end
-    local keys = { "$", "gg", "G", "<C-d>", "<C-u>", "<Left>", "<Right>", "<Up>", "<Down>", "<Space>", "BS" }
-    for _, k in ipairs(letters) do
-        table.insert(keys, k)
+
+    for _, k_disabled in ipairs(key_conf.explicitly_disabled or {}) do
+        local found = false
+        for _, k_existing in ipairs(keys_to_potentially_disable) do
+            if k_existing == k_disabled then
+                found = true
+                break
+            end
+        end
+        if not found then
+            table.insert(keys_to_potentially_disable, k_disabled)
+        end
     end
-    for _, key in ipairs(keys) do
-        vim.keymap.set("n", key, "<nop>", { buffer = buf })
+
+    for _, key_to_check in ipairs(keys_to_potentially_disable) do
+        if not allowed_keys_map[key_to_check] then
+            vim.keymap.set("n", key_to_check, "<nop>", { buffer = buf, nowait = true, silent = true })
+        end
     end
 end
 
