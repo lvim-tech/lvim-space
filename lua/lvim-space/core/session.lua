@@ -113,7 +113,7 @@ end
 local function collect_tab_session_data(tab_id)
     local valid_buffers = {}
     local path_to_idx = {}
-    local files_in_tab = data.find_files(state.workspace_id, tab_id) or {}
+    local files_in_tab = data.find_files(tab_id, state.workspace_id) or {}
     local valid_paths = {}
     for _, entry in ipairs(files_in_tab) do
         local path = entry.path or entry.filePath
@@ -634,7 +634,7 @@ M.setup_autocmds = function()
                 if not state.workspace_id or not state.tab_active then
                     return
                 end
-                local files = data.find_files(state.workspace_id, state.tab_active) or {}
+                local files = data.find_files(state.tab_active, state.workspace_id) or {}
                 local abs = vim.fn.fnamemodify(name, ":p")
                 for _, e in ipairs(files) do
                     local p = e.path or e.filePath
