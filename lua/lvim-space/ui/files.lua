@@ -642,20 +642,22 @@ M.add_current_buffer_to_tab = function(from_external)
     local result_add_current = add_file_db(current_buf_info_add.name, state.workspace_id, state.tab_active)
     if result_add_current and type(result_add_current) == "number" then
         notify.info(state.lang.CURRENT_FILE_ADDED or "Current file added to tab.")
-
         if not from_external then
+            M.init()
+        end
+        return true
+    elseif result_add_current == "EXIST_NAME" then
+        if not from_external then
+            notify.info(state.lang.FILE_PATH_EXIST or "File already exists in this tab.")
             M.init()
         end
         return true
     else
         local error_message = state.lang.FILE_ADD_FAILED or "Failed to add file to tab."
         if type(result_add_current) == "string" then
-            if result_add_current == "EXIST_NAME" then
-                error_message = state.lang.FILE_PATH_EXIST or "File already exists in this tab."
-            end
+            error_message = error_message .. " (Code: " .. result_add_current .. ")"
         end
         notify.error(error_message)
-
         if not from_external then
             M.init()
         end
