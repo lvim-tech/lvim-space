@@ -642,9 +642,7 @@ M.setup_autocmds = function()
                         return
                     end
                 end
-                if config.open_panel_on_add_file then
-                    require("lvim-space.ui.files").add_current_buffer_to_tab()
-                end
+                require("lvim-space.ui.files").add_current_buffer_to_tab(not config.open_panel_on_add_file)
             end)
         end,
     })

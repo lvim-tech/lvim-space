@@ -628,7 +628,7 @@ M.add_file = function()
     end)
 end
 
-M.add_current_buffer_to_tab = function()
+M.add_current_buffer_to_tab = function(from_external)
     local current_buf_info_add = get_current_buffer_info()
     if not current_buf_info_add.name then
         notify.error(state.lang.CURRENT_BUFFER_NO_PATH or "Current buffer has no associated file path.")
@@ -638,10 +638,14 @@ M.add_current_buffer_to_tab = function()
         notify.error(state.lang.TAB_NOT_ACTIVE or "No active tab. Please select or create a tab first.")
         return false
     end
+
     local result_add_current = add_file_db(current_buf_info_add.name, state.workspace_id, state.tab_active)
     if result_add_current and type(result_add_current) == "number" then
         notify.info(state.lang.CURRENT_FILE_ADDED or "Current file added to tab.")
-        M.init()
+
+        if not from_external then
+            M.init()
+        end
         return true
     else
         local error_message = state.lang.FILE_ADD_FAILED or "Failed to add file to tab."
@@ -651,7 +655,10 @@ M.add_current_buffer_to_tab = function()
             end
         end
         notify.error(error_message)
-        M.init()
+
+        if not from_external then
+            M.init()
+        end
         return false
     end
 end
