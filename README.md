@@ -1,8 +1,26 @@
-# LVIM SPACE - v1.0.0
+# LVIM SPACE - v1.1.0
 
 **LVIM SPACE** is a Neovim plugin for advanced management of projects, workspaces, tabs, and files, featuring a visual UI, persistent sessions, NerdFont icons, and both automatic and manual save options.
 
 https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
+
+---
+
+## ⚠️ Breaking Changes in v1.1.0
+
+**Important:** This version introduces breaking changes to the database schema. If you're upgrading from a previous version, you **must** run the migration to preserve your data:
+
+```vim
+:lua require("lvim-space.persistence.migration").migrate()
+```
+
+The migration will:
+
+- Add sort_order columns to projects, workspaces, and tabs tables
+- Preserve all your existing data
+- Enable the new reordering functionality
+
+**Note:** Back up your database before migration if you have important data.
 
 ---
 
@@ -12,23 +30,22 @@ https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
 
 ```lua
 {
-    "lvim-tech/lvim-space",
-    dependencies = {
-        "kkharji/sqlite.lua",
-    },
-    config = function()
-        require("lvim-space").setup({
-            -- Your configuration here
-        })
-    end
+  "lvim-tech/lvim-space",
+  dependencies = {
+    "kkharji/sqlite.lua",
+  },
+  config = function()
+    require("lvim-space").setup({
+      -- Your configuration here
+    })
+  end
 }
 ```
 
 ### Packer
 
 ```lua
-
-use {
+use({
     "lvim-tech/lvim-space",
     requires = {
         "kkharji/sqlite.lua",
@@ -37,8 +54,8 @@ use {
         require("lvim-space").setup({
             -- Your configuration here
         })
-    end
-}
+    end,
+})
 ```
 
 ---
@@ -49,6 +66,7 @@ use {
 - **Workspaces**: Each project can contain multiple workspaces (contexts). You can add, rename, delete, and switch workspaces.
 - **Tabs**: Each workspace supports multiple tabs, each with its own window/buffer layout.
 - **Files**: Tabs remember their files, window layout, and cursor positions.
+- **🆕 Reordering**: Move projects, workspaces, and tabs up/down to organize them exactly how you want.
 - **Session Management**: Automatically or manually save and restore the state of your workspaces, tabs, and files.
 - **Visual UI Panels**: Navigate and manage projects, workspaces, tabs, and files with a floating panel UI and icons.
 - **NerdFont Icons**: Visual indicators for all entities (project, workspace, tab, file, empty, etc).
@@ -74,12 +92,12 @@ Returns an array of tab objects for the current workspace:
 
 ```lua
 {
-  tabs = {
-    { id = 1, name = "main", active = true },
-    { id = 2, name = "feature", active = false },
-    { id = 3, name = "testing", active = false }
-  },
-  workspace_name = "Core"
+  tabs = {{
+    active = true,
+    id = 7,
+    name = "Tab 1"
+  }},
+  workspace_name = "Workspace 1"
 }
 ```
 
@@ -98,13 +116,38 @@ Returns an array of tab objects for the current workspace:
 **Example with tabby.nvim:**
 
 ```lua
-local pub = require("lvim-space.pub")
-local tabs = pub.get_tab_info()
-
-for _, tab in ipairs(tabs) do
-    local hl = tab.active and active_highlight or inactive_highlight
-    -- Use tab.name and tab.active in your tabby configuration
+local function get_lvim_space_tabs()
+    local pub_status_ok, pub = pcall(require, "lvim-space.pub")
+    if pub_status_ok then
+        return pub.get_tab_info()
+    else
+        return { workspace_name = "Unknown", tabs = {} }
+    end
 end
+
+local components = function()
+    local comps = {}
+    local lvim_data = get_lvim_space_tabs()
+
+    -- Add LVIM Space tabs
+    for _, tab in ipairs(lvim_data.tabs or {}) do
+        local hl = tab.active and active_highlight or inactive_highlight
+        table.insert(comps, {
+            type = "text",
+            text = { "  " .. tab.name .. "  ", hl = hl },
+        })
+    end
+
+    -- Add workspace name
+    table.insert(comps, {
+        type = "text",
+        text = { "  " .. (lvim_data.workspace_name or "Unknown") .. "  " },
+    })
+
+    return comps
+end
+
+require("tabby").setup({ components = components })
 ```
 
 ---
@@ -126,6 +169,8 @@ Below are the default keybindings, as set in your config. You can customize thes
 | Action  | Enter/Select     | `<CR>`      | Enter/select entity                            |
 | Action  | Split Vertical   | `v`         | Open in vertical split                         |
 | Action  | Split Horizontal | `h`         | Open in horizontal split                       |
+| Action  | Move Up          | `K`         | Move selected entity up in order               |
+| Action  | Move Down        | `J`         | Move selected entity down in order             |
 | Main    | Open Panel       | `<C-Space>` | Open main lvim-space panel                     |
 
 > **Note**: Keybindings are context-sensitive and may change based on the active panel (projects, workspaces, tabs, files).
@@ -209,6 +254,8 @@ require("lvim-space").setup({
             enter = "<CR>",
             split_v = "v",
             split_h = "h",
+            move_up = "K",
+            move_down = "J",
         },
     },
 })
@@ -229,9 +276,7 @@ require("lvim-space").setup({
 
 If `autosave = false`, use
 
-```vim
 :LvimSpaceSave
-```
 
 to persist the full state (projects, workspaces, tabs, files, layouts, etc).
 
