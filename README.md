@@ -169,8 +169,8 @@ Below are the default keybindings, as set in your config. You can customize thes
 | Action  | Enter/Select     | `<CR>`      | Enter/select entity                            |
 | Action  | Split Vertical   | `v`         | Open in vertical split                         |
 | Action  | Split Horizontal | `h`         | Open in horizontal split                       |
-| Action  | Move Up          | `K`         | Move selected entity up in order               |
-| Action  | Move Down        | `J`         | Move selected entity down in order             |
+| Action  | Move Up          | `<C-k>`     | Move selected entity up in order               |
+| Action  | Move Down        | `<C-j>`     | Move selected entity down in order             |
 | Main    | Open Panel       | `<C-Space>` | Open main lvim-space panel                     |
 
 > **Note**: Keybindings are context-sensitive and may change based on the active panel (projects, workspaces, tabs, files).
