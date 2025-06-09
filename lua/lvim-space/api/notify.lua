@@ -17,15 +17,15 @@ local function notify(msg, level)
 end
 
 function M.info(msg)
-    notify(msg, vim.log.levels.INFO)
+    notify(msg or "INFO", vim.log.levels.INFO)
 end
 
 function M.warn(msg)
-    notify(msg, vim.log.levels.WARN)
+    notify(msg or "WARN", vim.log.levels.WARN)
 end
 
 function M.error(msg)
-    notify(msg, vim.log.levels.ERROR)
+    notify(msg or "ERROR", vim.log.levels.ERROR)
 end
 
 return M
