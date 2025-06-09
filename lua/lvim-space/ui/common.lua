@@ -180,7 +180,7 @@ local function safe_get_cursor(win)
 end
 
 local function format_error_message(message)
-    local error_icon = (config.ui and config.ui.icons and config.ui.icons.error) or " "
+    local error_icon = (config.ui and config.ui.icons and config.ui.icons.empty) or "󰇘 "
     return error_icon .. message
 end
 
