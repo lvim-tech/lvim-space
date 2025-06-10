@@ -121,19 +121,65 @@ local function collect_tab_session_data(tab_id)
             valid_paths[vim.fn.fnamemodify(path, ":p")] = true
         end
     end
+
+    local buffer_cursor_info = {}
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        if vim.api.nvim_win_is_valid(win) and not ui.is_plugin_window(win) then
+            local bufnr = vim.api.nvim_win_get_buf(win)
+            local c = classify_buffer(bufnr)
+            if not c.is_special and c.name ~= "" then
+                local abs_path = vim.fn.fnamemodify(c.name, ":p")
+                if valid_paths[abs_path] then
+                    local cursor_ok, cursor = pcall(vim.api.nvim_win_get_cursor, win)
+                    if cursor_ok then
+                        if not buffer_cursor_info[abs_path] or win == vim.api.nvim_get_current_win() then
+                            local topline = vim.api.nvim_win_call(win, function()
+                                return vim.fn.line("w0")
+                            end)
+                            local leftcol = vim.api.nvim_win_call(win, function()
+                                return vim.fn.winsaveview().leftcol or 0
+                            end)
+                            buffer_cursor_info[abs_path] = {
+                                cursor_line = cursor[1],
+                                cursor_col = cursor[2],
+                                topline = topline,
+                                leftcol = leftcol,
+                            }
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
         local c = classify_buffer(bufnr)
         if c.is_valid and not c.is_special and c.name ~= "" then
             local abs = vim.fn.fnamemodify(c.name, ":p")
             if valid_paths[abs] and c.is_listed and not path_to_idx[abs] then
-                table.insert(valid_buffers, { filePath = abs, bufnr = bufnr, filetype = c.filetype })
+                local buffer_entry = {
+                    filePath = abs,
+                    bufnr = bufnr,
+                    filetype = c.filetype,
+                }
+
+                if buffer_cursor_info[abs] then
+                    buffer_entry.cursor_line = buffer_cursor_info[abs].cursor_line
+                    buffer_entry.cursor_col = buffer_cursor_info[abs].cursor_col
+                    buffer_entry.topline = buffer_cursor_info[abs].topline
+                    buffer_entry.leftcol = buffer_cursor_info[abs].leftcol
+                end
+
+                table.insert(valid_buffers, buffer_entry)
                 path_to_idx[abs] = #valid_buffers
             end
         end
     end
+
     if #valid_buffers == 0 then
         return nil, "No valid buffers found"
     end
+
     local windows = {}
     local current_win = vim.api.nvim_get_current_win()
     local current_window_index, valid_window_count = nil, 0
@@ -336,20 +382,24 @@ local function restore_session_layout(sd, fmap, init)
     end
     local created = { [1] = init }
     local posmap = { [1] = { row = 0, col = 0 } }
+
+    local cursor_restore_queue = {}
+
     local w1 = sd.windows[1]
     if w1 and w1.file_path and fmap[w1.file_path] then
         pcall(function()
             vim.api.nvim_win_set_buf(init, fmap[w1.file_path])
-            if w1.cursor_line and w1.cursor_col then
-                vim.api.nvim_win_set_cursor(init, { w1.cursor_line, w1.cursor_col })
-            end
-            if w1.topline then
-                vim.api.nvim_win_call(init, function()
-                    vim.cmd("normal! " .. w1.topline .. "zt")
-                end)
-            end
+
+            table.insert(cursor_restore_queue, {
+                win = init,
+                cursor_line = w1.cursor_line,
+                cursor_col = w1.cursor_col,
+                topline = w1.topline,
+                leftcol = w1.leftcol,
+            })
         end)
     end
+
     for i = 2, #sd.windows do
         local wi = sd.windows[i]
         if wi.file_path and fmap[wi.file_path] then
@@ -371,14 +421,14 @@ local function restore_session_layout(sd, fmap, init)
                 local nw = vim.api.nvim_get_current_win()
                 pcall(function()
                     vim.api.nvim_win_set_buf(nw, fmap[wi.file_path])
-                    if wi.cursor_line and wi.cursor_col then
-                        vim.api.nvim_win_set_cursor(nw, { wi.cursor_line, wi.cursor_col })
-                    end
-                    if wi.topline then
-                        vim.api.nvim_win_call(nw, function()
-                            vim.cmd("normal! " .. wi.topline .. "zt")
-                        end)
-                    end
+
+                    table.insert(cursor_restore_queue, {
+                        win = nw,
+                        cursor_line = wi.cursor_line,
+                        cursor_col = wi.cursor_col,
+                        topline = wi.topline,
+                        leftcol = wi.leftcol,
+                    })
                 end)
                 created[i] = nw
                 posmap[i] = {
@@ -388,6 +438,41 @@ local function restore_session_layout(sd, fmap, init)
             end
         end
     end
+
+    vim.schedule(function()
+        for _, restore_info in ipairs(cursor_restore_queue) do
+            if vim.api.nvim_win_is_valid(restore_info.win) then
+                local bufnr = vim.api.nvim_win_get_buf(restore_info.win)
+
+                if vim.api.nvim_buf_is_loaded(bufnr) then
+                    pcall(function()
+                        if restore_info.cursor_line and restore_info.cursor_col then
+                            local line_count = vim.api.nvim_buf_line_count(bufnr)
+                            local safe_line = math.min(restore_info.cursor_line, line_count)
+                            local line_content = vim.api.nvim_buf_get_lines(bufnr, safe_line - 1, safe_line, false)[1]
+                                or ""
+                            local safe_col = math.min(restore_info.cursor_col, #line_content)
+                            vim.api.nvim_win_set_cursor(restore_info.win, { safe_line, safe_col })
+                        end
+
+                        if restore_info.topline or restore_info.leftcol then
+                            vim.api.nvim_win_call(restore_info.win, function()
+                                local view = vim.fn.winsaveview()
+                                if restore_info.topline then
+                                    view.topline = restore_info.topline
+                                end
+                                if restore_info.leftcol then
+                                    view.leftcol = restore_info.leftcol
+                                end
+                                vim.fn.winrestview(view)
+                            end)
+                        end
+                    end)
+                end
+            end
+        end
+    end)
+
     return created
 end
 
