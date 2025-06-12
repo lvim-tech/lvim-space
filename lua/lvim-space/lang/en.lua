@@ -147,7 +147,7 @@ return {
 
     INFO_LINE_SEARCH = "➤ [j] [k] | [s]earch | 󱁐 file load 󰌑 file enter | [v]split [h]split | [p]rojects [w]orkspaces [t]abs [f]iles",
     SEARCH_ALL_FILES_LABEL = "all",
-    SEARCH_PROMPT = "Search files:",
+    SEARCH_PROMPT = "➤ Search files",
     SEARCH = "Search",
     SEARCH_EMPTY = "No files found matching your search criteria.",
     SEARCH_FAILED = "Search operation failed.",

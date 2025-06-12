@@ -653,6 +653,93 @@ local function show_search_input()
     if not search_input_buf or not search_input_win then
         return
     end
+    local function update_search_display_without_actions()
+        if not cache.ctx or not cache.ctx.buf or not vim.api.nvim_buf_is_valid(cache.ctx.buf) then
+            return
+        end
+        local lines_to_display = {}
+        cache.file_ids_map = {}
+        local function is_buffer_active(file_path_to_check)
+            local current_b = vim.api.nvim_get_current_buf()
+            if not vim.api.nvim_buf_is_valid(current_b) then
+                return false
+            end
+            local buffer_name = vim.api.nvim_buf_get_name(current_b)
+            return buffer_name ~= ""
+                and vim.fn.fnamemodify(buffer_name, ":p") == vim.fn.fnamemodify(file_path_to_check, ":p")
+        end
+        local is_results_empty = (#cache.search_results == 0)
+        if is_results_empty then
+            table.insert(
+                lines_to_display,
+                (common.get_entity_icon("search", false, true))
+                    .. (state.lang.SEARCH_EMPTY or "No files found matching your search criteria.")
+            )
+        else
+            for i, entity_item in ipairs(cache.search_results) do
+                local is_item_active = is_buffer_active(entity_item.path)
+                local item_icon = common.get_entity_icon("file", is_item_active, false)
+                local display_path_text = entity_item.relative_path_display
+                    or relpath_to_project(entity_item.path, get_project_path_abs())
+                table.insert(lines_to_display, item_icon .. display_path_text)
+                cache.file_ids_map[i] = entity_item.id
+            end
+        end
+        vim.bo[cache.ctx.buf].modifiable = true
+        vim.api.nvim_buf_set_lines(cache.ctx.buf, 0, -1, false, lines_to_display)
+        vim.bo[cache.ctx.buf].modifiable = false
+        set_cursor_to_first_line()
+        local ns_id = vim.api.nvim_create_namespace("lvim_search_highlights")
+        vim.api.nvim_buf_clear_namespace(cache.ctx.buf, ns_id, 0, -1)
+        if cache.current_query and cache.current_query ~= "" and not is_results_empty then
+            for line_idx, entity_item in ipairs(cache.search_results) do
+                local display_text = entity_item.relative_path_display or ""
+                local icon_len = #common.get_entity_icon("file", is_buffer_active(entity_item.path), false)
+                local match_positions = find_all_match_positions(display_text, cache.current_query)
+                for _, pos in ipairs(match_positions) do
+                    local start_col = pos.start + icon_len
+                    local end_col = start_col + pos.length
+                    local hl_group
+                    if pos.priority and pos.priority >= 100 then
+                        hl_group = "LvimSpaceFuzzyPrimary"
+                    elseif pos.priority and pos.priority >= 80 then
+                        hl_group = "LvimSpaceFuzzySecondary"
+                    else
+                        hl_group = "LvimSpaceFuzzySecondary"
+                    end
+                    pcall(vim.api.nvim_buf_set_extmark, cache.ctx.buf, ns_id, line_idx - 1, start_col, {
+                        end_col = end_col,
+                        hl_group = hl_group,
+                    })
+                end
+            end
+        end
+        if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+            local win_current_config = vim.api.nvim_win_get_config(cache.ctx.win)
+            local config_changes = {}
+            local num_display_lines = #lines_to_display == 0 and 1 or #lines_to_display
+            local search_panel_config = (config.ui and config.ui.panels and config.ui.panels.search) or {}
+            local panel_max_height = search_panel_config.max_height or config.max_height or 10
+            local calculated_new_height = math.min(math.max(num_display_lines, 1), panel_max_height)
+            if win_current_config.height ~= calculated_new_height then
+                config_changes.height = calculated_new_height
+                local bottom_elements_total_height = 2
+                config_changes.row = vim.o.lines - calculated_new_height - bottom_elements_total_height
+            end
+            local query_display_str = cache.current_query == "" and (state.lang.SEARCH_ALL_FILES_LABEL or "all")
+                or "'" .. cache.current_query .. "'"
+            local new_title_str =
+                string.format("%s (%d - %s)", state.lang.SEARCH or "Search", #cache.search_results, query_display_str)
+            local formatted_win_title = " " .. new_title_str .. " "
+            if win_current_config.title ~= formatted_win_title then
+                config_changes.title = formatted_win_title
+            end
+            if not vim.tbl_isempty(config_changes) then
+                local final_win_config = vim.tbl_extend("force", win_current_config, config_changes)
+                pcall(vim.api.nvim_win_set_config, cache.ctx.win, final_win_config)
+            end
+        end
+    end
     local live_update_timer, live_augroup =
         nil, vim.api.nvim_create_augroup("LvimSpaceSearchInputLiveUpdate", { clear = true })
     local function cleanup_live_timer()
@@ -677,8 +764,9 @@ local function show_search_input()
             cleanup_live_timer()
             live_update_timer = vim.defer_fn(function()
                 if current_input_text ~= cache.current_query then
+                    cache.current_query = current_input_text
                     live_fzf_search(current_input_text)
-                    update_search_display()
+                    update_search_display_without_actions()
                 end
             end, 80)
         end),
