@@ -836,26 +836,65 @@ function M.handle_file_switch(opts)
     if not _can_perform_file_operation() then
         return
     end
-    local selected_file_id = common.get_id_at_cursor(cache.file_ids_map)
-    if not selected_file_id then
+    local selected = common.get_id_at_cursor(cache.file_ids_map)
+    if not selected then
         return
     end
-    local file_opened_ok = _open_file_in_editor_window(selected_file_id)
-    if not file_opened_ok then
-        notify.error(state.lang.SEARCH_FILE_OPEN_FAILED or "Failed to open selected file.")
+    local file_path = selected
+    if vim.fn.filereadable(file_path) ~= 1 then
+        notify.error(state.lang.FILE_NOT_READABLE or "File is not readable")
         return
+    end
+    local opened = _open_file_in_editor_window(file_path)
+    if not opened then
+        notify.error(state.lang.SEARCH_FILE_OPEN_FAILED or "Failed to open file")
+        return
+    end
+    local tab = data.find_tab_by_id(state.tab_active, state.workspace_id)
+    if tab then
+        local ok, tdata = pcall(vim.fn.json_decode, tab.data or "{}")
+        if ok then
+            tdata.buffers = tdata.buffers or {}
+            local exists = false
+            for _, buf in ipairs(tdata.buffers) do
+                if buf.filePath == file_path then
+                    exists = true
+                    break
+                end
+            end
+            if not exists then
+                table.insert(tdata.buffers, {
+                    filePath = file_path,
+                    bufnr = vim.api.nvim_get_current_buf(),
+                })
+                data.update_tab_data(state.tab_active, vim.fn.json_encode(tdata), state.workspace_id)
+            end
+        end
     end
     if opts.close_panel then
-        local editor_win_to_return_focus = last_real_win
+        local editor_win = last_real_win
         ui.close_all()
-        if editor_win_to_return_focus and vim.api.nvim_win_is_valid(editor_win_to_return_focus) then
-            pcall(vim.api.nvim_set_current_win, editor_win_to_return_focus)
+        if editor_win and vim.api.nvim_win_is_valid(editor_win) then
+            pcall(vim.api.nvim_set_current_win, editor_win)
             vim.cmd("hi Cursor blend=100")
         else
             vim.cmd("hi Cursor blend=100")
         end
     else
         update_search_display()
+        local win = cache.ctx and cache.ctx.win
+        if win and vim.api.nvim_win_is_valid(win) then
+            for idx, entry in ipairs(cache.search_results) do
+                if entry.id == file_path then
+                    vim.schedule(function()
+                        if vim.api.nvim_win_is_valid(win) then
+                            pcall(vim.api.nvim_win_set_cursor, win, { idx, 0 })
+                        end
+                    end)
+                    break
+                end
+            end
+        end
     end
 end
 
