@@ -43,6 +43,16 @@ function M.setup()
         fg = config.ui.highlight.fg_line,
         default = true,
     })
+    vim.api.nvim_set_hl(0, "LvimSpaceFuzzyPrimary", {
+        bg = config.ui.highlight.bg_fuzzy,
+        fg = config.ui.highlight.fg_fuzzy_primary,
+        bold = true,
+    })
+    vim.api.nvim_set_hl(0, "LvimSpaceFuzzySecondary", {
+        bg = config.ui.highlight.bg_fuzzy,
+        fg = config.ui.highlight.fg_fuzzy_secondary,
+        bold = true,
+    })
 end
 
 return M

@@ -39,7 +39,6 @@ local function classify_buffer(bufnr)
     local buf_name = vim.api.nvim_buf_get_name(bufnr)
     local filetype = buf_options.filetype
     local buftype = buf_options.buftype
-
     local is_special = false
     if buftype ~= "" and buftype ~= "normal" then
         is_special = true
@@ -121,7 +120,6 @@ local function collect_tab_session_data(tab_id)
             valid_paths[vim.fn.fnamemodify(path, ":p")] = true
         end
     end
-
     local buffer_cursor_info = {}
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
         if vim.api.nvim_win_is_valid(win) and not ui.is_plugin_window(win) then
@@ -151,7 +149,6 @@ local function collect_tab_session_data(tab_id)
             end
         end
     end
-
     for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
         local c = classify_buffer(bufnr)
         if c.is_valid and not c.is_special and c.name ~= "" then
@@ -162,24 +159,20 @@ local function collect_tab_session_data(tab_id)
                     bufnr = bufnr,
                     filetype = c.filetype,
                 }
-
                 if buffer_cursor_info[abs] then
                     buffer_entry.cursor_line = buffer_cursor_info[abs].cursor_line
                     buffer_entry.cursor_col = buffer_cursor_info[abs].cursor_col
                     buffer_entry.topline = buffer_cursor_info[abs].topline
                     buffer_entry.leftcol = buffer_cursor_info[abs].leftcol
                 end
-
                 table.insert(valid_buffers, buffer_entry)
                 path_to_idx[abs] = #valid_buffers
             end
         end
     end
-
     if #valid_buffers == 0 then
         return nil, "No valid buffers found"
     end
-
     local windows = {}
     local current_win = vim.api.nvim_get_current_win()
     local current_window_index, valid_window_count = nil, 0
@@ -291,7 +284,6 @@ local function force_single_window()
             table.insert(wins, w)
         end
     end
-
     if #wins == 0 then
         local normal_wins = {}
         for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
@@ -299,7 +291,6 @@ local function force_single_window()
                 table.insert(normal_wins, w)
             end
         end
-
         if #normal_wins > 0 then
             local curwin = normal_wins[1]
             vim.api.nvim_set_current_win(curwin)
@@ -310,9 +301,7 @@ local function force_single_window()
             return vim.api.nvim_get_current_win()
         end
     end
-
     local t = wins[1]
-
     if #wins > 1 then
         for i = 2, #wins do
             pcall(vim.api.nvim_win_close, wins[i], true)
@@ -350,18 +339,15 @@ local function cleanup_old_session_buffers(keep)
             end
         end
     end
-
     if #del <= 1 then
         return
     end
-
     local normal_windows = 0
     for _, win in ipairs(vim.api.nvim_list_wins()) do
         if vim.api.nvim_win_is_valid(win) and not ui.is_plugin_window(win) then
             normal_windows = normal_windows + 1
         end
     end
-
     local buffers_to_delete = normal_windows > 1 and del or {}
     if normal_windows == 1 and #del > 0 then
         for i = 1, #del - 1 do
@@ -370,7 +356,6 @@ local function cleanup_old_session_buffers(keep)
     else
         buffers_to_delete = del
     end
-
     for _, buf in ipairs(buffers_to_delete) do
         pcall(vim.api.nvim_buf_delete, buf, { force = true, unload = true })
     end
@@ -399,7 +384,6 @@ local function restore_session_layout(sd, fmap, init)
             })
         end)
     end
-
     for i = 2, #sd.windows do
         local wi = sd.windows[i]
         if wi.file_path and fmap[wi.file_path] then
@@ -438,12 +422,10 @@ local function restore_session_layout(sd, fmap, init)
             end
         end
     end
-
     vim.schedule(function()
         for _, restore_info in ipairs(cursor_restore_queue) do
             if vim.api.nvim_win_is_valid(restore_info.win) then
                 local bufnr = vim.api.nvim_win_get_buf(restore_info.win)
-
                 if vim.api.nvim_buf_is_loaded(bufnr) then
                     pcall(function()
                         if restore_info.cursor_line and restore_info.cursor_col then
@@ -472,7 +454,6 @@ local function restore_session_layout(sd, fmap, init)
             end
         end
     end)
-
     return created
 end
 
@@ -611,18 +592,15 @@ M.close_all_file_windows_and_buffers = function()
             table.insert(normal_windows, win)
         end
     end
-
     local windows_to_close = {}
     if #normal_windows > 1 then
         for i = 2, #normal_windows do
             table.insert(windows_to_close, normal_windows[i])
         end
     end
-
     for _, win in ipairs(windows_to_close) do
         pcall(vim.api.nvim_win_close, win, true)
     end
-
     local current_buf = vim.api.nvim_get_current_buf()
     local buffers_to_delete = {}
     for _, b in ipairs(vim.api.nvim_list_bufs()) do
@@ -646,7 +624,6 @@ M.close_all_file_windows_and_buffers = function()
             end
         end
     end
-
     if #normal_windows == 0 then
         vim.cmd("new")
     elseif #buffers_to_delete > 0 then
@@ -656,7 +633,6 @@ M.close_all_file_windows_and_buffers = function()
                 remaining_normal_windows = remaining_normal_windows + 1
             end
         end
-
         if remaining_normal_windows == 1 and #buffers_to_delete >= 1 then
             for i = 1, math.max(0, #buffers_to_delete - 1) do
                 pcall(vim.api.nvim_buf_delete, buffers_to_delete[i], { force = true })
@@ -667,7 +643,6 @@ M.close_all_file_windows_and_buffers = function()
             end
         end
     end
-
     cleanup_buffer_caches()
 end
 
@@ -701,7 +676,6 @@ M.setup_autocmds = function()
                 if not vim.api.nvim_buf_is_valid(b) or vim.bo[b].buftype ~= "" then
                     return
                 end
-
                 for _, win in ipairs(vim.api.nvim_list_wins()) do
                     if
                         vim.api.nvim_win_is_valid(win)
@@ -711,7 +685,6 @@ M.setup_autocmds = function()
                         return
                     end
                 end
-
                 local name = vim.api.nvim_buf_get_name(b)
                 if name == "" or not is_valid_file_path(name) then
                     return
@@ -823,17 +796,14 @@ M.save_all = function()
         }
         data.update_workspace_tabs(vim.fn.json_encode(ws_tabs), state.workspace_id)
     end
-
     if state.project_id and state.workspace_id then
         data.set_workspace_active(state.workspace_id, state.project_id)
     end
-
     if state.workspace_id and state.tab_ids then
         for _, tab_id in ipairs(state.tab_ids) do
             M.save_current_state(tab_id, true)
         end
     end
-
     return true
 end
 

@@ -116,10 +116,27 @@ M.entity_types = {
         switched_to = "FILE_SWITCHED_TO",
         switch_failed = "FILE_SWITCH_FAILED",
     },
+    search = {
+        name = "search",
+        table = "search_results",
+        state_id = nil, -- Search няма активно състояние
+        empty_message = "SEARCH_EMPTY",
+        info_empty = "INFO_LINE_SEARCH_EMPTY",
+        info = "INFO_LINE_SEARCH",
+        title = "SEARCH",
+        min_name_len = 0, -- Search може да има празна заявка
+        name_len_error = "SEARCH_QUERY_LEN",
+        name_exist_error = "SEARCH_QUERY_EXIST",
+        add_failed = "SEARCH_FAILED",
+        added_success = "SEARCH_SUCCESS",
+        error_message = "SEARCH_ERROR",
+        switched_to = "SEARCH_FILE_OPENED",
+        switch_failed = "SEARCH_FILE_OPEN_FAILED",
+    },
 }
 
 local icon_cache = {}
-local function get_entity_icon(type_name, active, empty)
+M.get_entity_icon = function(type_name, active, empty)
     local key = type_name .. "_" .. tostring(active) .. "_" .. tostring(empty)
     if icon_cache[key] then
         return icon_cache[key]
@@ -132,12 +149,9 @@ local function get_entity_icon(type_name, active, empty)
         icon = icons_config.empty or "󰇘 "
     else
         if active then
-            icon = icons_config[type_name .. "_active"]
-                or icons_config[type_name]
-                or icons_config.default_active
-                or " "
+            icon = icons_config[type_name .. "_active"] or icons_config[type_name] or icons_config.default_active or " "
         else
-            icon = icons_config[type_name] or icons_config.default_inactive or " "
+            icon = icons_config[type_name] or icons_config.default_inactive or " "
         end
     end
 
@@ -166,9 +180,9 @@ local function format_line(ent, type_name, active, custom_formatter)
     else
         display_text = ent.name or ent.path or "???"
     end
-    display_text = display_text:gsub("^[>%s▶󰋜󰉋󰏘󰉌󰓩󰎃󰈙󰈚]*", "")
+    display_text = display_text:gsub("^[>%s▶󰋜󰉋󰏘󰉌󰓩󰎃󰈙󰈚]*", "")
     display_text = vim.trim(display_text)
-    return get_entity_icon(type_name, active, false) .. display_text
+    return M.get_entity_icon(type_name, active, false) .. display_text
 end
 
 local function safe_get_cursor(win)
@@ -311,21 +325,24 @@ M.init_entity_list = function(
 
     entity_def.id_field = id_field_name or "id"
 
-    for i, entity_data in ipairs(entities_list) do
+    for _, entity_data in ipairs(entities_list) do
         local is_active = determine_active(entity_def, entity_data, active_entity_id, custom_active_check_fn)
-        table.insert(display_lines, format_line(entity_data, entity_def.name, is_active, line_formatter_fn))
-        id_to_line_map[i] = entity_data[entity_def.id_field]
-
-        if is_active then
-            actual_cursor_line = i
-            active_item_found = true
+        local formatted_line = format_line(entity_data, entity_def.name, is_active, line_formatter_fn)
+        if formatted_line then
+            table.insert(display_lines, formatted_line)
+            id_to_line_map[#display_lines] = entity_data[entity_def.id_field]
+            if is_active then
+                actual_cursor_line = #display_lines
+                active_item_found = true
+            end
         end
     end
 
     if is_list_empty then
         table.insert(
             display_lines,
-            get_entity_icon(entity_def.name, false, true) .. (state.lang[entity_def.empty_message] or "List is empty.")
+            M.get_entity_icon(entity_def.name, false, true)
+                .. (state.lang[entity_def.empty_message] or "List is empty.")
         )
     elseif not active_item_found and entity_def.state_id then
         state[entity_def.state_id] = nil

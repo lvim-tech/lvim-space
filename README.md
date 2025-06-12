@@ -1,4 +1,4 @@
-# LVIM SPACE - v1.1.0
+# LVIM SPACE - v1.2.0
 
 **LVIM SPACE** is a Neovim plugin for advanced management of projects, workspaces, tabs, and files, featuring a visual UI, persistent sessions, NerdFont icons, and both automatic and manual save options.
 
@@ -67,6 +67,7 @@ use({
 - **Tabs**: Each workspace supports multiple tabs, each with its own window/buffer layout.
 - **Files**: Tabs remember their files, window layout, and cursor positions.
 - **🆕 Reordering**: Move projects, workspaces, and tabs up/down to organize them exactly how you want.
+- **🆕 File Search**: Powerful fuzzy search functionality for quickly finding and opening files in your project with intelligent matching and highlighting.
 - **Session Management**: Automatically or manually save and restore the state of your workspaces, tabs, and files.
 - **Visual UI Panels**: Navigate and manage projects, workspaces, tabs, and files with a floating panel UI and icons.
 - **NerdFont Icons**: Visual indicators for all entities (project, workspace, tab, file, empty, etc).
@@ -162,6 +163,7 @@ Below are the default keybindings, as set in your config. You can customize thes
 | Global  | Workspaces       | `w`         | Open workspaces panel                          |
 | Global  | Tabs             | `t`         | Open tabs panel                                |
 | Global  | Files            | `f`         | Open files panel                               |
+| Global  | Search           | `s`         | Open search panel                              |
 | Action  | Add              | `a`         | Add new entity (project, workspace, tab, file) |
 | Action  | Delete           | `d`         | Delete selected entity                         |
 | Action  | Rename           | `r`         | Rename selected entity                         |

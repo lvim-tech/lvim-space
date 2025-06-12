@@ -120,6 +120,76 @@ local function validate_window_config(win_config)
     return true
 end
 
+local function setup_custom_cursorline(buf, win)
+    if not is_valid_buf(buf) or not is_valid_win(win) then
+        return
+    end
+
+    local ns = api.nvim_create_namespace("lvim_space_cursorline")
+
+    local function update_cursor_highlight()
+        if not is_valid_buf(buf) or not is_valid_win(win) then
+            return
+        end
+
+        api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+
+        local cursor_pos = api.nvim_win_get_cursor(win)
+        local line = cursor_pos[1] - 1
+        local total_lines = api.nvim_buf_line_count(buf)
+
+        if line >= 0 and line < total_lines then
+            api.nvim_buf_set_extmark(buf, ns, line, 0, {
+                end_line = line + 1,
+                hl_group = "LvimSpaceCursorLine",
+                priority = 50,
+            })
+        end
+    end
+
+    local cursor_group = api.nvim_create_augroup("LvimSpaceCursorLine_" .. buf, { clear = true })
+
+    api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+        group = cursor_group,
+        buffer = buf,
+        callback = update_cursor_highlight,
+    })
+
+    api.nvim_create_autocmd("BufDelete", {
+        group = cursor_group,
+        buffer = buf,
+        callback = function()
+            pcall(api.nvim_del_augroup_by_id, cursor_group)
+        end,
+        once = true,
+    })
+
+    vim.schedule(update_cursor_highlight)
+end
+
+M.add_highlight = function(buf, line, start_col, end_col, hl_group)
+    if not is_valid_buf(buf) then
+        return
+    end
+
+    local ns = api.nvim_create_namespace("lvim_space_syntax")
+
+    api.nvim_buf_set_extmark(buf, ns, line, start_col, {
+        end_col = end_col,
+        hl_group = hl_group,
+        priority = 200,
+    })
+end
+
+M.clear_highlights = function(buf)
+    if not is_valid_buf(buf) then
+        return
+    end
+
+    local ns = api.nvim_create_namespace("lvim_space_syntax")
+    api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+end
+
 M.create_window = function(options)
     local buf = api.nvim_create_buf(false, true)
     if not is_valid_buf(buf) then
@@ -166,7 +236,7 @@ M.create_window = function(options)
     end
 
     if options.cursorline ~= nil and is_valid_win(win) then
-        vim.wo[win].cursorline = options.cursorline
+        vim.wo[win].cursorline = false
     end
 
     if options.store_in then
@@ -258,6 +328,8 @@ M.open_main = function(lines, name, selected_line)
             if not is_valid_win(win) or not is_valid_buf(buf) then
                 return
             end
+
+            setup_custom_cursorline(buf, win)
 
             set_cursor_blend(100)
             local cursor_group = api.nvim_create_augroup("LvimSpaceCursorBlend", { clear = true })
@@ -371,7 +443,9 @@ local function calculate_input_dimensions(prompt)
     }
 end
 
-function M.create_input_field(prompt, default_value, callback)
+function M.create_input_field(prompt, default_value, callback, options)
+    options = options or {}
+
     state.disable_auto_close = true
 
     if state.ui and state.ui.content and is_valid_win(state.ui.content.win) then
@@ -393,6 +467,7 @@ function M.create_input_field(prompt, default_value, callback)
         focusable = false,
         winhighlight = "Normal:LvimSpacePrompt,NormalNC:LvimSpacePrompt,FloatBorder:LvimSpacePrompt",
         border = dims.prompt_border,
+        filetype = options.prompt_filetype or "lvim-space-prompt",
     })
 
     local input_buf, input_win = M.create_window({
@@ -407,6 +482,7 @@ function M.create_input_field(prompt, default_value, callback)
         store_in = "input_window",
         winhighlight = "Normal:LvimSpaceInput,NormalNC:LvimSpaceInput,FloatBorder:LvimSpaceInput",
         border = dims.input_border,
+        filetype = options.input_filetype or "lvim-space-input",
         on_create = function(win, buf)
             if not is_valid_win(win) or not is_valid_buf(buf) then
                 return
@@ -433,7 +509,6 @@ function M.create_input_field(prompt, default_value, callback)
                         if not is_valid_buf(buf) then
                             return
                         end
-
                         local current_win = api.nvim_get_current_win()
                         if current_win == prompt_win and is_valid_win(win) then
                             api.nvim_set_current_win(win)
@@ -469,6 +544,7 @@ function M.create_input_field(prompt, default_value, callback)
 
     if not input_buf or not input_win then
         M.close_window("prompt_window")
+        safe_close_win(prompt_win)
         return nil, nil
     end
 

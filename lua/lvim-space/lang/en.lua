@@ -21,7 +21,7 @@ return {
     CURRENT_BUFFER_NO_PATH = "Current buffer has no file path",
     CURRENT_FILE_ADDED = "Current file added to tab",
 
-    INFO_LINE_PROJECTS = "➤ Press: [j] [k] | 󱁐 project load 󰌑 project enter | [a]dd [r]ename [d]elete | [w]orkspaces [t]abs [f]iles",
+    INFO_LINE_PROJECTS = "➤ Press: [j] [k] | 󱁐 project load 󰌑 project enter | [a]dd [r]ename [d]elete | [w]orkspaces [t]abs [f]iles s[earch]",
     INFO_LINE_PROJECTS_EMPTY = "➤ Press: [a]dd",
     INFO_LINE_PROJECT_ERROR = "➤ Press: [Esc] quit | [p]rojects",
     PROJECTS = "Projects",
@@ -54,7 +54,7 @@ return {
     PROJECT_ALREADY_AT_TOP = "Project is already at the top.",
     PROJECT_ALREADY_AT_BOTTOM = "Project is already at the bottom.",
 
-    INFO_LINE_WORKSPACES = "➤ Press: [j] [k] | 󱁐 workspace load 󰌑 workspace enter | [a]dd, [r]ename, [d]elete | [p]projects [t]abs [f]iles",
+    INFO_LINE_WORKSPACES = "➤ Press: [j] [k] | 󱁐 workspace load 󰌑 workspace enter | [a]dd, [r]ename, [d]elete | [p]projects [t]abs [f]iles s[earch]",
     INFO_LINE_WORKSPACES_EMPTY = "➤ Press: [a]dd | [p]projects",
     INFO_LINE_WORKSPACE_ERROR = "➤ Press: [Esc] quit | [p]rojects | [w]orkspaces",
     WORKSPACES = "Workspaces",
@@ -82,7 +82,7 @@ return {
     WORKSPACE_ALREADY_AT_TOP = "Workspace is already at the top.",
     WORKSPACE_ALREADY_AT_BOTTOM = "Workspace is already at the bottom.",
 
-    INFO_LINE_TABS = "➤ Press: [j] [k] | 󱁐 tab load 󰌑 tab enter | [a]dd, [r]ename, [d]elete | [p]projects [w]orkspaces [f]iles",
+    INFO_LINE_TABS = "➤ Press: [j] [k] | 󱁐 tab load 󰌑 tab enter | [a]dd, [r]ename, [d]elete | [p]projects [w]orkspaces [f]iles s[earch]",
     INFO_LINE_TABS_EMPTY = "➤ Press: [a]dd | [p]projects [w]orkspaces",
     INFO_LINE_TAB_ERROR = "➤ Press: [Esc] quit | [p]rojects | [w]orkspaces | [t]abs",
     TABS = "Tabs",
@@ -110,7 +110,7 @@ return {
     TAB_ALREADY_AT_BOTTOM = "Tab is already at the bottom.",
     TAB_INVALID_NEW_ORDER = "The new tab sort order is invalid. It must be between 1 and %s.",
 
-    INFO_LINE_FILES = "➤ Press: [j] [k] | 󱁐 file load 󰌑 file enter | [v]split [h]split | [a]dd, [d]elete | [p]projects [w]orkspaces [t]abs",
+    INFO_LINE_FILES = "➤ Press: [j] [k] | 󱁐 file load 󰌑 file enter | [v]split [h]split | [a]dd, [d]elete | [p]projects [w]orkspaces [t]abs s[earch]",
     INFO_LINE_FILES_EMPTY = "➤ Press: [a]dd | [p]projects [w]orkspaces [t]abs",
     INFO_LINE_FILE_ERROR = "➤ Press: [Esc] quit | [p]rojects | [w]orkspaces | [t]abs",
     FILES = "Files",
@@ -144,4 +144,13 @@ return {
     FILE_OPENED_HORIZONTAL = "File opened in horizontal split",
     FILE_OPEN_HORIZONTAL_FAILED = "Failed to open file in horizontal split",
     FILE_PATH_INVALID_DIR = "Directory does not exist",
+
+    INFO_LINE_SEARCH = "➤ [j] [k] | [s]earch | 󱁐 file load 󰌑 file enter | [v]split [h]split | [p]rojects [w]orkspaces [t]abs [f]iles",
+    SEARCH_ALL_FILES_LABEL = "all",
+    SEARCH_PROMPT = "Search files:",
+    SEARCH = "Search",
+    SEARCH_EMPTY = "No files found matching your search criteria.",
+    SEARCH_FAILED = "Search operation failed.",
+    SEARCH_FILE_OPENED = "File opened successfully.",
+    SEARCH_FILE_OPEN_FAILED = "Failed to open selected file.",
 }

@@ -11,14 +11,12 @@ function M.setup(user_config)
     if user_config ~= nil then
         utils.merge(config, user_config)
     end
-
     local success, lang_data = pcall(require, "lvim-space.lang." .. config.lang)
     if success then
         state.lang = lang_data
     else
         state = require("lvim-space.lang.en")
     end
-
     autocommands.init()
     keymaps.init()
     highlight.setup()

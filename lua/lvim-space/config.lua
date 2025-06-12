@@ -4,7 +4,7 @@ M = {
     save = "~/.local/share/nvim/lvim-space",
     lang = "en",
     notify = true,
-    log = false,
+    log = true,
     log_errors = true,
     log_warnings = true,
     log_info = true,
@@ -16,6 +16,7 @@ M = {
     max_height = 10,
     autosave = true,
     open_panel_on_add_file = false,
+    search = "fd --type f --hidden --follow --exclude .git --exclude node_modules --exclude target --exclude build --exclude dist --exclude .next --exclude .nuxt --exclude coverage --exclude __pycache__ --exclude .pytest_cache --exclude vendor --exclude .svn --exclude .hg",
     ui = {
         border = {
             sign = " ",
@@ -41,7 +42,6 @@ M = {
             error = " ",
             warn = " ",
             info = " ",
-
             project = " ",
             project_active = " ",
             workspace = " ",
@@ -58,6 +58,9 @@ M = {
             bg_line = "#1a1a22",
             fg = "#505067",
             fg_line = "#4a6494",
+            bg_fuzzy = "#1a1a22",
+            fg_fuzzy_primary = "#b65252",
+            fg_fuzzy_secondary = "#a26666",
         },
     },
     keymappings = {
@@ -67,6 +70,7 @@ M = {
             workspaces = "w",
             tabs = "t",
             files = "f",
+            search = "s",
         },
         action = {
             add = "a",

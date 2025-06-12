@@ -21,17 +21,14 @@ local function open_lvim_space(target)
             projects.init()
             return
         end
-
         if not state.workspace_id then
             workspaces.init(nil, { select_workspace = false })
             return
         end
-
         if not state.tab_active then
             tabs.init()
             return
         end
-
         files.init()
     end
 end
@@ -45,7 +42,6 @@ function M.init()
         nowait = true,
         desc = "Open LVIM Space",
     })
-
     vim.api.nvim_create_user_command("LvimSpace", function(opts)
         local args = vim.split(opts.args or "", "%s+")
         local target = args[1]
@@ -53,11 +49,10 @@ function M.init()
     end, {
         nargs = "?",
         complete = function(ArgLead, _, _)
-            local options = { "projects", "workspaces", "tabs", "files" }
+            local options = { "projects", "workspaces", "tabs", "files", "search" }
             if ArgLead == "" then
                 return options
             end
-
             local matches = {}
             for _, option in ipairs(options) do
                 if option:find("^" .. ArgLead) then
@@ -87,7 +82,6 @@ M.disable_all_maps = function(buf)
     for _, k_allowed in ipairs(key_conf.allowed or {}) do
         allowed_keys_map[k_allowed] = true
     end
-
     local keys_to_potentially_disable = {}
     local categories = key_conf.disable_categories
         or {
@@ -95,7 +89,6 @@ M.disable_all_maps = function(buf)
             uppercase_letters = true,
             digits = true,
         }
-
     if categories.lowercase_letters then
         for c = string.byte("a"), string.byte("z") do
             table.insert(keys_to_potentially_disable, string.char(c))
@@ -111,7 +104,6 @@ M.disable_all_maps = function(buf)
             table.insert(keys_to_potentially_disable, tostring(d))
         end
     end
-
     for _, k_disabled in ipairs(key_conf.explicitly_disabled or {}) do
         local found = false
         for _, k_existing in ipairs(keys_to_potentially_disable) do
@@ -124,7 +116,6 @@ M.disable_all_maps = function(buf)
             table.insert(keys_to_potentially_disable, k_disabled)
         end
     end
-
     for _, key_to_check in ipairs(keys_to_potentially_disable) do
         if not allowed_keys_map[key_to_check] then
             vim.keymap.set("n", key_to_check, "<nop>", { buffer = buf, nowait = true, silent = true })

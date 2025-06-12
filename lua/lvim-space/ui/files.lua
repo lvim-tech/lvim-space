@@ -4,7 +4,6 @@ local state = require("lvim-space.api.state")
 local data = require("lvim-space.api.data")
 local ui = require("lvim-space.ui")
 local common = require("lvim-space.ui.common")
-local log = require("lvim-space.api.log")
 local session = require("lvim-space.core.session")
 
 local M = {}
@@ -22,14 +21,6 @@ local last_normal_win = nil
 local last_real_win = nil
 
 local is_plugin_panel_win = ui.is_plugin_window
-
-local function capture_current_window()
-    local current_win = vim.api.nvim_get_current_win()
-    if not is_plugin_panel_win(current_win) and vim.api.nvim_win_is_valid(current_win) then
-        last_real_win = current_win
-        log.debug("Remembered active window: " .. tostring(last_real_win))
-    end
-end
 
 local function get_last_normal_win()
     if last_real_win and vim.api.nvim_win_is_valid(last_real_win) and not is_plugin_panel_win(last_real_win) then
@@ -120,17 +111,10 @@ end
 local function get_tab_data(tab_id, workspace_id)
     local tab = data.find_tab_by_id(tab_id, workspace_id)
     if not tab or not tab.data then
-        log.error("get_tab_data: Tab or tab data not found for tab_id: " .. tostring(tab_id))
         return nil
     end
     local success, tab_data_decoded = pcall(vim.fn.json_decode, tab.data)
     if not success or not tab_data_decoded then
-        log.error(
-            "get_tab_data: Failed to decode JSON data for tab_id: "
-                .. tostring(tab_id)
-                .. ". Error: "
-                .. tostring(tab_data_decoded)
-        )
         return nil
     end
     tab_data_decoded.buffers = tab_data_decoded.buffers or {}
@@ -141,7 +125,6 @@ local function update_tab_data_in_db(tab_id, workspace_id, tab_data_obj)
     local updated_data_json = vim.fn.json_encode(tab_data_obj)
     local success = data.update_tab_data(tab_id, updated_data_json, workspace_id)
     if not success then
-        log.error("update_tab_data_in_db: Failed to update database for tab_id: " .. tostring(tab_id))
         return false
     end
     return true
@@ -162,23 +145,18 @@ local function add_file_db(file_path, workspace_id, tab_id)
     if not validated_path then
         return error_code
     end
-
     local tab_data_obj = get_tab_data(tab_id, workspace_id)
     if not tab_data_obj then
         return "ADD_FAILED"
     end
-
     for _, buf_entry in ipairs(tab_data_obj.buffers) do
         local candidate_path = buf_entry.path or buf_entry.filePath
         if candidate_path and vim.fn.fnamemodify(candidate_path, ":p") == vim.fn.fnamemodify(validated_path, ":p") then
-            log.info("add_file_db: File already exists in this tab: " .. validated_path)
             return "EXIST_NAME"
         end
     end
-
     local new_bufnr = vim.fn.bufadd(validated_path)
     vim.bo[new_bufnr].buflisted = true
-
     local new_buffer_entry = {
         filePath = validated_path,
         bufnr = new_bufnr,
@@ -186,9 +164,7 @@ local function add_file_db(file_path, workspace_id, tab_id)
         added_at = os.time(),
     }
     table.insert(tab_data_obj.buffers, new_buffer_entry)
-
     if update_tab_data_in_db(tab_id, workspace_id, tab_data_obj) then
-        log.info(string.format("add_file_db: Successfully added file '%s' (bufnr: %s)", validated_path, new_bufnr))
         cache.validation_cache = {}
         return new_bufnr
     else
@@ -201,7 +177,6 @@ local function delete_file_db(file_id_to_delete, workspace_id, tab_id, selected_
     if not tab_data_obj then
         return nil
     end
-
     local index_to_remove, file_to_remove_entry = nil, nil
     for i, buf_entry in ipairs(tab_data_obj.buffers) do
         local candidate_path = buf_entry.filePath or buf_entry.path
@@ -211,27 +186,12 @@ local function delete_file_db(file_id_to_delete, workspace_id, tab_id, selected_
             break
         end
     end
-
     if not index_to_remove or not file_to_remove_entry then
-        log.warn("delete_file_db: File ID (path) " .. tostring(file_id_to_delete) .. " not found in tab's buffer list.")
         return nil
     end
-
-    local path_of_deleted_file = file_to_remove_entry.filePath or file_to_remove_entry.path
     local bufnr_of_deleted_file = file_to_remove_entry.bufnr
-
     table.remove(tab_data_obj.buffers, index_to_remove)
-
     if update_tab_data_in_db(tab_id, workspace_id, tab_data_obj) then
-        log.info(
-            string.format(
-                "delete_file_db: File '%s' (bufnr: %s) removed from tab %s.",
-                path_of_deleted_file,
-                tostring(bufnr_of_deleted_file),
-                tab_id
-            )
-        )
-
         vim.schedule(function()
             local windows_with_buffer = {}
             if bufnr_of_deleted_file and vim.api.nvim_buf_is_valid(bufnr_of_deleted_file) then
@@ -241,13 +201,7 @@ local function delete_file_db(file_id_to_delete, workspace_id, tab_id, selected_
                     end
                 end
             end
-
             if #windows_with_buffer > 0 then
-                log.info(
-                    "delete_file_db: File was open in "
-                        .. #windows_with_buffer
-                        .. " window(s), replacing with empty buffer."
-                )
                 local new_empty_buf = vim.api.nvim_create_buf(false, true)
                 for _, win in ipairs(windows_with_buffer) do
                     if vim.api.nvim_win_is_valid(win) then
@@ -256,21 +210,12 @@ local function delete_file_db(file_id_to_delete, workspace_id, tab_id, selected_
                 end
                 notify.info(state.lang.FILE_REMOVE_REPLACE or "File closed and removed from tab.")
             end
-
             if bufnr_of_deleted_file and vim.api.nvim_buf_is_valid(bufnr_of_deleted_file) then
                 if vim.bo[bufnr_of_deleted_file].modified then
-                    log.warn(
-                        "delete_file_db: Buffer "
-                            .. bufnr_of_deleted_file
-                            .. " for "
-                            .. path_of_deleted_file
-                            .. " is modified. Not deleting from nvim list."
-                    )
                 else
                     pcall(vim.api.nvim_buf_delete, bufnr_of_deleted_file, { force = false })
                 end
             end
-
             if tostring(state.file_active) == tostring(file_id_to_delete) then
                 state.file_active = nil
             end
@@ -278,7 +223,6 @@ local function delete_file_db(file_id_to_delete, workspace_id, tab_id, selected_
         end)
         return true
     else
-        log.error("delete_file_db: Failed to update tab data in DB after removing file.")
         return false
     end
 end
@@ -289,17 +233,14 @@ function M.handle_file_delete()
     end
     local file_id_at_cursor = common.get_id_at_cursor(cache.file_ids_map)
     if not file_id_at_cursor then
-        log.warn("handle_file_delete: No file ID at cursor.")
         return
     end
-
     local current_line_num = cache.ctx
             and cache.ctx.win
             and vim.api.nvim_win_is_valid(cache.ctx.win)
             and vim.api.nvim_win_get_cursor(cache.ctx.win)[1]
         or 1
     local result_delete = delete_file_db(file_id_at_cursor, state.workspace_id, state.tab_active, current_line_num)
-
     if not result_delete then
         notify.error(state.lang.FILE_DELETE_FAILED or "Failed to delete file from tab.")
     end
@@ -336,7 +277,6 @@ function M.handle_split_horizontal()
 end
 
 function M.navigate_to_projects()
-    capture_current_window()
     ui.close_all()
     require("lvim-space.ui.projects").init()
 end
@@ -346,7 +286,6 @@ function M.navigate_to_workspaces()
         notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project. Please select or add a project first.")
         return
     end
-    capture_current_window()
     ui.close_all()
     require("lvim-space.ui.workspaces").init()
 end
@@ -360,51 +299,46 @@ function M.navigate_to_tabs()
         notify.info(state.lang.WORKSPACE_NOT_ACTIVE or "No active workspace. Please select or add a workspace first.")
         return
     end
-    capture_current_window()
     ui.close_all()
     require("lvim-space.ui.tabs").init()
+end
+
+function M.navigate_to_search()
+    if not state.project_id then
+        notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project. Please select or add a project first.")
+        return
+    end
+    ui.close_all()
+    require("lvim-space.ui.search").init()
 end
 
 function M._switch_file()
     local file_id_selected = common.get_id_at_cursor(cache.file_ids_map)
     if not file_id_selected then
-        log.warn("switch_file: No file selected from list (ID at cursor is nil).")
         return
     end
-
     local file_path_to_open = file_id_selected
     if not file_path_to_open then
         notify.error(state.lang.FILE_PATH_NOT_FOUND or "File path not found or is invalid.")
-        log.error("switch_file: File ID (path) " .. tostring(file_id_selected) .. " resulted in nil path.")
         return
     end
-
     if vim.fn.filereadable(file_path_to_open) ~= 1 then
         notify.error(state.lang.FILE_NOT_READABLE or "File is not readable or does not exist.")
-        log.error("switch_file: File cannot be read: " .. file_path_to_open)
         return
     end
-
-    log.info(string.format("switch_file: Switching to file %s", file_path_to_open))
-
     local bufnr = vim.fn.bufadd(file_path_to_open)
     vim.fn.bufload(bufnr)
-
     local target_win = last_real_win
     if not target_win or not vim.api.nvim_win_is_valid(target_win) or is_plugin_panel_win(target_win) then
         target_win = get_last_normal_win()
     end
-
     if target_win and vim.api.nvim_win_is_valid(target_win) then
         vim.api.nvim_win_set_buf(target_win, bufnr)
     else
         vim.cmd("edit " .. vim.fn.fnameescape(file_path_to_open))
-        log.warn("switch_file: No suitable target window found, used :edit.")
     end
-
     state.file_active = file_path_to_open
     update_files_state_in_db()
-
     local cur_line = cache.ctx
             and cache.ctx.win
             and vim.api.nvim_win_is_valid(cache.ctx.win)
@@ -416,7 +350,6 @@ end
 function M._split_file_vertical()
     local file_id_selected = common.get_id_at_cursor(cache.file_ids_map)
     if not file_id_selected then
-        log.warn("split_file_vertical: No file selected from list")
         return
     end
     local file_path_to_open = file_id_selected
@@ -428,18 +361,14 @@ function M._split_file_vertical()
         notify.error(state.lang.FILE_NOT_READABLE or "File is not readable or does not exist.")
         return
     end
-
-    log.info(string.format("split_file_vertical: Opening file '%s'", file_path_to_open))
-    capture_current_window()
     ui.close_all()
-    local success, error_msg = pcall(function()
+    local success, _ = pcall(function()
         vim.cmd("vsplit " .. vim.fn.fnameescape(file_path_to_open))
         last_real_win = vim.api.nvim_get_current_win()
     end)
     if success then
         notify.info(state.lang.FILE_OPENED_VERTICAL or "File opened in a new vertical split.")
     else
-        log.error("split_file_vertical: Failed to open file: " .. tostring(error_msg))
         notify.error(state.lang.FILE_OPEN_VERTICAL_FAILED or "Failed to open file in a vertical split.")
     end
 end
@@ -447,7 +376,6 @@ end
 function M._split_file_horizontal()
     local file_id_selected = common.get_id_at_cursor(cache.file_ids_map)
     if not file_id_selected then
-        log.warn("split_file_horizontal: No file selected from list")
         return
     end
     local file_path_to_open = file_id_selected
@@ -459,37 +387,60 @@ function M._split_file_horizontal()
         notify.error(state.lang.FILE_NOT_READABLE or "File is not readable or does not exist.")
         return
     end
-
-    log.info(string.format("split_file_horizontal: Opening file '%s'", file_path_to_open))
-    capture_current_window()
     ui.close_all()
-    local success, error_msg = pcall(function()
+    local success, _ = pcall(function()
         vim.cmd("split " .. vim.fn.fnameescape(file_path_to_open))
         last_real_win = vim.api.nvim_get_current_win()
     end)
     if success then
         notify.info(state.lang.FILE_OPENED_HORIZONTAL or "File opened in a new horizontal split.")
     else
-        log.error("split_file_horizontal: Failed to open file: " .. tostring(error_msg))
         notify.error(state.lang.FILE_OPEN_HORIZONTAL_FAILED or "Failed to open file in a horizontal split.")
     end
 end
 
 local function setup_keymaps(ctx)
     local keymap_opts = { buffer = ctx.buf, noremap = true, silent = true, nowait = true }
-    vim.keymap.set("n", config.keymappings.action.add, M.add_file, keymap_opts)
-    vim.keymap.set("n", config.keymappings.action.delete, M.handle_file_delete, keymap_opts)
+    vim.keymap.set("n", config.keymappings.action.add, function()
+        M.add_file()
+    end, keymap_opts)
+    vim.keymap.set("n", config.keymappings.action.delete, function()
+        if next(ctx.entities) ~= nil then
+            M.handle_file_delete()
+        end
+    end, keymap_opts)
     vim.keymap.set("n", config.keymappings.action.switch, function()
-        M.handle_file_switch({ close_panel = false })
+        if next(ctx.entities) ~= nil then
+            M.handle_file_switch({ close_panel = false })
+        end
     end, keymap_opts)
     vim.keymap.set("n", config.keymappings.action.enter, function()
-        M.handle_file_switch({ close_panel = true })
+        if next(ctx.entities) ~= nil then
+            M.handle_file_switch({ close_panel = true })
+        end
     end, keymap_opts)
-    vim.keymap.set("n", config.keymappings.action.split_v, M.handle_split_vertical, keymap_opts)
-    vim.keymap.set("n", config.keymappings.action.split_h, M.handle_split_horizontal, keymap_opts)
-    vim.keymap.set("n", config.keymappings.global.projects, M.navigate_to_projects, keymap_opts)
-    vim.keymap.set("n", config.keymappings.global.workspaces, M.navigate_to_workspaces, keymap_opts)
-    vim.keymap.set("n", config.keymappings.global.tabs, M.navigate_to_tabs, keymap_opts)
+    vim.keymap.set("n", config.keymappings.action.split_v, function()
+        if next(ctx.entities) ~= nil then
+            M.handle_split_vertical()
+        end
+    end, keymap_opts)
+    vim.keymap.set("n", config.keymappings.action.split_h, function()
+        if next(ctx.entities) ~= nil then
+            M.handle_split_horizontal()
+        end
+    end, keymap_opts)
+    vim.keymap.set("n", config.keymappings.global.projects, function()
+        M.navigate_to_projects()
+    end, keymap_opts)
+    vim.keymap.set("n", config.keymappings.global.workspaces, function()
+        M.navigate_to_workspaces()
+    end, keymap_opts)
+    vim.keymap.set("n", config.keymappings.global.tabs, function()
+        M.navigate_to_tabs()
+    end, keymap_opts)
+    vim.keymap.set("n", config.keymappings.global.search, function()
+        M.navigate_to_search()
+    end, keymap_opts)
 end
 
 local function update_tab_display_name()
@@ -501,8 +452,6 @@ local function update_tab_display_name()
 end
 
 M.init = function(selected_line_num)
-    capture_current_window()
-
     if not state.project_id then
         notify.error(state.lang.PROJECT_NOT_ACTIVE or "No active project. Please select or add a project first.")
         common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
@@ -521,7 +470,6 @@ M.init = function(selected_line_num)
         common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win)
         return
     end
-
     if
         not last_normal_win
         or not vim.api.nvim_win_is_valid(last_normal_win)
@@ -529,25 +477,18 @@ M.init = function(selected_line_num)
     then
         last_normal_win = get_last_normal_win()
     end
-
     session.save_current_state(state.tab_active, true)
-    log.debug("files.M.init: Forcibly saved session for tab: " .. state.tab_active)
-
     cache.files_from_db = data.find_files(state.tab_active, state.workspace_id) or {}
     cache.file_ids_map = {}
-
     local current_buf_info_init = get_current_buffer_info()
     update_tab_display_name()
-
     local panel_title = cache.tab_display_name ~= ""
             and string.format("%s (%s)", state.lang.FILES or "Files", cache.tab_display_name)
         or (state.lang.FILES or "Files")
-
     local function file_formatter(file_entry)
         local file_path = file_entry.path or file_entry.filePath or "???"
         return relpath_to_project(file_path)
     end
-
     local function custom_active_fn(entity, active_id_from_state)
         local candidate_path = entity.id
         local is_current_buffer_match = current_buf_info_init.name
@@ -558,7 +499,6 @@ M.init = function(selected_line_num)
             and vim.fn.fnamemodify(candidate_path, ":p") == vim.fn.fnamemodify(active_id_from_state, ":p")
         return is_current_buffer_match or (not current_buf_info_init.name and is_state_active_match)
     end
-
     local ctx = common.init_entity_list(
         "file",
         cache.files_from_db,
@@ -571,7 +511,6 @@ M.init = function(selected_line_num)
         custom_active_fn
     )
     if not ctx then
-        log.error("files.M.init: common.init_entity_list returned no context")
         return
     end
     cache.ctx = ctx
@@ -587,19 +526,16 @@ end
 M.add_file = function()
     if not state.workspace_id or not state.tab_active then
         notify.error(state.lang.TAB_NOT_ACTIVE or "No active tab. Please select or create a tab first.")
-        log.warn("add_file: Tried to add file without active tab/workspace")
         return
     end
     local current_dir = vim.fn.getcwd()
     local default_path = current_dir .. (current_dir:sub(-1) == "/" and "" or "/")
-
     ui.create_input_field(state.lang.FILES_NAME or "File path:", default_path, function(input_file_path)
         if not input_file_path or vim.trim(input_file_path) == "" then
             notify.info(state.lang.OPERATION_CANCELLED or "Operation cancelled.")
             return
         end
         local result_add = add_file_db(vim.trim(input_file_path), state.workspace_id, state.tab_active)
-
         if type(result_add) == "string" then
             local error_message
             if result_add == "LEN_NAME" then
@@ -638,7 +574,6 @@ M.add_current_buffer_to_tab = function(from_external)
         notify.error(state.lang.TAB_NOT_ACTIVE or "No active tab. Please select or create a tab first.")
         return false
     end
-
     local result_add_current = add_file_db(current_buf_info_add.name, state.workspace_id, state.tab_active)
     if result_add_current and type(result_add_current) == "number" then
         notify.info(state.lang.CURRENT_FILE_ADDED or "Current file added to tab.")
@@ -696,9 +631,7 @@ M.switch_to_file_by_path = function(file_path)
     if not state.workspace_id or not state.tab_active then
         return false
     end
-
     local normalized_path_to_switch = vim.fn.fnamemodify(file_path, ":p")
-
     for _, file_entry in ipairs(cache.files_from_db) do
         local candidate_path = file_entry.id
         if candidate_path and vim.fn.fnamemodify(candidate_path, ":p") == normalized_path_to_switch then
@@ -710,11 +643,8 @@ M.switch_to_file_by_path = function(file_path)
             return true
         end
     end
-
-    log.info("switch_to_file_by_path: File not in current tab list. Attempting to add: " .. normalized_path_to_switch)
     local add_result_switch = add_file_db(normalized_path_to_switch, state.workspace_id, state.tab_active)
     if type(add_result_switch) == "number" then
-        log.info("switch_to_file_by_path: Added file successfully. Now switching.")
         M.init()
         for _, file_entry_after_add in ipairs(cache.files_from_db) do
             local candidate_path_after_add = file_entry_after_add.id
@@ -730,10 +660,8 @@ M.switch_to_file_by_path = function(file_path)
                 return true
             end
         end
-        log.warn("switch_to_file_by_path: Added file but could not switch. File not found in refreshed list.")
         return false
     else
-        log.warn("switch_to_file_by_path: Failed to add file to tab. Error: " .. tostring(add_result_switch))
         local error_message = state.lang.FILE_ADD_FAILED or "Failed to add file for switching."
         if type(add_result_switch) == "string" then
             if add_result_switch == "DIR_ADD_NOT_ALLOWED" then
