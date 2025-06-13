@@ -880,19 +880,19 @@ function M.handle_file_switch(opts)
         else
             vim.cmd("hi Cursor blend=100")
         end
-    else
-        update_search_display()
-        local win = cache.ctx and cache.ctx.win
-        if win and vim.api.nvim_win_is_valid(win) then
-            for idx, entry in ipairs(cache.search_results) do
-                if entry.id == file_path then
-                    vim.schedule(function()
-                        if vim.api.nvim_win_is_valid(win) then
-                            pcall(vim.api.nvim_win_set_cursor, win, { idx, 0 })
-                        end
-                    end)
-                    break
-                end
+        return
+    end
+    update_search_display()
+    local win = cache.ctx and cache.ctx.win
+    if win and vim.api.nvim_win_is_valid(win) then
+        for idx, entry in ipairs(cache.search_results) do
+            if entry.id == file_path then
+                vim.schedule(function()
+                    if vim.api.nvim_win_is_valid(win) then
+                        pcall(vim.api.nvim_win_set_cursor, win, { idx, 0 })
+                    end
+                end)
+                break
             end
         end
     end
