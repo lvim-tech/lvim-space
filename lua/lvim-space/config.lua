@@ -10,6 +10,7 @@ M = {
     status_space = 3,
     max_height = 10,
     autosave = true,
+    autorestore = true, -- when pwd is project
     open_panel_on_add_file = false,
     search = "fd --type f --hidden --follow"
         .. " --exclude .git"

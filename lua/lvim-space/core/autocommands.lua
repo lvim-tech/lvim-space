@@ -1,3 +1,4 @@
+local config = require("lvim-space.config")
 local api = vim.api
 local db = require("lvim-space.persistence.db")
 local session = require("lvim-space.core.session")
@@ -18,9 +19,23 @@ local function load_context()
     state.workspace_id = nil
     state.tab_active = nil
     state.tab_ids = {}
-    local current_project = data.find_project_by_cwd()
-    if current_project then
-        state.project_id = current_project.id
+    if config.autorestore then
+        local current_project = data.find_project_by_cwd()
+        if current_project then
+            state.project_id = current_project.id
+            local active_ws = data.find_current_workspace(current_project.id)
+            if active_ws then
+                state.workspace_id = active_ws.id
+                local active_tab = data.find_current_tab(active_ws.id, current_project.id)
+                if active_tab then
+                    state.tab_active = active_tab.id
+                    for _, t in ipairs(active_tab.all_tabs or {}) do
+                        table.insert(state.tab_ids, t.id)
+                    end
+                    session.force_restore(active_tab.id)
+                end
+            end
+        end
     end
 end
 
