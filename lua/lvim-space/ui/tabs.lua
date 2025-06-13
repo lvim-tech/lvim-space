@@ -428,6 +428,15 @@ function M.navigate_to_files()
     require("lvim-space.ui.files").init()
 end
 
+function M.navigate_to_search()
+    if not state.project_id then
+        notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project. Please select or add a project first.")
+        return
+    end
+    ui.close_all()
+    require("lvim-space.ui.search").init()
+end
+
 local function setup_keymaps(ctx)
     local keymap_opts = { buffer = ctx.buf, noremap = true, silent = true, nowait = true }
     vim.keymap.set("n", config.keymappings.action.add, function()
@@ -473,6 +482,9 @@ local function setup_keymaps(ctx)
         if next(ctx.entities) ~= nil then
             M.navigate_to_files()
         end
+    end, keymap_opts)
+    vim.keymap.set("n", config.keymappings.global.search, function()
+        M.navigate_to_search()
     end, keymap_opts)
 end
 
