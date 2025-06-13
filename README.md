@@ -329,6 +329,8 @@ to persist the full state (projects, workspaces, tabs, files, layouts, etc).
 
 - **Neovim 0.10+**
 - **NerdFont** enabled terminal (for icons)
+- **FZF**
+- **Fd**
 - **Dependencies**: sqlite.lua
 
 ---
