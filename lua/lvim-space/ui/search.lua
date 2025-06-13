@@ -1,6 +1,7 @@
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
+local session = require("lvim-space.core.session")
 local data = require("lvim-space.api.data")
 local ui = require("lvim-space.ui")
 local common = require("lvim-space.ui.common")
@@ -836,11 +837,16 @@ function M.handle_file_switch(opts)
     if not _can_perform_file_operation() then
         return
     end
-    local selected = common.get_id_at_cursor(cache.file_ids_map)
-    if not selected then
+    local win = cache.ctx and cache.ctx.win
+    if not (win and vim.api.nvim_win_is_valid(win)) then
+        notify.error(state.lang.FILE_SWITCH_FAILED or "Cannot switch file: invalid search window")
         return
     end
-    local file_path = selected
+    local row = vim.api.nvim_win_get_cursor(win)[1]
+    local file_path = cache.file_ids_map[row]
+    if not file_path then
+        return
+    end
     if vim.fn.filereadable(file_path) ~= 1 then
         notify.error(state.lang.FILE_NOT_READABLE or "File is not readable")
         return
@@ -852,50 +858,45 @@ function M.handle_file_switch(opts)
     end
     local tab = data.find_tab_by_id(state.tab_active, state.workspace_id)
     if tab then
-        local ok, tdata = pcall(vim.fn.json_decode, tab.data or "{}")
-        if ok then
-            tdata.buffers = tdata.buffers or {}
-            local exists = false
-            for _, buf in ipairs(tdata.buffers) do
-                if buf.filePath == file_path then
-                    exists = true
-                    break
-                end
-            end
-            if not exists then
-                table.insert(tdata.buffers, {
-                    filePath = file_path,
-                    bufnr = vim.api.nvim_get_current_buf(),
-                })
-                data.update_tab_data(state.tab_active, vim.fn.json_encode(tdata), state.workspace_id)
-            end
+        local ok, tdata = pcall(vim.fn.json_decode, tab.data or {})
+        if not ok or type(tdata) ~= "table" then
+            tdata = {}
         end
-    end
-    if opts.close_panel then
-        local editor_win = last_real_win
-        ui.close_all()
-        if editor_win and vim.api.nvim_win_is_valid(editor_win) then
-            pcall(vim.api.nvim_set_current_win, editor_win)
-            vim.cmd("hi Cursor blend=100")
-        else
-            vim.cmd("hi Cursor blend=100")
-        end
-        return
-    end
-    update_search_display()
-    local win = cache.ctx and cache.ctx.win
-    if win and vim.api.nvim_win_is_valid(win) then
-        for idx, entry in ipairs(cache.search_results) do
-            if entry.id == file_path then
-                vim.schedule(function()
-                    if vim.api.nvim_win_is_valid(win) then
-                        pcall(vim.api.nvim_win_set_cursor, win, { idx, 0 })
-                    end
-                end)
+        tdata.buffers = tdata.buffers or {}
+        local exists = false
+        for _, buf in ipairs(tdata.buffers) do
+            if buf.filePath == file_path then
+                exists = true
                 break
             end
         end
+        if not exists then
+            table.insert(tdata.buffers, {
+                filePath = file_path,
+                bufnr = vim.api.nvim_get_current_buf(),
+            })
+            data.update_tab_data(state.tab_active, vim.fn.json_encode(tdata), state.workspace_id)
+            session.save_current_state(state.tab_active, true)
+        end
     end
+    if opts.close_panel then
+        local target = last_real_win
+        ui.close_all()
+        if target and vim.api.nvim_win_is_valid(target) then
+            pcall(vim.api.nvim_set_current_win, target)
+        end
+        vim.cmd("hi Cursor blend=100")
+        return
+    end
+    update_search_display()
+    vim.schedule(function()
+        if win and vim.api.nvim_win_is_valid(win) then
+            local buf = cache.ctx.buf
+            local line_count = vim.api.nvim_buf_line_count(buf)
+            local new_row = math.min(row, line_count)
+            pcall(vim.api.nvim_win_set_cursor, win, { new_row, 0 })
+        end
+    end)
 end
 
 local function _split_file_common(split_cmd)
