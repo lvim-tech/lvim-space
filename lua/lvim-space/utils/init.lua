@@ -34,9 +34,13 @@ M.is_array = function(t)
 end
 
 M.has_permission = function(path)
-    local cmd = string.format('[ -d "%s" ] && [ -r "%s" ] && [ -x "%s" ]', path, path, path)
-    local ok = os.execute(cmd)
-    return ok == 0
+    local stat = vim.loop.fs_stat(path)
+    if not stat or stat.type ~= "directory" then
+        return false
+    end
+    local readable = vim.loop.fs_access(path, "r")
+    local executable = vim.loop.fs_access(path, "x")
+    return readable and executable
 end
 
 M.to_superscript = function(num)
