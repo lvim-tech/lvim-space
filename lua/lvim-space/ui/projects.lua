@@ -418,10 +418,10 @@ local function handle_move_operation(ctx, direction)
         notify.error(state.lang[project_type_def.reorder_failed_error])
         return
     end
-    if direction == "up" and current_sort_order <= 1 then
+    if direction == "up" and current_visual_line <= 1 then
         notify.info(state.lang.PROJECT_ALREADY_AT_TOP)
         return
-    elseif direction == "down" and current_sort_order >= #cache.projects_from_db then
+    elseif direction == "down" and current_visual_line >= #cache.projects_from_db then
         notify.info(state.lang.PROJECT_ALREADY_AT_BOTTOM)
         return
     end
