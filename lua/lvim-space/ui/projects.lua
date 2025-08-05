@@ -14,9 +14,118 @@ local cache = {
     projects_from_db = {},
     ctx = nil,
     validation_cache = {},
+    last_cursor_position = 1,
 }
 
 local last_real_win = nil
+
+local is_plugin_panel_win = ui.is_plugin_window
+
+local function save_window_context()
+    local current_win = vim.api.nvim_get_current_win()
+    if current_win and vim.api.nvim_win_is_valid(current_win) and not is_plugin_panel_win(current_win) then
+        last_real_win = current_win
+    end
+end
+
+local function save_cursor_position()
+    if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
+        cache.last_cursor_position = cursor_pos[1]
+    end
+end
+
+local function setup_cursor_tracking(ctx)
+    if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
+        return
+    end
+
+    vim.api.nvim_create_autocmd("CursorMoved", {
+        buffer = ctx.buf,
+        callback = function()
+            if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+                local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
+                cache.last_cursor_position = cursor_pos[1]
+            end
+        end,
+        group = vim.api.nvim_create_augroup("LvimSpaceProjectsCursor", { clear = true }),
+    })
+end
+
+M.refresh = function()
+    if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
+        return M.init()
+    end
+
+    if not cache.ctx.buf or not vim.api.nvim_buf_is_valid(cache.ctx.buf) then
+        return M.init()
+    end
+
+    save_cursor_position()
+
+    cache.projects_from_db = data.find_projects() or {}
+    table.sort(cache.projects_from_db, function(a, b)
+        local order_a = tonumber(a.sort_order) or math.huge
+        local order_b = tonumber(b.sort_order) or math.huge
+        if order_a == order_b then
+            return (a.name or "") < (b.name or "")
+        end
+        return order_a < order_b
+    end)
+    cache.project_ids_map = {}
+
+    local new_lines = {}
+    for i, project_entry in ipairs(cache.projects_from_db) do
+        cache.project_ids_map[i] = project_entry.id
+        local is_active = tostring(project_entry.id) == tostring(state.project_id)
+        local display_text = string.format("%s [%s]", project_entry.name or "???", project_entry.path or "???")
+
+        if is_active then
+            local project_active_icon = (config.ui and config.ui.icons and config.ui.icons.project_active) or " "
+            display_text = project_active_icon .. display_text
+        else
+            local project_icon = (config.ui and config.ui.icons and config.ui.icons.project) or " "
+            display_text = project_icon .. display_text
+        end
+
+        table.insert(new_lines, display_text)
+    end
+
+    local success = pcall(function()
+        local was_modifiable = vim.bo[cache.ctx.buf].modifiable
+        if not was_modifiable then
+            vim.bo[cache.ctx.buf].modifiable = true
+        end
+
+        vim.api.nvim_buf_set_lines(cache.ctx.buf, 0, -1, false, new_lines)
+
+        if not was_modifiable then
+            vim.bo[cache.ctx.buf].modifiable = false
+        end
+    end)
+
+    if not success then
+        return M.init()
+    end
+
+    if #new_lines > 0 and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local max_line = #new_lines
+        local target_line = math.min(cache.last_cursor_position, max_line)
+        target_line = math.max(target_line, 1)
+        pcall(vim.api.nvim_win_set_cursor, cache.ctx.win, { target_line, 0 })
+    end
+
+    cache.ctx.is_empty = #new_lines == 0
+    cache.ctx.entities = cache.projects_from_db
+
+    if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local win_config = vim.api.nvim_win_get_config(cache.ctx.win)
+        win_config.title = " " .. (state.lang.PROJECTS or "Projects") .. " "
+        pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
+    end
+
+    common.apply_cursor_blending(cache.ctx.win)
+end
 
 local function get_entity_def()
     return common.get_entity_type("project")
@@ -558,6 +667,8 @@ local function setup_keymaps(ctx)
 end
 
 M.init = function(selected_line_num)
+    save_window_context()
+
     cache.projects_from_db = data.find_projects() or {}
     table.sort(cache.projects_from_db, function(a, b)
         local order_a = tonumber(a.sort_order) or math.huge
@@ -568,7 +679,11 @@ M.init = function(selected_line_num)
         return order_a < order_b
     end)
     cache.project_ids_map = {}
+
     local actual_selected_line = selected_line_num
+    if not actual_selected_line and cache.last_cursor_position > 1 then
+        actual_selected_line = cache.last_cursor_position
+    end
     if not actual_selected_line and state.project_id then
         for i, proj in ipairs(cache.projects_from_db) do
             if tostring(proj.id) == tostring(state.project_id) then
@@ -577,6 +692,7 @@ M.init = function(selected_line_num)
             end
         end
     end
+
     local ctx = common.init_entity_list(
         "project",
         cache.projects_from_db,
@@ -593,12 +709,18 @@ M.init = function(selected_line_num)
         return
     end
     cache.ctx = ctx
+
     if ctx.win and vim.api.nvim_win_is_valid(ctx.win) then
+        local cursor_pos = vim.api.nvim_win_get_cursor(ctx.win)
+        cache.last_cursor_position = cursor_pos[1]
+
         local win_config = vim.api.nvim_win_get_config(ctx.win)
-        win_config.title = " " .. state.lang.PROJECTS .. " "
+        win_config.title = " " .. (state.lang.PROJECTS or "Projects") .. " "
         pcall(vim.api.nvim_win_set_config, ctx.win, win_config)
     end
+
     setup_keymaps(ctx)
+    setup_cursor_tracking(ctx)
 end
 
 M.add_project = function()
@@ -648,7 +770,7 @@ M.add_project = function()
             else
                 notify.info(state.lang.PROJECT_ADDED_SUCCESS or "Project added successfully!")
             end
-            M.init()
+            M.refresh()
         end)
     end)
 end

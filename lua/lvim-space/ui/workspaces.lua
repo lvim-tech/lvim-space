@@ -16,9 +16,12 @@ local cache = {
     workspaces_from_db = {},
     ctx = nil,
     project_display_name = "",
+    last_cursor_position = 1,
 }
 
 local last_real_win = nil
+
+local is_plugin_panel_win = ui.is_plugin_window
 
 local function get_entity_def()
     return common.get_entity_type("workspace")
@@ -30,6 +33,138 @@ end
 
 local function create_empty_workspace_tabs()
     return { tab_ids = {}, tab_active = nil, created_at = os.time(), updated_at = os.time() }
+end
+
+local function save_window_context()
+    local current_win = vim.api.nvim_get_current_win()
+    if current_win and vim.api.nvim_win_is_valid(current_win) and not is_plugin_panel_win(current_win) then
+        last_real_win = current_win
+    end
+end
+
+local function save_cursor_position()
+    if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
+        cache.last_cursor_position = cursor_pos[1]
+    end
+end
+
+local function setup_cursor_tracking(ctx)
+    if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
+        return
+    end
+
+    vim.api.nvim_create_autocmd("CursorMoved", {
+        buffer = ctx.buf,
+        callback = function()
+            if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+                local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
+                cache.last_cursor_position = cursor_pos[1]
+            end
+        end,
+        group = vim.api.nvim_create_augroup("LvimSpaceWorkspacesCursor", { clear = true }),
+    })
+end
+
+M.refresh = function()
+    if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
+        return M.init()
+    end
+
+    if not cache.ctx.buf or not vim.api.nvim_buf_is_valid(cache.ctx.buf) then
+        return M.init()
+    end
+
+    save_cursor_position()
+
+    cache.workspaces_from_db = data.find_workspaces(state.project_id) or {}
+    table.sort(cache.workspaces_from_db, function(a, b)
+        local order_a = tonumber(a.sort_order) or math.huge
+        local order_b = tonumber(b.sort_order) or math.huge
+        if order_a == order_b then
+            return (a.name or "") < (b.name or "")
+        end
+        return order_a < order_b
+    end)
+    cache.workspace_ids_map = {}
+
+    local function get_tab_count(workspace_entry)
+        if not workspace_entry.tabs then
+            return 0
+        end
+        local success, decoded_tabs = pcall(vim.fn.json_decode, workspace_entry.tabs)
+        if success and decoded_tabs and decoded_tabs.tab_ids then
+            return #decoded_tabs.tab_ids
+        end
+        return 0
+    end
+
+    local new_lines = {}
+    for i, workspace_entry in ipairs(cache.workspaces_from_db) do
+        cache.workspace_ids_map[i] = workspace_entry.id
+        local is_active = tostring(workspace_entry.id) == tostring(state.workspace_id)
+        local tab_count = get_tab_count(workspace_entry)
+        local tab_count_display = utils.to_superscript(tab_count)
+        local display_text = (workspace_entry.name or "???") .. tab_count_display
+
+        if is_active then
+            local workspace_active_icon = (config.ui and config.ui.icons and config.ui.icons.workspace_active) or " "
+            display_text = workspace_active_icon .. display_text
+        else
+            local workspace_icon = (config.ui and config.ui.icons and config.ui.icons.workspace) or " "
+            display_text = workspace_icon .. display_text
+        end
+
+        table.insert(new_lines, display_text)
+    end
+
+    local success = pcall(function()
+        local was_modifiable = vim.bo[cache.ctx.buf].modifiable
+        if not was_modifiable then
+            vim.bo[cache.ctx.buf].modifiable = true
+        end
+
+        vim.api.nvim_buf_set_lines(cache.ctx.buf, 0, -1, false, new_lines)
+
+        if not was_modifiable then
+            vim.bo[cache.ctx.buf].modifiable = false
+        end
+    end)
+
+    if not success then
+        return M.init()
+    end
+
+    if #new_lines > 0 and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local max_line = #new_lines
+        local target_line = math.min(cache.last_cursor_position, max_line)
+        target_line = math.max(target_line, 1)
+        pcall(vim.api.nvim_win_set_cursor, cache.ctx.win, { target_line, 0 })
+    end
+
+    local ws_def = get_entity_def()
+    local base_ws_title = state.lang[(ws_def and ws_def.title) or "WORKSPACES"] or "Workspaces"
+    local final_panel_title
+    if
+        cache.project_display_name
+        and cache.project_display_name ~= "Unknown Project"
+        and vim.trim(cache.project_display_name) ~= ""
+    then
+        final_panel_title = string.format("%s (%s)", base_ws_title, cache.project_display_name)
+    else
+        final_panel_title = base_ws_title
+    end
+
+    cache.ctx.is_empty = #new_lines == 0
+    cache.ctx.entities = cache.workspaces_from_db
+
+    if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local win_config = vim.api.nvim_win_get_config(cache.ctx.win)
+        win_config.title = " " .. final_panel_title .. " "
+        pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
+    end
+
+    common.apply_cursor_blending(cache.ctx.win)
 end
 
 local function validate_workspace_name_for_add_or_rename(workspace_name, project_id_context, workspace_id_for_rename)
@@ -75,7 +210,7 @@ local function add_workspace_db(workspace_name, project_id)
     local result = data.add_workspace(workspace_name, initial_tabs_json, project_id)
     if type(result) == "number" and result > 0 then
         vim.schedule(function()
-            M.init()
+            M.refresh()
         end)
         return result
     elseif type(result) == "string" then
@@ -322,7 +457,7 @@ M.handle_workspace_add = function()
             end
             notify.error(state.lang[err_key_to_use] or "Failed to add workspace.")
         end
-    end, { input_filetype = "lvim-space-workspace-input" }) -- Добавена опция тук
+    end, { input_filetype = "lvim-space-workspace-input" })
 end
 
 M.handle_workspace_rename = function(ctx)
@@ -560,6 +695,8 @@ local function setup_keymaps(ctx)
 end
 
 M.init = function(selected_line_num, opts)
+    save_window_context()
+
     local project_entity_def = get_project_def()
     if not state.project_id then
         notify.error(
@@ -576,11 +713,13 @@ M.init = function(selected_line_num, opts)
         )
         return
     end
+
     cache.project_display_name = "Unknown Project"
     local proj_data_ok, project_obj = pcall(data.find_project_by_id, state.project_id)
     if proj_data_ok and project_obj and project_obj.name then
         cache.project_display_name = project_obj.name
     end
+
     opts = opts or {}
     local select_workspace_on_init = (opts.select_workspace ~= false)
     cache.workspaces_from_db = data.find_workspaces(state.project_id) or {}
@@ -593,6 +732,7 @@ M.init = function(selected_line_num, opts)
         return order_a < order_b
     end)
     cache.workspace_ids_map = {}
+
     local function get_tab_count(workspace_entry)
         if not workspace_entry.tabs then
             return 0
@@ -603,8 +743,12 @@ M.init = function(selected_line_num, opts)
         end
         return 0
     end
+
     local active_id_for_list = select_workspace_on_init and state.workspace_id or nil
     local entity_selected_line = selected_line_num
+    if not entity_selected_line and cache.last_cursor_position > 1 then
+        entity_selected_line = cache.last_cursor_position
+    end
     if not entity_selected_line and active_id_for_list then
         for idx, ws in ipairs(cache.workspaces_from_db) do
             if tostring(ws.id) == tostring(active_id_for_list) then
@@ -613,6 +757,7 @@ M.init = function(selected_line_num, opts)
             end
         end
     end
+
     local ctx_new = common.init_entity_list(
         "workspace",
         cache.workspaces_from_db,
@@ -637,7 +782,11 @@ M.init = function(selected_line_num, opts)
         return
     end
     cache.ctx = ctx_new
+
     if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
+        cache.last_cursor_position = cursor_pos[1]
+
         local win_config = vim.api.nvim_win_get_config(cache.ctx.win)
         local ws_def = get_entity_def()
         local base_ws_title = state.lang[(ws_def and ws_def.title) or "WORKSPACES"] or "Workspaces"
@@ -654,7 +803,9 @@ M.init = function(selected_line_num, opts)
         win_config.title = " " .. final_panel_title .. " "
         pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
     end
+
     setup_keymaps(cache.ctx)
+    setup_cursor_tracking(cache.ctx)
 end
 
 M.switch_to_workspace_by_name = function(workspace_name, project_id_context)

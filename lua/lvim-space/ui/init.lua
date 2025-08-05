@@ -374,9 +374,6 @@ M.open_main = function(lines, name, selected_line)
                 })
 
                 pcall(api.nvim_win_set_config, win, new_config)
-
-                local line = math.max(1, math.min(selected_line, api.nvim_buf_line_count(buf)))
-                pcall(api.nvim_win_set_cursor, win, { line, 0 })
             end
 
             api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "VimResized" }, {

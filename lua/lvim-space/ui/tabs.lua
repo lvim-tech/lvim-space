@@ -14,9 +14,12 @@ local cache = {
     tabs_from_db = {},
     ctx = nil,
     workspace_display_name = "",
+    last_cursor_position = 1,
 }
 
 local last_real_win = nil
+
+local is_plugin_panel_win = ui.is_plugin_window
 
 local function get_entity_def()
     return common.get_entity_type("tab")
@@ -36,6 +39,137 @@ end
 
 local function create_empty_tab_data_storage()
     return { buffers = {}, created_at = os.time(), modified_at = os.time() }
+end
+
+local function save_window_context()
+    local current_win = vim.api.nvim_get_current_win()
+    if current_win and vim.api.nvim_win_is_valid(current_win) and not is_plugin_panel_win(current_win) then
+        last_real_win = current_win
+    end
+end
+
+local function save_cursor_position()
+    if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
+        cache.last_cursor_position = cursor_pos[1]
+    end
+end
+
+local function setup_cursor_tracking(ctx)
+    if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
+        return
+    end
+
+    vim.api.nvim_create_autocmd("CursorMoved", {
+        buffer = ctx.buf,
+        callback = function()
+            if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+                local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
+                cache.last_cursor_position = cursor_pos[1]
+            end
+        end,
+        group = vim.api.nvim_create_augroup("LvimSpaceTabsCursor", { clear = true }),
+    })
+end
+
+M.refresh = function()
+    if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
+        return M.init()
+    end
+
+    if not cache.ctx.buf or not vim.api.nvim_buf_is_valid(cache.ctx.buf) then
+        return M.init()
+    end
+
+    save_cursor_position()
+
+    cache.tabs_from_db = data.find_tabs(state.workspace_id) or {}
+    table.sort(cache.tabs_from_db, function(a, b)
+        local order_a = tonumber(a.sort_order) or math.huge
+        local order_b = tonumber(b.sort_order) or math.huge
+        if order_a == order_b then
+            return (a.name or "") < (b.name or "")
+        end
+        return order_a < order_b
+    end)
+    cache.tab_ids_map = {}
+
+    local function get_buffer_count(tab_entry)
+        if not tab_entry.data then
+            return 0
+        end
+        local success, decoded_data = pcall(vim.fn.json_decode, tab_entry.data)
+        if success and decoded_data and decoded_data.buffers then
+            return #decoded_data.buffers
+        end
+        return 0
+    end
+
+    local new_lines = {}
+    for i, tab_entry in ipairs(cache.tabs_from_db) do
+        cache.tab_ids_map[i] = tab_entry.id
+        local is_active = tostring(tab_entry.id) == tostring(state.tab_active)
+        local buffer_count = get_buffer_count(tab_entry)
+        local buffer_count_display = utils.to_superscript and utils.to_superscript(buffer_count) or ""
+        local display_text = (tab_entry.name or "???") .. buffer_count_display
+
+        if is_active then
+            local tab_active_icon = (config.ui and config.ui.icons and config.ui.icons.tab_active) or " "
+            display_text = tab_active_icon .. display_text
+        else
+            local tab_icon = (config.ui and config.ui.icons and config.ui.icons.tab) or " "
+            display_text = tab_icon .. display_text
+        end
+
+        table.insert(new_lines, display_text)
+    end
+
+    local success = pcall(function()
+        local was_modifiable = vim.bo[cache.ctx.buf].modifiable
+        if not was_modifiable then
+            vim.bo[cache.ctx.buf].modifiable = true
+        end
+
+        vim.api.nvim_buf_set_lines(cache.ctx.buf, 0, -1, false, new_lines)
+
+        if not was_modifiable then
+            vim.bo[cache.ctx.buf].modifiable = false
+        end
+    end)
+
+    if not success then
+        return M.init()
+    end
+
+    if #new_lines > 0 and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local max_line = #new_lines
+        local target_line = math.min(cache.last_cursor_position, max_line)
+        target_line = math.max(target_line, 1)
+        pcall(vim.api.nvim_win_set_cursor, cache.ctx.win, { target_line, 0 })
+    end
+
+    local base_tabs_title = state.lang.TABS or "Tabs"
+    local final_panel_title
+    if
+        cache.workspace_display_name
+        and cache.workspace_display_name ~= "Unknown Workspace"
+        and vim.trim(cache.workspace_display_name) ~= ""
+    then
+        final_panel_title = string.format("%s (%s)", base_tabs_title, cache.workspace_display_name)
+    else
+        final_panel_title = base_tabs_title
+    end
+
+    cache.ctx.is_empty = #new_lines == 0
+    cache.ctx.entities = cache.tabs_from_db
+
+    if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local win_config = vim.api.nvim_win_get_config(cache.ctx.win)
+        win_config.title = " " .. final_panel_title .. " "
+        pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
+    end
+
+    common.apply_cursor_blending(cache.ctx.win)
 end
 
 local function validate_tab_name_for_add_or_rename(tab_name, workspace_id_context, tab_id_for_rename)
@@ -255,7 +389,7 @@ function M.handle_tab_add()
         local result_or_err_key = add_tab_db(validated_name, state.workspace_id)
         if type(result_or_err_key) == "number" and result_or_err_key > 0 then
             notify.info(state.lang[tab_def.added_success] or "Tab added successfully!")
-            M.init()
+            M.refresh()
         else
             notify.error(state.lang[result_or_err_key] or "Failed to add tab.")
         end
@@ -489,6 +623,8 @@ local function setup_keymaps(ctx)
 end
 
 M.init = function(selected_line_num)
+    save_window_context()
+
     local project_def = get_project_def()
     local ws_def = get_ws_def()
     if not state.project_id then
@@ -503,11 +639,13 @@ M.init = function(selected_line_num)
         common.setup_error_navigation((ws_def and ws_def.not_active) or "WORKSPACE_NOT_ACTIVE", last_real_win)
         return
     end
+
     cache.workspace_display_name = "Unknown Workspace"
     local ws_data_ok, workspace_obj = pcall(data.find_workspace_by_id, state.workspace_id, state.project_id)
     if ws_data_ok and workspace_obj and workspace_obj.name then
         cache.workspace_display_name = workspace_obj.name
     end
+
     cache.tabs_from_db = data.find_tabs(state.workspace_id) or {}
     table.sort(cache.tabs_from_db, function(a, b)
         local order_a = tonumber(a.sort_order) or math.huge
@@ -518,6 +656,7 @@ M.init = function(selected_line_num)
         return order_a < order_b
     end)
     cache.tab_ids_map = {}
+
     local function get_buffer_count(tab_entry)
         if not tab_entry.data then
             return 0
@@ -528,7 +667,11 @@ M.init = function(selected_line_num)
         end
         return 0
     end
+
     local actual_selected_line = selected_line_num
+    if not actual_selected_line and cache.last_cursor_position > 1 then
+        actual_selected_line = cache.last_cursor_position
+    end
     if not actual_selected_line and state.tab_active then
         for i, tab_entry in ipairs(cache.tabs_from_db) do
             if tostring(tab_entry.id) == tostring(state.tab_active) then
@@ -537,6 +680,7 @@ M.init = function(selected_line_num)
             end
         end
     end
+
     local ctx_new = common.init_entity_list(
         "tab",
         cache.tabs_from_db,
@@ -555,7 +699,11 @@ M.init = function(selected_line_num)
         return
     end
     cache.ctx = ctx_new
+
     if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
+        cache.last_cursor_position = cursor_pos[1]
+
         local win_config = vim.api.nvim_win_get_config(cache.ctx.win)
         local base_tabs_title = state.lang.TABS or "Tabs"
         local final_panel_title
@@ -571,7 +719,9 @@ M.init = function(selected_line_num)
         win_config.title = " " .. final_panel_title .. " "
         pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
     end
+
     setup_keymaps(cache.ctx)
+    setup_cursor_tracking(cache.ctx)
 end
 
 M.get_current_tab_info = function()

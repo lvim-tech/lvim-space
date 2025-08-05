@@ -119,12 +119,12 @@ M.entity_types = {
     search = {
         name = "search",
         table = "search_results",
-        state_id = nil, -- Search няма активно състояние
+        state_id = nil,
         empty_message = "SEARCH_EMPTY",
         info_empty = "INFO_LINE_SEARCH_EMPTY",
         info = "INFO_LINE_SEARCH",
         title = "SEARCH",
-        min_name_len = 0, -- Search може да има празна заявка
+        min_name_len = 0,
         name_len_error = "SEARCH_QUERY_LEN",
         name_exist_error = "SEARCH_QUERY_EXIST",
         add_failed = "SEARCH_FAILED",
@@ -322,6 +322,7 @@ M.init_entity_list = function(
     local display_lines = {}
     local actual_cursor_line = 1
     local active_item_found = false
+    local active_item_line = nil
 
     entity_def.id_field = id_field_name or "id"
 
@@ -332,7 +333,7 @@ M.init_entity_list = function(
             table.insert(display_lines, formatted_line)
             id_to_line_map[#display_lines] = entity_data[entity_def.id_field]
             if is_active then
-                actual_cursor_line = #display_lines
+                active_item_line = #display_lines
                 active_item_found = true
             end
         end
@@ -350,9 +351,12 @@ M.init_entity_list = function(
 
     if preferred_selected_line and preferred_selected_line >= 1 and preferred_selected_line <= #display_lines then
         actual_cursor_line = preferred_selected_line
-    elseif not active_item_found and not is_list_empty then
+    elseif active_item_line then
+        actual_cursor_line = active_item_line
+    elseif not is_list_empty then
         actual_cursor_line = 1
     end
+
     actual_cursor_line = math.max(1, math.min(actual_cursor_line, #display_lines))
 
     local buf_handle, win_handle =
@@ -537,6 +541,24 @@ M.setup_error_navigation = function(error_type_key, last_real_win_handle)
     }
     setup_error_navigation_keymaps(error_context_data, error_type_key)
     ui.open_actions(get_error_info_line(error_type_key))
+end
+
+M.apply_cursor_blending = function(win)
+    if not win or not vim.api.nvim_win_is_valid(win) then
+        return
+    end
+
+    local augroup_name = "LvimSpaceCursorBlend"
+    local cursor_blend_augroup = vim.api.nvim_create_augroup(augroup_name, { clear = true })
+    vim.cmd("hi Cursor blend=100")
+    vim.api.nvim_create_autocmd({ "WinLeave", "WinEnter" }, {
+        group = cursor_blend_augroup,
+        callback = function()
+            local current_event_win = vim.api.nvim_get_current_win()
+            local blend_value = current_event_win == win and 100 or 0
+            vim.cmd("hi Cursor blend=" .. blend_value)
+        end,
+    })
 end
 
 return M

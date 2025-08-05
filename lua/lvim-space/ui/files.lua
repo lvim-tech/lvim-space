@@ -14,6 +14,7 @@ local cache = {
     ctx = nil,
     tab_display_name = "",
     validation_cache = {},
+    last_cursor_position = 1,
 }
 
 local is_empty = false
@@ -21,6 +22,13 @@ local last_normal_win = nil
 local last_real_win = nil
 
 local is_plugin_panel_win = ui.is_plugin_window
+
+local function save_window_context()
+    local current_win = vim.api.nvim_get_current_win()
+    if current_win and vim.api.nvim_win_is_valid(current_win) and not is_plugin_panel_win(current_win) then
+        last_real_win = current_win
+    end
+end
 
 local function get_last_normal_win()
     if last_real_win and vim.api.nvim_win_is_valid(last_real_win) and not is_plugin_panel_win(last_real_win) then
@@ -172,7 +180,7 @@ local function add_file_db(file_path, workspace_id, tab_id)
     end
 end
 
-local function delete_file_db(file_id_to_delete, workspace_id, tab_id, selected_line_num)
+local function delete_file_db(file_id_to_delete, workspace_id, tab_id)
     local tab_data_obj = get_tab_data(tab_id, workspace_id)
     if not tab_data_obj then
         return nil
@@ -212,6 +220,14 @@ local function delete_file_db(file_id_to_delete, workspace_id, tab_id, selected_
             end
             if bufnr_of_deleted_file and vim.api.nvim_buf_is_valid(bufnr_of_deleted_file) then
                 if vim.bo[bufnr_of_deleted_file].modified then
+                    vim.ui.input({ prompt = "Buffer has unsaved changes. Save? (y/n): " }, function(input)
+                        if input and input:lower() == "y" then
+                            pcall(vim.api.nvim_buf_call, bufnr_of_deleted_file, function()
+                                vim.cmd("write")
+                            end)
+                        end
+                        pcall(vim.api.nvim_buf_delete, bufnr_of_deleted_file, { force = true })
+                    end)
                 else
                     pcall(vim.api.nvim_buf_delete, bufnr_of_deleted_file, { force = false })
                 end
@@ -219,12 +235,122 @@ local function delete_file_db(file_id_to_delete, workspace_id, tab_id, selected_
             if tostring(state.file_active) == tostring(file_id_to_delete) then
                 state.file_active = nil
             end
-            M.init(selected_line_num)
+            M.refresh()
         end)
         return true
     else
         return false
     end
+end
+
+local function update_tab_display_name()
+    cache.tab_display_name = ""
+    local current_tab_obj = data.find_tab_by_id(state.tab_active, state.workspace_id)
+    if current_tab_obj and current_tab_obj.name then
+        cache.tab_display_name = current_tab_obj.name
+    end
+end
+
+local function save_cursor_position()
+    if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
+        cache.last_cursor_position = cursor_pos[1]
+    end
+end
+
+local function setup_cursor_tracking(ctx)
+    if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
+        return
+    end
+
+    vim.api.nvim_create_autocmd("CursorMoved", {
+        buffer = ctx.buf,
+        callback = function()
+            if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+                local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
+                cache.last_cursor_position = cursor_pos[1]
+            end
+        end,
+        group = vim.api.nvim_create_augroup("LvimSpaceFilesCursor", { clear = true }),
+    })
+end
+
+M.refresh = function()
+    if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
+        return M.init()
+    end
+
+    if not cache.ctx.buf or not vim.api.nvim_buf_is_valid(cache.ctx.buf) then
+        return M.init()
+    end
+
+    save_cursor_position()
+
+    cache.files_from_db = data.find_files(state.tab_active, state.workspace_id) or {}
+    cache.file_ids_map = {}
+
+    if cache.ctx.is_empty and #cache.files_from_db > 0 then
+        return M.init()
+    end
+
+    update_tab_display_name()
+
+    local current_buf_info = get_current_buffer_info()
+
+    local new_lines = {}
+
+    for i, file_entry in ipairs(cache.files_from_db) do
+        local file_path = file_entry.path or file_entry.filePath or "???"
+        local display_text = relpath_to_project(file_path)
+        cache.file_ids_map[i] = file_entry.id
+
+        local candidate_path = file_entry.id
+        local is_current_buffer_match = current_buf_info.name
+            and candidate_path
+            and vim.fn.fnamemodify(candidate_path, ":p") == current_buf_info.name
+        local is_state_active_match = state.file_active
+            and candidate_path
+            and vim.fn.fnamemodify(candidate_path, ":p") == vim.fn.fnamemodify(state.file_active, ":p")
+
+        if is_current_buffer_match or (not current_buf_info.name and is_state_active_match) then
+            local file_active_icon = (config.ui and config.ui.icons and config.ui.icons.file_active) or " "
+            display_text = file_active_icon .. display_text
+        else
+            local file_icon = (config.ui and config.ui.icons and config.ui.icons.file) or " "
+            display_text = file_icon .. display_text
+        end
+
+        table.insert(new_lines, display_text)
+    end
+
+    local success = pcall(function()
+        local was_modifiable = vim.bo[cache.ctx.buf].modifiable
+        if not was_modifiable then
+            vim.bo[cache.ctx.buf].modifiable = true
+        end
+
+        vim.api.nvim_buf_set_lines(cache.ctx.buf, 0, -1, false, new_lines)
+
+        if not was_modifiable then
+            vim.bo[cache.ctx.buf].modifiable = false
+        end
+    end)
+
+    if not success then
+        return M.init()
+    end
+
+    cache.ctx.is_empty = #new_lines == 0
+    cache.ctx.entities = cache.files_from_db
+
+    if #new_lines > 0 and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        local max_line = #new_lines
+        local target_line = math.min(cache.last_cursor_position, max_line)
+        target_line = math.max(target_line, 1)
+        pcall(vim.api.nvim_win_set_cursor, cache.ctx.win, { target_line, 0 })
+    end
+
+    common.apply_cursor_blending(cache.ctx.win)
 end
 
 function M.handle_file_delete()
@@ -235,12 +361,7 @@ function M.handle_file_delete()
     if not file_id_at_cursor then
         return
     end
-    local current_line_num = cache.ctx
-            and cache.ctx.win
-            and vim.api.nvim_win_is_valid(cache.ctx.win)
-            and vim.api.nvim_win_get_cursor(cache.ctx.win)[1]
-        or 1
-    local result_delete = delete_file_db(file_id_at_cursor, state.workspace_id, state.tab_active, current_line_num)
+    local result_delete = delete_file_db(file_id_at_cursor, state.workspace_id, state.tab_active)
     if not result_delete then
         notify.error(state.lang.FILE_DELETE_FAILED or "Failed to delete file from tab.")
     end
@@ -326,25 +447,30 @@ function M._switch_file()
         notify.error(state.lang.FILE_NOT_READABLE or "File is not readable or does not exist.")
         return
     end
+
     local bufnr = vim.fn.bufadd(file_path_to_open)
     vim.fn.bufload(bufnr)
+
     local target_win = last_real_win
+
     if not target_win or not vim.api.nvim_win_is_valid(target_win) or is_plugin_panel_win(target_win) then
         target_win = get_last_normal_win()
+        last_real_win = target_win
     end
+
     if target_win and vim.api.nvim_win_is_valid(target_win) then
         vim.api.nvim_win_set_buf(target_win, bufnr)
+        if session.save_window_context then
+            session.save_window_context(state.tab_active)
+        end
     else
         vim.cmd("edit " .. vim.fn.fnameescape(file_path_to_open))
     end
+
     state.file_active = file_path_to_open
     update_files_state_in_db()
-    local cur_line = cache.ctx
-            and cache.ctx.win
-            and vim.api.nvim_win_is_valid(cache.ctx.win)
-            and vim.api.nvim_win_get_cursor(cache.ctx.win)[1]
-        or 1
-    M.init(cur_line)
+
+    M.refresh()
 end
 
 function M._split_file_vertical()
@@ -443,15 +569,9 @@ local function setup_keymaps(ctx)
     end, keymap_opts)
 end
 
-local function update_tab_display_name()
-    cache.tab_display_name = ""
-    local current_tab_obj = data.find_tab_by_id(state.tab_active, state.workspace_id)
-    if current_tab_obj and current_tab_obj.name then
-        cache.tab_display_name = current_tab_obj.name
-    end
-end
-
 M.init = function(selected_line_num)
+    save_window_context()
+
     if not state.project_id then
         notify.error(state.lang.PROJECT_NOT_ACTIVE or "No active project. Please select or add a project first.")
         common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
@@ -470,6 +590,12 @@ M.init = function(selected_line_num)
         common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win)
         return
     end
+
+    local restored_win = session.restore_window_context and session.restore_window_context(state.tab_active)
+    if restored_win then
+        last_real_win = restored_win
+    end
+
     if
         not last_normal_win
         or not vim.api.nvim_win_is_valid(last_normal_win)
@@ -477,6 +603,11 @@ M.init = function(selected_line_num)
     then
         last_normal_win = get_last_normal_win()
     end
+
+    if session.save_window_context then
+        session.save_window_context(state.tab_active)
+    end
+
     session.save_current_state(state.tab_active, true)
     cache.files_from_db = data.find_files(state.tab_active, state.workspace_id) or {}
     cache.file_ids_map = {}
@@ -499,6 +630,30 @@ M.init = function(selected_line_num)
             and vim.fn.fnamemodify(candidate_path, ":p") == vim.fn.fnamemodify(active_id_from_state, ":p")
         return is_current_buffer_match or (not current_buf_info_init.name and is_state_active_match)
     end
+
+    local initial_line = selected_line_num
+
+    if not initial_line and cache.last_cursor_position > 1 then
+        initial_line = cache.last_cursor_position
+    end
+
+    if not initial_line then
+        for i, file_entry in ipairs(cache.files_from_db) do
+            local candidate_path = file_entry.id
+            local is_current_buffer_match = current_buf_info_init.name
+                and candidate_path
+                and vim.fn.fnamemodify(candidate_path, ":p") == current_buf_info_init.name
+            local is_state_active_match = state.file_active
+                and candidate_path
+                and vim.fn.fnamemodify(candidate_path, ":p") == vim.fn.fnamemodify(state.file_active, ":p")
+
+            if is_current_buffer_match or (not current_buf_info_init.name and is_state_active_match) then
+                initial_line = i
+                break
+            end
+        end
+    end
+
     local ctx = common.init_entity_list(
         "file",
         cache.files_from_db,
@@ -506,7 +661,7 @@ M.init = function(selected_line_num)
         M.init,
         state.file_active,
         "id",
-        selected_line_num,
+        initial_line,
         file_formatter,
         custom_active_fn
     )
@@ -515,12 +670,18 @@ M.init = function(selected_line_num)
     end
     cache.ctx = ctx
     is_empty = ctx.is_empty
+
     if ctx.win and vim.api.nvim_win_is_valid(ctx.win) then
+        local cursor_pos = vim.api.nvim_win_get_cursor(ctx.win)
+        cache.last_cursor_position = cursor_pos[1]
+
         local win_config = vim.api.nvim_win_get_config(ctx.win)
         win_config.title = " " .. panel_title .. " "
         pcall(vim.api.nvim_win_set_config, ctx.win, win_config)
     end
     setup_keymaps(ctx)
+
+    setup_cursor_tracking(ctx)
 end
 
 M.add_file = function()
@@ -560,7 +721,7 @@ M.add_file = function()
         else
             notify.info(state.lang.FILE_ADDED_SUCCESS or "File added successfully to tab.")
         end
-        M.init()
+        M.refresh()
     end)
 end
 
@@ -578,13 +739,13 @@ M.add_current_buffer_to_tab = function(from_external)
     if result_add_current and type(result_add_current) == "number" then
         notify.info(state.lang.CURRENT_FILE_ADDED or "Current file added to tab.")
         if not from_external then
-            M.init()
+            M.refresh()
         end
         return true
     elseif result_add_current == "EXIST_NAME" then
         if not from_external then
             notify.info(state.lang.FILE_PATH_EXIST or "File already exists in this tab.")
-            M.init()
+            M.refresh()
         end
         return true
     else
@@ -594,7 +755,7 @@ M.add_current_buffer_to_tab = function(from_external)
         end
         notify.error(error_message)
         if not from_external then
-            M.init()
+            M.refresh()
         end
         return false
     end
@@ -611,7 +772,7 @@ M.remove_current_buffer_from_tab = function()
         return false
     end
 
-    local result_remove = delete_file_db(current_buf_info_remove.name, state.workspace_id, state.tab_active, nil)
+    local result_remove = delete_file_db(current_buf_info_remove.name, state.workspace_id, state.tab_active)
     if result_remove then
         return true
     else
@@ -645,7 +806,7 @@ M.switch_to_file_by_path = function(file_path)
     end
     local add_result_switch = add_file_db(normalized_path_to_switch, state.workspace_id, state.tab_active)
     if type(add_result_switch) == "number" then
-        M.init()
+        M.refresh()
         for _, file_entry_after_add in ipairs(cache.files_from_db) do
             local candidate_path_after_add = file_entry_after_add.id
             if
