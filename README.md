@@ -1,26 +1,8 @@
-# LVIM SPACE - v1.2.0
+# LVIM SPACE - v1.3.0
 
 **LVIM SPACE** is a Neovim plugin for advanced management of projects, workspaces, tabs, and files, featuring a visual UI, persistent sessions, NerdFont icons, and both automatic and manual save options.
 
 https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
-
----
-
-## ⚠️ Breaking Changes in v1.1.0
-
-**Important:** This version introduces breaking changes to the database schema. If you're upgrading from a previous version, you **must** run the migration to preserve your data:
-
-```vim
-:lua require("lvim-space.persistence.migration").migrate()
-```
-
-The migration will:
-
-- Add sort_order columns to projects, workspaces, and tabs tables
-- Preserve all your existing data
-- Enable the new reordering functionality
-
-**Note:** Back up your database before migration if you have important data.
 
 ---
 
