@@ -631,27 +631,41 @@ M.init = function(selected_line_num)
         return is_current_buffer_match or (not current_buf_info_init.name and is_state_active_match)
     end
 
-    local initial_line = selected_line_num
+    local initial_line = nil
+
+    if current_buf_info_init.name then
+        for i, file_entry in ipairs(cache.files_from_db) do
+            local candidate_path = file_entry.id or file_entry.path or file_entry.filePath
+            if candidate_path and vim.fn.fnamemodify(candidate_path, ":p") == current_buf_info_init.name then
+                initial_line = i
+                break
+            end
+        end
+    end
+
+    if not initial_line and selected_line_num then
+        initial_line = selected_line_num
+    end
+
+    if not initial_line and state.file_active then
+        for i, file_entry in ipairs(cache.files_from_db) do
+            local candidate_path = file_entry.id or file_entry.path or file_entry.filePath
+            if
+                candidate_path
+                and vim.fn.fnamemodify(candidate_path, ":p") == vim.fn.fnamemodify(state.file_active, ":p")
+            then
+                initial_line = i
+                break
+            end
+        end
+    end
 
     if not initial_line and cache.last_cursor_position > 1 then
         initial_line = cache.last_cursor_position
     end
 
-    if not initial_line then
-        for i, file_entry in ipairs(cache.files_from_db) do
-            local candidate_path = file_entry.id
-            local is_current_buffer_match = current_buf_info_init.name
-                and candidate_path
-                and vim.fn.fnamemodify(candidate_path, ":p") == current_buf_info_init.name
-            local is_state_active_match = state.file_active
-                and candidate_path
-                and vim.fn.fnamemodify(candidate_path, ":p") == vim.fn.fnamemodify(state.file_active, ":p")
-
-            if is_current_buffer_match or (not current_buf_info_init.name and is_state_active_match) then
-                initial_line = i
-                break
-            end
-        end
+    if not initial_line or initial_line > #cache.files_from_db then
+        initial_line = #cache.files_from_db > 0 and 1 or nil
     end
 
     local ctx = common.init_entity_list(
