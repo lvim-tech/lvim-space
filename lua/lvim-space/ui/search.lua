@@ -909,6 +909,9 @@ local function _open_file_in_editor_window(file_path_to_open)
         last_real_win = vim.api.nvim_get_current_win()
     end
     notify.info(state.lang.SEARCH_FILE_OPENED or "File opened successfully.")
+    vim.defer_fn(function()
+        vim.cmd("hi Cursor blend=0")
+    end, 10)
     return true
 end
 
