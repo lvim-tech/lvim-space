@@ -2,6 +2,7 @@ local config = require("lvim-space.config")
 local data = require("lvim-space.api.data")
 local state = require("lvim-space.api.state")
 local ui = require("lvim-space.ui")
+local notify = require("lvim-space.api.notify")
 
 local M = {}
 
@@ -84,15 +85,22 @@ local function cleanup_buffer_caches()
 end
 
 local function is_valid_file_path(file_path)
+    if not file_path or file_path == "" or type(file_path) ~= "string" then
+        return false
+    end
     if cache.path_validation_cache[file_path] ~= nil then
         return cache.path_validation_cache[file_path]
     end
-    local is_valid = vim.fn.filereadable(file_path) == 1
+    local is_valid = vim.fn.filereadable(file_path) == 1 and vim.fn.isdirectory(file_path) == 0
     cache.path_validation_cache[file_path] = is_valid
     return is_valid
 end
 
 local function get_or_create_buffer(file_path)
+    if not file_path or file_path == "" or type(file_path) ~= "string" then
+        notify("get_or_create_buffer called with invalid file_path: " .. tostring(file_path), vim.log.levels.ERROR)
+        return nil
+    end
     local cached_bufnr = cache.buffer_cache[file_path]
     if cached_bufnr and vim.api.nvim_buf_is_valid(cached_bufnr) then
         return cached_bufnr
@@ -101,9 +109,14 @@ local function get_or_create_buffer(file_path)
         cache.buffer_cache[file_path] = nil
     end
     if not is_valid_file_path(file_path) then
+        notify("get_or_create_buffer: file_path not valid/existing: " .. tostring(file_path), vim.log.levels.WARN)
         return nil
     end
     local bufnr = vim.fn.bufadd(file_path)
+    if not bufnr or bufnr == 0 then
+        notify("get_or_create_buffer: bufadd failed for " .. tostring(file_path), vim.log.levels.ERROR)
+        return nil
+    end
     vim.bo[bufnr].buflisted = true
     cache.buffer_cache[file_path] = bufnr
     return bufnr
@@ -116,7 +129,7 @@ local function collect_tab_session_data(tab_id)
     local valid_paths = {}
     for _, entry in ipairs(files_in_tab) do
         local path = entry.path or entry.filePath
-        if path then
+        if path and type(path) == "string" and path ~= "" then
             valid_paths[vim.fn.fnamemodify(path, ":p")] = true
         end
     end
@@ -488,17 +501,21 @@ M.restore_state = function(tab_id, force)
             local init = force_single_window()
             local to_keep = {}
             for _, bi in ipairs(sd.buffers) do
-                local b = cache.buffer_cache[bi.filePath]
-                if b and vim.api.nvim_buf_is_valid(b) then
-                    table.insert(to_keep, b)
+                if bi.filePath and type(bi.filePath) == "string" and bi.filePath ~= "" then
+                    local b = cache.buffer_cache[bi.filePath]
+                    if b and vim.api.nvim_buf_is_valid(b) then
+                        table.insert(to_keep, b)
+                    end
                 end
             end
             cleanup_old_session_buffers(to_keep)
             local fmap = {}
             for _, bi in ipairs(sd.buffers) do
-                local b = get_or_create_buffer(bi.filePath)
-                if b then
-                    fmap[bi.filePath] = b
+                if bi.filePath and type(bi.filePath) == "string" and bi.filePath ~= "" then
+                    local b = get_or_create_buffer(bi.filePath)
+                    if b then
+                        fmap[bi.filePath] = b
+                    end
                 end
             end
             local cw = restore_session_layout(sd, fmap, init)
@@ -686,7 +703,7 @@ M.setup_autocmds = function()
                     end
                 end
                 local name = vim.api.nvim_buf_get_name(b)
-                if name == "" or not is_valid_file_path(name) then
+                if not name or name == "" or not is_valid_file_path(name) then
                     return
                 end
                 if not state.workspace_id or not state.tab_active then
