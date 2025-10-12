@@ -173,20 +173,50 @@ function M.goto_tab_by_index(index)
     end
 end
 
+function M.rename_active_tab(new_name)
+    local data = require("lvim-space.api.data")
+    local state = require("lvim-space.api.state")
+    local workspace_id = state.workspace_id
+    local tab_id = state.tab_active
+
+    if not tab_id or not workspace_id then
+        print("No active tab or workspace.")
+        return
+    end
+
+    if not new_name or vim.trim(new_name) == "" then
+        print("Please provide a valid tab name.")
+        return
+    end
+
+    -- Провери дали вече има таб с това име (ако имаш такава функция)
+    if data.is_tab_name_exist and data.is_tab_name_exist(vim.trim(new_name), workspace_id) then
+        print("Tab with this name already exists.")
+        return
+    end
+
+    local success = data.update_tab_name(tab_id, new_name, workspace_id)
+    if success then
+        print("Tab renamed to: " .. new_name)
+    else
+        print("Tab rename failed.")
+    end
+end
+
 vim.api.nvim_create_user_command("LvimSpaceTabs", function()
     local tabs = M.get_tab_info()
     print(vim.inspect(tabs))
 end, {})
 
-vim.api.nvim_create_user_command("LvimSpaceNextTab", function()
+vim.api.nvim_create_user_command("LvimSpaceTabNext", function()
     M.next_tab()
 end, {})
 
-vim.api.nvim_create_user_command("LvimSpacePrevTab", function()
+vim.api.nvim_create_user_command("LvimSpaceTabPrev", function()
     M.prev_tab()
 end, {})
 
-vim.api.nvim_create_user_command("LvimSpaceCloseTab", function(opts)
+vim.api.nvim_create_user_command("LvimSpaceTabClose", function(opts)
     M.close_tab(opts.args ~= "" and opts.args or nil)
 end, { nargs = "?" })
 
@@ -205,6 +235,11 @@ vim.api.nvim_create_user_command("LvimSpaceTab", function(opts)
         return
     end
     M.goto_tab_by_index(index)
+end, { nargs = 1 })
+
+vim.api.nvim_create_user_command("LvimSpaceTabRename", function(opts)
+    local new_name = opts.args
+    M.rename_active_tab(new_name)
 end, { nargs = 1 })
 
 return M
