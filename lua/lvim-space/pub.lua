@@ -158,6 +158,21 @@ function M.move_tab(offset)
     end
 end
 
+function M.goto_tab_by_index(index)
+    local data = require("lvim-space.api.data")
+    local state = require("lvim-space.api.state")
+    local session = require("lvim-space.core.session")
+    local workspace_id = state.workspace_id
+    local tabs = data.find_tabs and data.find_tabs(workspace_id) or {}
+    local tab_entry = tabs[tonumber(index)]
+    if tab_entry and tab_entry.id then
+        session.switch_tab(tab_entry.id)
+        print("Switched to tab: " .. tab_entry.name)
+    else
+        print("Tab with index " .. tostring(index) .. " not found.")
+    end
+end
+
 vim.api.nvim_create_user_command("LvimSpaceTabs", function()
     local tabs = M.get_tab_info()
     print(vim.inspect(tabs))
@@ -182,5 +197,14 @@ end, {})
 vim.api.nvim_create_user_command("LvimSpaceTabMovePrev", function()
     M.move_tab(-1)
 end, {})
+
+vim.api.nvim_create_user_command("LvimSpaceTab", function(opts)
+    local index = tonumber(opts.args)
+    if not index then
+        print("Please provide a tab position (number).")
+        return
+    end
+    M.goto_tab_by_index(index)
+end, { nargs = 1 })
 
 return M
