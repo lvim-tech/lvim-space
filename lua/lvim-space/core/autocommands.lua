@@ -32,7 +32,12 @@ local function load_context()
                     for _, t in ipairs(active_tab.all_tabs or {}) do
                         table.insert(state.tab_ids, t.id)
                     end
-                    session.force_restore(active_tab.id)
+                    vim.schedule(function()
+                        local ok, err = pcall(session.force_restore, active_tab.id)
+                        if not ok then
+                            vim.notify("LVIM Space restore skipped: " .. tostring(err), vim.log.levels.WARN)
+                        end
+                    end)
                 end
             end
         end
