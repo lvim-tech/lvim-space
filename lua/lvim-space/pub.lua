@@ -83,6 +83,53 @@ function M.prev_tab()
     end
 end
 
+function M.new_tab(tab_name)
+    local data = require("lvim-space.api.data")
+    local state = require("lvim-space.api.state")
+    local workspace_id = state.workspace_id
+
+    if not workspace_id then
+        print("No active workspace.")
+        return
+    end
+
+    if not tab_name or vim.trim(tab_name) == "" then
+        tab_name = "Tab " .. tostring(#(state.tab_ids or {}) + 1)
+    end
+
+    -- Проверка дали вече има таб с това име
+    if data.is_tab_name_exist and data.is_tab_name_exist(tab_name, workspace_id) then
+        print("Tab with this name already exists.")
+        return
+    end
+
+    -- Добави таба
+    local tab_data_obj = { buffers = {}, created_at = os.time(), modified_at = os.time() }
+    local tab_data_json_str = vim.fn.json_encode(tab_data_obj)
+    local new_tab_id = data.add_tab(tab_name, tab_data_json_str, workspace_id)
+
+    if not new_tab_id or type(new_tab_id) ~= "number" or new_tab_id <= 0 then
+        print("Failed to create tab.")
+        return
+    end
+
+    -- Обнови списъка с табове в workspace
+    table.insert(state.tab_ids, new_tab_id)
+    if data.update_workspace_tabs then
+        local ws_tabs = {
+            tab_ids = state.tab_ids,
+            tab_active = new_tab_id,
+            updated_at = os.time(),
+        }
+        data.update_workspace_tabs(vim.fn.json_encode(ws_tabs), workspace_id)
+    end
+
+    -- Направи новия таб активен (ако имаш такава логика)
+    state.tab_active = new_tab_id
+
+    print("Created new tab: " .. tab_name)
+end
+
 function M.close_tab(tab_id)
     local data = require("lvim-space.api.data")
     local state = require("lvim-space.api.state")
@@ -215,6 +262,11 @@ end, {})
 vim.api.nvim_create_user_command("LvimSpaceTabPrev", function()
     M.prev_tab()
 end, {})
+
+vim.api.nvim_create_user_command("LvimSpaceTabNew", function(opts)
+    local name = opts.args
+    M.new_tab(name)
+end, { nargs = "?" })
 
 vim.api.nvim_create_user_command("LvimSpaceTabClose", function(opts)
     M.close_tab(opts.args ~= "" and opts.args or nil)
