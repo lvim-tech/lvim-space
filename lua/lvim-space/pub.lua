@@ -108,6 +108,56 @@ function M.close_tab(tab_id)
     end
 end
 
+function M.move_tab(offset)
+    local data = require("lvim-space.api.data")
+    local state = require("lvim-space.api.state")
+    local workspace_id = state.workspace_id
+    local tabs = data.find_tabs and data.find_tabs(workspace_id) or {}
+    local active_id = state.tab_active
+    local active_tab, active_index, active_sort
+    for i, tab in ipairs(tabs) do
+        if tostring(tab.id) == tostring(active_id) then
+            active_tab = tab
+            active_index = i
+            active_sort = tonumber(tab.sort_order)
+            break
+        end
+    end
+    if not active_tab or not active_sort then
+        print("No active tab or sort_order not found.")
+        return
+    end
+    local num_tabs = #tabs
+    local target_index = active_index + offset
+    if target_index < 1 then
+        target_index = num_tabs
+    elseif target_index > num_tabs then
+        target_index = 1
+    end
+    local target_tab = tabs[target_index]
+    if not target_tab or not target_tab.sort_order then
+        print("Target tab not found.")
+        return
+    end
+    local target_sort = tonumber(target_tab.sort_order)
+    local new_order_table = {}
+    for _, tab in ipairs(tabs) do
+        if tab.id == active_tab.id then
+            table.insert(new_order_table, { id = tab.id, order = target_sort })
+        elseif tab.id == target_tab.id then
+            table.insert(new_order_table, { id = tab.id, order = active_sort })
+        else
+            table.insert(new_order_table, { id = tab.id, order = tonumber(tab.sort_order) })
+        end
+    end
+    local success, err = data.reorder_tabs(workspace_id, new_order_table)
+    if success then
+        print("Tab moved.")
+    else
+        print("Tab move failed: " .. tostring(err))
+    end
+end
+
 vim.api.nvim_create_user_command("LvimSpaceTabs", function()
     local tabs = M.get_tab_info()
     print(vim.inspect(tabs))
@@ -124,5 +174,13 @@ end, {})
 vim.api.nvim_create_user_command("LvimSpaceCloseTab", function(opts)
     M.close_tab(opts.args ~= "" and opts.args or nil)
 end, { nargs = "?" })
+
+vim.api.nvim_create_user_command("LvimSpaceTabMoveNext", function()
+    M.move_tab(1)
+end, {})
+
+vim.api.nvim_create_user_command("LvimSpaceTabMovePrev", function()
+    M.move_tab(-1)
+end, {})
 
 return M
