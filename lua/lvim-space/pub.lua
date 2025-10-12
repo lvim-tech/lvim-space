@@ -83,37 +83,44 @@ function M.prev_tab()
     end
 end
 
+local function get_next_tab_name(tabs)
+    local used = {}
+    for _, tab in ipairs(tabs) do
+        local num = string.match(tab.name or "", "^Tab (%d+)$")
+        if num then
+            used[tonumber(num)] = true
+        end
+    end
+    local i = 1
+    while used[i] do
+        i = i + 1
+    end
+    return "Tab " .. tostring(i)
+end
+
 function M.new_tab(tab_name)
     local data = require("lvim-space.api.data")
     local state = require("lvim-space.api.state")
     local workspace_id = state.workspace_id
-
     if not workspace_id then
         print("No active workspace.")
         return
     end
-
+    local tabs = data.find_tabs and data.find_tabs(workspace_id) or {}
     if not tab_name or vim.trim(tab_name) == "" then
-        tab_name = "Tab " .. tostring(#(state.tab_ids or {}) + 1)
+        tab_name = get_next_tab_name(tabs)
     end
-
-    -- Проверка дали вече има таб с това име
     if data.is_tab_name_exist and data.is_tab_name_exist(tab_name, workspace_id) then
         print("Tab with this name already exists.")
         return
     end
-
-    -- Добави таба
     local tab_data_obj = { buffers = {}, created_at = os.time(), modified_at = os.time() }
     local tab_data_json_str = vim.fn.json_encode(tab_data_obj)
     local new_tab_id = data.add_tab(tab_name, tab_data_json_str, workspace_id)
-
     if not new_tab_id or type(new_tab_id) ~= "number" or new_tab_id <= 0 then
         print("Failed to create tab.")
         return
     end
-
-    -- Обнови списъка с табове в workspace
     table.insert(state.tab_ids, new_tab_id)
     if data.update_workspace_tabs then
         local ws_tabs = {
@@ -123,10 +130,7 @@ function M.new_tab(tab_name)
         }
         data.update_workspace_tabs(vim.fn.json_encode(ws_tabs), workspace_id)
     end
-
-    -- Направи новия таб активен (ако имаш такава логика)
     state.tab_active = new_tab_id
-
     print("Created new tab: " .. tab_name)
 end
 
