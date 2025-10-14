@@ -1,5 +1,34 @@
 local M = {}
 
+local function get_next_tab_name(tabs)
+    local used = {}
+    for _, tab in ipairs(tabs) do
+        local num = string.match(tab.name or "", "^Tab (%d+)$")
+        if num then
+            used[tonumber(num)] = true
+        end
+    end
+    local i = 1
+    while used[i] do
+        i = i + 1
+    end
+    return "Tab " .. tostring(i)
+end
+
+local function close_all_and_open_empty()
+    local wins = vim.api.nvim_list_wins()
+    local win_to_keep = vim.api.nvim_get_current_win()
+    if #wins > 1 then
+        for _, win in ipairs(wins) do
+            if win ~= win_to_keep and vim.api.nvim_win_is_valid(win) then
+                vim.api.nvim_win_close(win, true)
+            end
+        end
+    end
+    vim.api.nvim_set_current_win(win_to_keep)
+    vim.cmd("enew")
+end
+
 function M.get_tab_info()
     local data = require("lvim-space.api.data")
     local state = require("lvim-space.api.state")
@@ -83,21 +112,6 @@ function M.prev_tab()
     end
 end
 
-local function get_next_tab_name(tabs)
-    local used = {}
-    for _, tab in ipairs(tabs) do
-        local num = string.match(tab.name or "", "^Tab (%d+)$")
-        if num then
-            used[tonumber(num)] = true
-        end
-    end
-    local i = 1
-    while used[i] do
-        i = i + 1
-    end
-    return "Tab " .. tostring(i)
-end
-
 function M.new_tab(tab_name)
     local data = require("lvim-space.api.data")
     local state = require("lvim-space.api.state")
@@ -110,9 +124,11 @@ function M.new_tab(tab_name)
     if not tab_name or vim.trim(tab_name) == "" then
         tab_name = get_next_tab_name(tabs)
     end
-    if data.is_tab_name_exist and data.is_tab_name_exist(tab_name, workspace_id) then
-        print("Tab with this name already exists.")
-        return
+    local orig_name = tab_name
+    local try_count = 0
+    while data.is_tab_name_exist and data.is_tab_name_exist(tab_name, workspace_id) do
+        try_count = try_count + 1
+        tab_name = orig_name .. "_" .. tostring(try_count)
     end
     local tab_data_obj = { buffers = {}, created_at = os.time(), modified_at = os.time() }
     local tab_data_json_str = vim.fn.json_encode(tab_data_obj)
@@ -132,6 +148,7 @@ function M.new_tab(tab_name)
     end
     state.tab_active = new_tab_id
     print("Created new tab: " .. tab_name)
+    close_all_and_open_empty()
 end
 
 function M.close_tab(tab_id)
@@ -229,23 +246,18 @@ function M.rename_active_tab(new_name)
     local state = require("lvim-space.api.state")
     local workspace_id = state.workspace_id
     local tab_id = state.tab_active
-
     if not tab_id or not workspace_id then
         print("No active tab or workspace.")
         return
     end
-
     if not new_name or vim.trim(new_name) == "" then
         print("Please provide a valid tab name.")
         return
     end
-
-    -- Провери дали вече има таб с това име (ако имаш такава функция)
     if data.is_tab_name_exist and data.is_tab_name_exist(vim.trim(new_name), workspace_id) then
         print("Tab with this name already exists.")
         return
     end
-
     local success = data.update_tab_name(tab_id, new_name, workspace_id)
     if success then
         print("Tab renamed to: " .. new_name)
