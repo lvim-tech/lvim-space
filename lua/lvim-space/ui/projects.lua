@@ -385,12 +385,12 @@ local function enter_navigate_next(project_id)
                 require("lvim-space.ui.workspaces").init(nil, { select_workspace = false })
             end
         end
-        vim.defer_fn(function()
-            state.disable_auto_close = false
-            if target_init_func then
-                target_init_func()
-            end
-        end, 50)
+        -- vim.defer_fn(function()
+        state.disable_auto_close = false
+        if target_init_func then
+            target_init_func()
+        end
+        -- end, 100)
     end)
 end
 
