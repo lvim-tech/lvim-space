@@ -2,53 +2,55 @@ local config = require("lvim-space.config")
 
 local M = {}
 
+local function define_hl_if_missing(name, opts)
+    local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
+    if not ok or not hl or vim.tbl_isempty(hl) then
+        vim.api.nvim_set_hl(0, name, opts)
+    end
+end
+
 function M.setup()
-    vim.api.nvim_set_hl(0, "LvimSpaceNormal", {
+    define_hl_if_missing("LvimSpaceNormal", {
         bg = config.ui.highlight.bg,
         fg = config.ui.highlight.fg,
         default = true,
     })
-    vim.api.nvim_set_hl(0, "LvimSpaceCursorLine", {
+    define_hl_if_missing("LvimSpaceCursorLine", {
         bg = config.ui.highlight.bg_line,
         fg = config.ui.highlight.fg_line,
         default = true,
     })
-    vim.api.nvim_set_hl(0, "LvimSpaceTitle", {
+    define_hl_if_missing("LvimSpaceTitle", {
         bg = config.ui.highlight.fg,
         fg = config.ui.highlight.bg,
         default = true,
     })
-    vim.api.nvim_set_hl(0, "LvimSpaceInfo", {
+    define_hl_if_missing("LvimSpaceInfo", {
         bg = config.ui.highlight.bg,
         fg = config.ui.highlight.fg_line,
         default = true,
     })
-    vim.api.nvim_set_hl(0, "LvimSpaceInfo", {
-        bg = config.ui.highlight.bg_line,
-        fg = config.ui.highlight.fg_line,
-        default = true,
-    })
-    vim.api.nvim_set_hl(0, "LvimSpacePrompt", {
+    define_hl_if_missing("LvimSpacePrompt", {
         bg = config.ui.highlight.bg,
         fg = config.ui.highlight.fg_line,
         default = true,
     })
-    vim.api.nvim_set_hl(0, "LvimSpaceInput", {
+    define_hl_if_missing("LvimSpaceInput", {
         bg = config.ui.highlight.fg,
         fg = config.ui.highlight.bg,
         default = true,
     })
-    vim.api.nvim_set_hl(0, "LvimSpaceSign", {
+    define_hl_if_missing("LvimSpaceSign", {
         bg = config.ui.highlight.bg,
         fg = config.ui.highlight.fg_line,
         default = true,
     })
-    vim.api.nvim_set_hl(0, "LvimSpaceFuzzyPrimary", {
+    define_hl_if_missing("LvimSpaceFuzzyPrimary", {
         bg = config.ui.highlight.bg_fuzzy,
         fg = config.ui.highlight.fg_fuzzy_primary,
         bold = true,
     })
-    vim.api.nvim_set_hl(0, "LvimSpaceFuzzySecondary", {
+    define_hl_if_missing("LvimSpaceFuzzySecondary", {
         bg = config.ui.highlight.bg_fuzzy,
         fg = config.ui.highlight.fg_fuzzy_secondary,
         bold = true,
