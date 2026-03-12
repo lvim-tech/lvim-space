@@ -38,13 +38,13 @@ function M.run()
         if not success then
             error("sqlite3 command failed")
         end
-        if output and output:trim() ~= "" then
+        if output and vim.trim(output) ~= "" then
             local results = {}
-            local lines = vim.split(output:trim(), "\n")
+            local lines = vim.split(vim.trim(output), "\n")
             if sql_query:upper():match("^%s*SELECT") or sql_query:upper():match("^%s*PRAGMA") then
                 local headers = nil
                 for i, line in ipairs(lines) do
-                    if line and line:trim() ~= "" then
+                    if line and vim.trim(line) ~= "" then
                         local parts = vim.split(line, "|")
                         if
                             i == 1
@@ -55,13 +55,13 @@ function M.run()
                         then
                             headers = {}
                             for _, part in ipairs(parts) do
-                                table.insert(headers, part:trim())
+                                table.insert(headers, vim.trim(part))
                             end
                         elseif headers then
                             local row = {}
                             for j, part in ipairs(parts) do
                                 if headers[j] then
-                                    local value = part:trim()
+                                    local value = vim.trim(part)
 
                                     local num_value = tonumber(value)
                                     if num_value then
@@ -76,15 +76,15 @@ function M.run()
                             local row = {}
 
                             if sql_query:match("SELECT name FROM sqlite_master") then
-                                row.name = parts[1] and parts[1]:trim()
+                                row.name = parts[1] and vim.trim(parts[1])
                             elseif sql_query:match("SELECT id FROM") then
-                                local id_val = parts[1] and parts[1]:trim()
+                                local id_val = parts[1] and vim.trim(parts[1])
                                 row.id = tonumber(id_val)
                             elseif sql_query:match("SELECT DISTINCT project_id FROM") then
-                                local pid_val = parts[1] and parts[1]:trim()
+                                local pid_val = parts[1] and vim.trim(parts[1])
                                 row.project_id = tonumber(pid_val)
                             elseif sql_query:match("SELECT DISTINCT workspace_id FROM") then
-                                local wid_val = parts[1] and parts[1]:trim()
+                                local wid_val = parts[1] and vim.trim(parts[1])
                                 row.workspace_id = tonumber(wid_val)
                             end
 
@@ -352,12 +352,6 @@ function M.populate_tabs_sort_order(exec_function)
     end
     print(string.format("Migration: Updated sort_order for %d tabs", total_updated))
     return success
-end
-
-if not string.trim then
-    string.trim = function(s)
-        return s:gsub("^%s*(.-)%s*$", "%1")
-    end
 end
 
 if ... == nil then

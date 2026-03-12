@@ -1,45 +1,61 @@
+-- lua/lvim-space/ui/init.lua
+-- Core UI module: window creation, management, input fields, and state
+-- persistence for the lvim-space floating panel system.
+
 local config = require("lvim-space.config")
 local state = require("lvim-space.api.state")
+local cursor = require("lvim-space.ui.cursor")
 
 local M = {}
 
 local api = vim.api
 local cmd = vim.cmd
 
+---@class LvimSpaceSavedState
+---@field main string[]|nil Lines saved from the main content window
+---@field actions string|nil Content saved from the status-line/actions window
+---@field input_line integer|nil Cursor row that was active when an input was opened
+
+---@type LvimSpaceSavedState
 local saved_state = {
     main = nil,
     actions = nil,
     input_line = nil,
 }
 
-state.disable_auto_close = false
-vim.opt.guicursor = "n-v-c:block-Cursor/lCursor,i-ci-ve:ver25-Cursor/lCursor,r-cr:hor20,o:hor50"
-
+---@param win integer Window handle to check
+---@return boolean is_valid True when the handle is non-nil and refers to a valid window
 local function is_valid_win(win)
     return win and api.nvim_win_is_valid(win)
 end
 
+---@param buf integer Buffer handle to check
+---@return boolean is_valid True when the handle is non-nil and refers to a valid buffer
 local function is_valid_buf(buf)
     return buf and api.nvim_buf_is_valid(buf)
 end
 
+---Close a window safely, ignoring errors if the window is already gone.
+---@param win integer Window handle
 local function safe_close_win(win)
     if is_valid_win(win) then
         pcall(api.nvim_win_close, win, true)
     end
 end
 
+---Delete a buffer safely, ignoring errors if the buffer is already gone.
+---@param buf integer Buffer handle
 local function safe_delete_buf(buf)
     if is_valid_buf(buf) then
         pcall(api.nvim_buf_delete, buf, { force = true })
     end
 end
 
-local function set_cursor_blend(blend)
-    blend = tonumber(blend) or 0
-    cmd("hi Cursor blend=" .. blend)
-end
-
+---Determine which line in a project list should be selected on open.
+---Prefers the previously-saved input line, then falls back to the currently
+---active project, and finally defaults to line 1.
+---@param projects table[] List of project records (each must have an `id` field)
+---@return integer line 1-based line index to position the cursor on
 local function get_target_line(projects)
     if saved_state.input_line and projects[saved_state.input_line] then
         return saved_state.input_line
@@ -56,6 +72,8 @@ local function get_target_line(projects)
     return 1
 end
 
+---Move Neovim focus back to the main content window and position the cursor
+---on the previously selected project line.
 local function restore_main_window_focus()
     if not (state.ui and state.ui.content and is_valid_win(state.ui.content.win)) then
         return
@@ -71,6 +89,12 @@ local function restore_main_window_focus()
     end
 end
 
+---Build the 8-element border character table expected by `nvim_open_win`.
+---The resulting array follows the Neovim convention:
+---  { top, top-right, right, bottom-right, bottom, bottom-left, left, top-left }
+---@param border_config table Border configuration with optional `left` and `right` boolean fields
+---@param border_type string One of `"main"`, `"info"`, or any other value for the default style
+---@return string[] border Eight-element array of border characters
 local function build_border(border_config, border_type)
     local border_sign = config.ui.border.sign or ""
     local border
@@ -107,6 +131,9 @@ local function build_border(border_config, border_type)
     return border
 end
 
+---Validate that a floating-window configuration has sensible geometry values.
+---@param win_config table The window config table (must contain `width`, `height`, `row`, `col`)
+---@return boolean valid True when all required geometry fields are present and in range
 local function validate_window_config(win_config)
     if not win_config.width or win_config.width < 1 then
         return false
@@ -120,6 +147,12 @@ local function validate_window_config(win_config)
     return true
 end
 
+---Attach a lightweight cursorline highlight to `buf` / `win` using extmarks.
+---Neovim's built-in `cursorline` option is disabled for plugin windows; this
+---function re-implements the visual effect via the `LvimSpaceCursorLine` hl
+---group so that the appearance can be controlled precisely.
+---@param buf integer Buffer handle
+---@param win integer Window handle
 local function setup_custom_cursorline(buf, win)
     if not is_valid_buf(buf) or not is_valid_win(win) then
         return
@@ -167,6 +200,12 @@ local function setup_custom_cursorline(buf, win)
     vim.schedule(update_cursor_highlight)
 end
 
+---Apply a highlight group to a byte range on a single buffer line via extmarks.
+---@param buf integer Buffer handle
+---@param line integer 0-based line index
+---@param start_col integer 0-based start byte column (inclusive)
+---@param end_col integer 0-based end byte column (exclusive)
+---@param hl_group string Name of the highlight group to apply
 M.add_highlight = function(buf, line, start_col, end_col, hl_group)
     if not is_valid_buf(buf) then
         return
@@ -181,6 +220,8 @@ M.add_highlight = function(buf, line, start_col, end_col, hl_group)
     })
 end
 
+---Remove all extmark-based highlights previously set by `M.add_highlight`.
+---@param buf integer Buffer handle
 M.clear_highlights = function(buf)
     if not is_valid_buf(buf) then
         return
@@ -190,6 +231,28 @@ M.clear_highlights = function(buf)
     api.nvim_buf_clear_namespace(buf, ns, 0, -1)
 end
 
+---@class LvimSpaceWindowOptions
+---@field content string|string[]|nil Initial buffer content (string or list of lines)
+---@field filetype string|nil Filetype to set on the new buffer
+---@field row integer|nil Top edge of the floating window (editor-relative)
+---@field col integer|nil Left edge of the floating window (editor-relative)
+---@field width integer|nil Window width in columns
+---@field height integer|nil Window height in lines
+---@field focus boolean|nil Whether to focus the window immediately
+---@field focusable boolean|nil Whether the window can receive focus (default true)
+---@field zindex integer|nil Stacking z-index for the floating window
+---@field border string[]|nil 8-element border character array
+---@field title string|nil Title shown in the window border
+---@field title_position string|nil Horizontal alignment of the title (`"left"`, `"center"`, `"right"`)
+---@field winhighlight string|nil Comma-separated `WinhighlightOption` string
+---@field cursorline boolean|nil When non-nil, forces `cursorline` off for this window
+---@field store_in string|nil When set, stores `{ win, buf }` under `state.ui[store_in]`
+---@field on_create fun(win: integer, buf: integer)|nil Callback invoked after the window is created
+
+---Create a new floating window backed by a scratch buffer.
+---@param options LvimSpaceWindowOptions Configuration for the new window
+---@return integer|nil buf Buffer handle, or nil on failure
+---@return integer|nil win Window handle, or nil on failure
 M.create_window = function(options)
     local buf = api.nvim_create_buf(false, true)
     if not is_valid_buf(buf) then
@@ -251,6 +314,9 @@ M.create_window = function(options)
     return buf, win
 end
 
+---Close a managed plugin window and release its buffer.
+---Removes the entry from `state.ui` when done.
+---@param window_type string Key used in `state.ui` (e.g. `"content"`, `"status_line"`)
 M.close_window = function(window_type)
     if not state.ui or not state.ui[window_type] then
         return
@@ -262,6 +328,10 @@ M.close_window = function(window_type)
     state.ui[window_type] = nil
 end
 
+---Check whether a window handle belongs to one of the plugin's managed windows.
+---Used by the auto-close autocmd to decide when to tear down the UI.
+---@param win integer Window handle to test
+---@return boolean is_plugin_window True when `win` is owned by lvim-space
 M.is_plugin_window = function(win)
     if not state.ui then
         return false
@@ -277,22 +347,35 @@ M.is_plugin_window = function(win)
     return false
 end
 
-local auto_close_group = api.nvim_create_augroup("LvimSpaceAutoClose", { clear = true })
+---Initialise the UI subsystem.
+---Sets up cursor management and registers the auto-close `WinEnter` autocmd
+---that tears down the panel whenever focus moves to a non-plugin window.
+M.init = function()
+    state.disable_auto_close = false
+    cursor.setup()
+    local auto_close_group = api.nvim_create_augroup("LvimSpaceAutoClose", { clear = true })
+    api.nvim_create_autocmd("WinEnter", {
+        group = auto_close_group,
+        callback = function()
+            if state.disable_auto_close then
+                return
+            end
+            local current_win = api.nvim_get_current_win()
+            if not M.is_plugin_window(current_win) then
+                M.close_all()
+            end
+        end,
+    })
+end
 
-api.nvim_create_autocmd("WinEnter", {
-    group = auto_close_group,
-    callback = function()
-        if state.disable_auto_close then
-            return
-        end
-
-        local current_win = api.nvim_get_current_win()
-        if not M.is_plugin_window(current_win) then
-            M.close_all()
-        end
-    end,
-})
-
+---Open (or reopen) the primary content panel showing a list of items.
+---Saves the previous main-window state, closes the existing content window,
+---then creates a new floating window at the bottom of the editor.
+---@param lines string[] Lines to display in the panel
+---@param name string|nil Title shown in the window border (defaults to config value)
+---@param selected_line integer|nil 1-based line to position the cursor on initially
+---@return integer|nil buf Buffer handle of the new window
+---@return integer|nil win Window handle of the new window
 M.open_main = function(lines, name, selected_line)
     M.save_state("main")
     M.close_window("content")
@@ -331,26 +414,14 @@ M.open_main = function(lines, name, selected_line)
 
             setup_custom_cursorline(buf, win)
 
-            set_cursor_blend(100)
-            local cursor_group = api.nvim_create_augroup("LvimSpaceCursorBlend", { clear = true })
-
-            api.nvim_create_autocmd({ "WinLeave", "WinEnter" }, {
-                group = cursor_group,
-                callback = function()
-                    set_cursor_blend(api.nvim_get_current_win() == win and 100 or 0)
-                end,
-            })
-
             api.nvim_create_autocmd("BufWipeout", {
                 buffer = buf,
-                group = cursor_group,
+                once = true,
                 callback = function()
-                    set_cursor_blend(0)
                     if not state.disable_auto_close then
                         M.close_actions()
                     end
                 end,
-                once = true,
             })
 
             local keymaps = require("lvim-space.core.keymaps")
@@ -392,6 +463,11 @@ M.open_main = function(lines, name, selected_line)
     return buf, win
 end
 
+---Open the status-line / actions bar at the very bottom of the editor.
+---This is a non-focusable, single-line floating window.
+---@param line string|string[] Text content to display in the actions bar
+---@return integer|nil buf Buffer handle
+---@return integer|nil win Window handle
 M.open_actions = function(line)
     M.save_state("actions")
     M.close_window("status_line")
@@ -412,6 +488,18 @@ M.open_actions = function(line)
     })
 end
 
+---@class LvimSpaceInputDimensions
+---@field prompt_text string The full prompt string including the configured separator
+---@field prompt_width integer Display width of `prompt_text` in columns
+---@field prompt_total_width integer `prompt_width` plus any border columns for the prompt window
+---@field input_col integer Column at which the input window should start
+---@field input_width integer Width available for the input field content
+---@field prompt_border string[] 8-element border array for the prompt window
+---@field input_border string[] 8-element border array for the input window
+
+---Calculate geometry for the prompt label and the adjacent input field.
+---@param prompt string The label text shown to the left of the input field
+---@return LvimSpaceInputDimensions dims Computed layout information
 local function calculate_input_dimensions(prompt)
     local total_width = vim.o.columns
     local prompt_separator = config.ui.border.prompt.separate or ": "
@@ -440,6 +528,15 @@ local function calculate_input_dimensions(prompt)
     }
 end
 
+---Open an inline input field composed of a read-only prompt window and an
+---editable input window positioned side-by-side at the bottom of the editor.
+---Pressing `<CR>` calls `callback` with the entered value; `<Esc>` cancels.
+---@param prompt string Label displayed to the left of the input field
+---@param default_value string|nil Pre-filled text for the input field
+---@param callback fun(value: string, input_line: integer|nil) Function called on submit with the entered text and saved cursor line
+---@param options table|nil Optional overrides (supports `prompt_filetype` and `input_filetype`)
+---@return integer|nil buf Buffer handle of the input window
+---@return integer|nil win Window handle of the input window
 function M.create_input_field(prompt, default_value, callback, options)
     options = options or {}
 
@@ -454,7 +551,7 @@ function M.create_input_field(prompt, default_value, callback, options)
 
     local dims = calculate_input_dimensions(prompt)
 
-    local _, prompt_win = M.create_window({
+    local prompt_buf, prompt_win = M.create_window({
         content = dims.prompt_text,
         row = vim.o.lines - 1,
         col = 0,
@@ -487,7 +584,6 @@ function M.create_input_field(prompt, default_value, callback, options)
 
             api.nvim_buf_set_var(buf, "input_callback", callback)
             api.nvim_buf_set_var(buf, "input_default", default_value or "")
-            set_cursor_blend(0)
 
             local function map(mode, lhs, rhs)
                 vim.keymap.set(mode, lhs, rhs, { buffer = buf, noremap = true, silent = true, nowait = true })
@@ -525,7 +621,6 @@ function M.create_input_field(prompt, default_value, callback, options)
                         api.nvim_set_current_win(win)
                         cmd("startinsert!")
                     end
-                    set_cursor_blend(0)
                 end,
             })
 
@@ -541,14 +636,17 @@ function M.create_input_field(prompt, default_value, callback, options)
 
     if not input_buf or not input_win then
         M.close_window("prompt_window")
-        safe_close_win(prompt_win)
+        if prompt_win then safe_close_win(prompt_win) end
         return nil, nil
     end
 
-    state.ui.prompt_window = { win = prompt_win }
+    state.ui.prompt_window = { win = prompt_win, buf = prompt_buf }
     return input_buf, input_win
 end
 
+---Cancel an active input field without invoking the submit callback.
+---Closes both the prompt and input windows, restores the actions bar state,
+---and returns focus to the main content window.
 function M.cancel_input()
     local mode = api.nvim_get_mode().mode
     if mode:match("i") then
@@ -561,13 +659,11 @@ function M.cancel_input()
     M.close_window("status_line")
     M.restore_state("actions")
     restore_main_window_focus()
-
-    local main_win = state.ui and state.ui.content and state.ui.content.win
-    if is_valid_win(main_win) and api.nvim_get_current_win() == main_win then
-        set_cursor_blend(100)
-    end
 end
 
+---Submit the currently active input field.
+---Reads the first line of the input buffer, closes the input UI, and
+---schedules the stored callback with the entered value.
 function M.submit_input()
     local buf = api.nvim_get_current_buf()
     cmd("stopinsert")
@@ -593,6 +689,8 @@ function M.submit_input()
     end
 end
 
+---Snapshot the current content of a managed window into `saved_state`.
+---@param type string Which window to snapshot: `"main"` or `"actions"`
 M.save_state = function(type)
     if type == "main" and state.ui and state.ui.content and is_valid_buf(state.ui.content.buf) then
         saved_state.main = api.nvim_buf_get_lines(state.ui.content.buf, 0, -1, false)
@@ -601,6 +699,8 @@ M.save_state = function(type)
     end
 end
 
+---Restore a previously snapshotted window from `saved_state`.
+---@param type string Which window to restore: `"main"` or `"actions"`
 M.restore_state = function(type)
     if type == "main" and saved_state.main and #saved_state.main > 0 then
         M.close_window("content")
@@ -611,15 +711,18 @@ M.restore_state = function(type)
     end
 end
 
+---Close the main content window and the actions/status-line bar.
 M.close_content = function()
     M.close_window("content")
     M.close_actions()
 end
 
+---Close the status-line / actions bar window.
 M.close_actions = function()
     M.close_window("status_line")
 end
 
+---Close every window managed by the plugin (input, prompt, actions, content).
 M.close_all = function()
     for _, win_type in ipairs({ "prompt_window", "input_window", "status_line", "content" }) do
         M.close_window(win_type)

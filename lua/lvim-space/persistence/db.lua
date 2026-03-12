@@ -80,7 +80,6 @@ M.init = function()
                 (state.lang and state.lang.FAILED_TO_CREATE_SAVE_DIRECTORY)
                     or "Failed to create save directory for database."
             )
-            config.log = false
             return false
         end
     end

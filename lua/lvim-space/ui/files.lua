@@ -1,3 +1,8 @@
+-- files.lua
+-- UI panel for managing files (buffers) within the active tab.
+-- Handles listing, adding, deleting, and switching to files,
+-- as well as opening files in vertical/horizontal splits.
+
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
@@ -8,6 +13,15 @@ local session = require("lvim-space.core.session")
 
 local M = {}
 
+---@class FilesCache
+---@field file_ids_map table<number, string> Maps visual line number to file path (used as ID).
+---@field files_from_db table[] Raw file/buffer records fetched from the active tab's data.
+---@field ctx table|nil Current panel window/buffer context.
+---@field tab_display_name string Display name of the active tab.
+---@field validation_cache table<string, {path: string|nil, error: string|nil}> Per-path validation result cache.
+---@field last_cursor_position number Last known cursor row in the panel.
+
+---@type FilesCache
 local cache = {
     file_ids_map = {},
     files_from_db = {},
@@ -17,12 +31,16 @@ local cache = {
     last_cursor_position = 1,
 }
 
+---@type boolean Whether the panel is currently showing an empty list.
 local is_empty = false
+---@type integer|nil Last known non-plugin normal window handle.
 local last_normal_win = nil
+---@type integer|nil Last non-plugin editor window handle used as the file-open target.
 local last_real_win = nil
 
 local is_plugin_panel_win = ui.is_plugin_window
 
+--- Saves the current non-plugin window as `last_real_win`.
 local function save_window_context()
     local current_win = vim.api.nvim_get_current_win()
     if current_win and vim.api.nvim_win_is_valid(current_win) and not is_plugin_panel_win(current_win) then
@@ -30,6 +48,9 @@ local function save_window_context()
     end
 end
 
+--- Returns the best non-plugin normal window to use as the file editing target.
+--- Prefers the previously saved `last_real_win`, then the focused window, then any normal window.
+---@return integer win_handle A valid window handle.
 local function get_last_normal_win()
     if last_real_win and vim.api.nvim_win_is_valid(last_real_win) and not is_plugin_panel_win(last_real_win) then
         return last_real_win
@@ -53,6 +74,8 @@ local function get_last_normal_win()
     return current_win
 end
 
+--- Returns basic information about the currently focused buffer.
+---@return {bufnr: integer, name: string|nil, is_valid: boolean} buffer_info Buffer handle, absolute path (or nil), and validity flag.
 local function get_current_buffer_info()
     local current_buf = vim.api.nvim_get_current_buf()
     local current_buf_name = vim.api.nvim_buf_get_name(current_buf)
@@ -63,6 +86,10 @@ local function get_current_buffer_info()
     }
 end
 
+--- Finds a file entry in a list by its ID (file path or bufnr).
+---@param file_id string|number The ID to search for (matched as a string).
+---@param files_list table[] List of file entry objects to search.
+---@return table|nil file_entry The matching entry, or nil if not found.
 local function get_file_by_id(file_id, files_list)
     for _, file_entry in ipairs(files_list) do
         local candidate_id = file_entry.id or file_entry.bufnr
@@ -73,6 +100,10 @@ local function get_file_by_id(file_id, files_list)
     return nil
 end
 
+--- Returns the path of `file_path` relative to the active project root.
+--- Falls back to `~`-shortened path when the file is outside the project.
+---@param file_path string Absolute or relative file path to display.
+---@return string relative_path The path suitable for display in the panel.
 local function relpath_to_project(file_path)
     local project = data.find_project_by_id(state.project_id)
     if not project or not project.path then
@@ -92,6 +123,11 @@ local function relpath_to_project(file_path)
     return vim.fn.fnamemodify(file_path, ":~:.")
 end
 
+--- Validates and normalises a file path for addition to a tab.
+--- Results are cached per path to avoid redundant filesystem checks.
+---@param file_path string The raw file path entered by the user.
+---@return string|nil normalized_path The absolute, normalised path on success, or nil on error.
+---@return string|nil err_code Error code such as "LEN_NAME", "DIR_ADD_NOT_ALLOWED", or "INVALID_DIR".
 local function validate_file_path(file_path)
     if not file_path or vim.trim(file_path) == "" then
         return nil, "LEN_NAME"
@@ -116,6 +152,10 @@ local function validate_file_path(file_path)
     return cache.validation_cache[cache_key].path, cache.validation_cache[cache_key].error
 end
 
+--- Fetches and JSON-decodes the data payload for a tab.
+---@param tab_id number The ID of the tab.
+---@param workspace_id number The workspace that owns the tab.
+---@return table|nil tab_data Decoded tab data object (with a `buffers` list), or nil on failure.
 local function get_tab_data(tab_id, workspace_id)
     local tab = data.find_tab_by_id(tab_id, workspace_id)
     if not tab or not tab.data then
@@ -129,6 +169,11 @@ local function get_tab_data(tab_id, workspace_id)
     return tab_data_decoded
 end
 
+--- Encodes a tab data object and writes it back to the database.
+---@param tab_id number The ID of the tab to update.
+---@param workspace_id number The workspace that owns the tab.
+---@param tab_data_obj table The decoded tab data object to persist.
+---@return boolean success true on success, false on database failure.
 local function update_tab_data_in_db(tab_id, workspace_id, tab_data_obj)
     local updated_data_json = vim.fn.json_encode(tab_data_obj)
     local success = data.update_tab_data(tab_id, updated_data_json, workspace_id)
@@ -138,6 +183,7 @@ local function update_tab_data_in_db(tab_id, workspace_id, tab_data_obj)
     return true
 end
 
+--- Persists the current tab's file/buffer list to the database when autosave is enabled.
 local function update_files_state_in_db()
     if not config.autosave or not state.tab_active or not state.workspace_id then
         return
@@ -148,6 +194,12 @@ local function update_files_state_in_db()
     end
 end
 
+--- Validates and adds a file to a tab's buffer list in the database.
+--- Creates a new Neovim buffer for the file and records it in the tab data.
+---@param file_path string The raw file path to add (will be validated and normalised internally).
+---@param workspace_id number The workspace that owns the tab.
+---@param tab_id number The tab to add the file to.
+---@return number|string|nil result The new buffer number on success, an error-code string on failure, or nil when validation returns no code.
 local function add_file_db(file_path, workspace_id, tab_id)
     local validated_path, error_code = validate_file_path(file_path)
     if not validated_path then
@@ -180,6 +232,12 @@ local function add_file_db(file_path, workspace_id, tab_id)
     end
 end
 
+--- Removes a file entry from a tab's buffer list in the database.
+--- Handles replacing and unloading the associated Neovim buffer asynchronously.
+---@param file_id_to_delete string The file path used as the entry's ID.
+---@param workspace_id number The workspace that owns the tab.
+---@param tab_id number The tab from which to remove the file.
+---@return boolean|nil result true on success, false on DB failure, nil when entry not found.
 local function delete_file_db(file_id_to_delete, workspace_id, tab_id)
     local tab_data_obj = get_tab_data(tab_id, workspace_id)
     if not tab_data_obj then
@@ -243,6 +301,7 @@ local function delete_file_db(file_id_to_delete, workspace_id, tab_id)
     end
 end
 
+--- Refreshes `cache.tab_display_name` from the database for the active tab.
 local function update_tab_display_name()
     cache.tab_display_name = ""
     local current_tab_obj = data.find_tab_by_id(state.tab_active, state.workspace_id)
@@ -251,6 +310,7 @@ local function update_tab_display_name()
     end
 end
 
+--- Saves the cursor row from the files panel window into `cache.last_cursor_position`.
 local function save_cursor_position()
     if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
         local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
@@ -258,6 +318,8 @@ local function save_cursor_position()
     end
 end
 
+--- Registers a CursorMoved autocmd on the panel buffer to keep `cache.last_cursor_position` up to date.
+---@param ctx table Panel context with `win` and `buf` fields.
 local function setup_cursor_tracking(ctx)
     if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
         return
@@ -275,6 +337,8 @@ local function setup_cursor_tracking(ctx)
     })
 end
 
+--- Refreshes the file list in the panel in-place without re-creating the window.
+--- Falls back to `M.init` when the panel window or buffer becomes invalid.
 M.refresh = function()
     if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
         return M.init()
@@ -349,10 +413,10 @@ M.refresh = function()
         target_line = math.max(target_line, 1)
         pcall(vim.api.nvim_win_set_cursor, cache.ctx.win, { target_line, 0 })
     end
-
-    common.apply_cursor_blending(cache.ctx.win)
 end
 
+--- Deletes the file under the cursor from the active tab.
+--- Does nothing when the panel is empty.
 function M.handle_file_delete()
     if is_empty then
         return
@@ -367,6 +431,8 @@ function M.handle_file_delete()
     end
 end
 
+--- Opens the file under the cursor in the last non-plugin editor window.
+---@param opts? {close_panel?: boolean} When `close_panel` is true, all plugin panels are closed after switching.
 function M.handle_file_switch(opts)
     opts = opts or {}
     M._switch_file()
@@ -383,6 +449,8 @@ function M.handle_file_switch(opts)
     end
 end
 
+--- Opens the file under the cursor in a new vertical split.
+--- Does nothing when the panel is empty.
 function M.handle_split_vertical()
     if is_empty then
         return
@@ -390,6 +458,8 @@ function M.handle_split_vertical()
     M._split_file_vertical()
 end
 
+--- Opens the file under the cursor in a new horizontal split.
+--- Does nothing when the panel is empty.
 function M.handle_split_horizontal()
     if is_empty then
         return
@@ -397,11 +467,14 @@ function M.handle_split_horizontal()
     M._split_file_horizontal()
 end
 
+--- Closes all plugin panels and opens the projects panel.
 function M.navigate_to_projects()
     ui.close_all()
     require("lvim-space.ui.projects").init()
 end
 
+--- Closes all plugin panels and opens the workspaces panel.
+--- Shows a notification when no project is active.
 function M.navigate_to_workspaces()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project. Please select or add a project first.")
@@ -411,6 +484,8 @@ function M.navigate_to_workspaces()
     require("lvim-space.ui.workspaces").init()
 end
 
+--- Closes all plugin panels and opens the tabs panel.
+--- Shows a notification when no project or workspace is active.
 function M.navigate_to_tabs()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project. Please select or add a project first.")
@@ -424,6 +499,8 @@ function M.navigate_to_tabs()
     require("lvim-space.ui.tabs").init()
 end
 
+--- Closes all plugin panels and opens the fuzzy search panel.
+--- Shows a notification when no project is active.
 function M.navigate_to_search()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project. Please select or add a project first.")
@@ -433,6 +510,8 @@ function M.navigate_to_search()
     require("lvim-space.ui.search").init()
 end
 
+--- Internal helper: opens the file whose path is at the current cursor position
+--- into the last known non-plugin editor window and updates `state.file_active`.
 function M._switch_file()
     local file_id_selected = common.get_id_at_cursor(cache.file_ids_map)
     if not file_id_selected then
@@ -460,9 +539,6 @@ function M._switch_file()
 
     if target_win and vim.api.nvim_win_is_valid(target_win) then
         vim.api.nvim_win_set_buf(target_win, bufnr)
-        if session.save_window_context then
-            session.save_window_context(state.tab_active)
-        end
     else
         vim.cmd("edit " .. vim.fn.fnameescape(file_path_to_open))
     end
@@ -473,6 +549,7 @@ function M._switch_file()
     M.refresh()
 end
 
+--- Internal helper: opens the file at the cursor position in a vertical split.
 function M._split_file_vertical()
     local file_id_selected = common.get_id_at_cursor(cache.file_ids_map)
     if not file_id_selected then
@@ -499,6 +576,7 @@ function M._split_file_vertical()
     end
 end
 
+--- Internal helper: opens the file at the cursor position in a horizontal split.
 function M._split_file_horizontal()
     local file_id_selected = common.get_id_at_cursor(cache.file_ids_map)
     if not file_id_selected then
@@ -525,6 +603,8 @@ function M._split_file_horizontal()
     end
 end
 
+--- Registers all buffer-local keymaps for the files panel.
+---@param ctx table Panel context with `buf` and `entities` fields.
 local function setup_keymaps(ctx)
     local keymap_opts = { buffer = ctx.buf, noremap = true, silent = true, nowait = true }
     vim.keymap.set("n", config.keymappings.action.add, function()
@@ -569,6 +649,9 @@ local function setup_keymaps(ctx)
     end, keymap_opts)
 end
 
+--- Initialises or re-initialises the files panel from scratch.
+--- Validates that a project, workspace, and active tab are present before opening.
+---@param selected_line_num? number The panel line to place the cursor on after opening.
 M.init = function(selected_line_num)
     save_window_context()
 
@@ -591,21 +674,12 @@ M.init = function(selected_line_num)
         return
     end
 
-    local restored_win = session.restore_window_context and session.restore_window_context(state.tab_active)
-    if restored_win then
-        last_real_win = restored_win
-    end
-
     if
         not last_normal_win
         or not vim.api.nvim_win_is_valid(last_normal_win)
         or is_plugin_panel_win(last_normal_win)
     then
         last_normal_win = get_last_normal_win()
-    end
-
-    if session.save_window_context then
-        session.save_window_context(state.tab_active)
     end
 
     session.save_current_state(state.tab_active, true)
@@ -698,6 +772,7 @@ M.init = function(selected_line_num)
     setup_cursor_tracking(ctx)
 end
 
+--- Opens an input prompt for a file path and adds the file to the active tab.
 M.add_file = function()
     if not state.workspace_id or not state.tab_active then
         notify.error(state.lang.TAB_NOT_ACTIVE or "No active tab. Please select or create a tab first.")
@@ -739,6 +814,9 @@ M.add_file = function()
     end)
 end
 
+--- Adds the currently focused buffer's file to the active tab.
+---@param from_external? boolean When true, suppresses the refresh call (caller manages it).
+---@return boolean success true when the file was added (or already present), false on error.
 M.add_current_buffer_to_tab = function(from_external)
     local current_buf_info_add = get_current_buffer_info()
     if not current_buf_info_add.name then
@@ -775,6 +853,8 @@ M.add_current_buffer_to_tab = function(from_external)
     end
 end
 
+--- Removes the currently focused buffer's file from the active tab.
+---@return boolean success true when the file was removed, false when not found or on error.
 M.remove_current_buffer_from_tab = function()
     local current_buf_info_remove = get_current_buffer_info()
     if not current_buf_info_remove.name then
@@ -795,6 +875,8 @@ M.remove_current_buffer_from_tab = function()
     end
 end
 
+--- Returns the cached file entry for the currently active file.
+---@return table|nil file_entry The file entry from `cache.files_from_db`, or nil when no file is active.
 M.get_current_file_info = function()
     if not state.file_active or not state.workspace_id or not state.tab_active then
         return nil
@@ -802,6 +884,9 @@ M.get_current_file_info = function()
     return get_file_by_id(state.file_active, cache.files_from_db)
 end
 
+--- Switches to a file by its absolute path, adding it to the tab first if necessary.
+---@param file_path string The absolute path of the file to open.
+---@return boolean success true when the file was opened successfully, false otherwise.
 M.switch_to_file_by_path = function(file_path)
     if not state.workspace_id or not state.tab_active then
         return false
@@ -848,6 +933,7 @@ M.switch_to_file_by_path = function(file_path)
     end
 end
 
+--- Clears the internal file-path validation cache, forcing fresh filesystem checks on next use.
 M.clear_validation_cache = function()
     cache.validation_cache = {}
 end

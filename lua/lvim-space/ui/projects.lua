@@ -1,3 +1,7 @@
+--- Projects UI panel for lvim-space.
+--- Manages the project list panel: rendering, keymaps, CRUD operations,
+--- project switching, and navigation to child panels (workspaces/tabs/files).
+
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
@@ -9,6 +13,24 @@ local session = require("lvim-space.core.session")
 
 local M = {}
 
+---Safely decode a JSON string, returning `default` on malformed input or nil.
+---@param str string|nil JSON string to decode
+---@param default table Fallback value when decoding fails
+---@return table
+local function safe_json_decode(str, default)
+    if not str then return default end
+    local ok, result = pcall(vim.fn.json_decode, str)
+    return (ok and type(result) == "table") and result or default
+end
+
+---@class ProjectsCache
+---@field project_ids_map table<number, number> Map from visual line number to project DB id
+---@field projects_from_db table[] Sorted list of project records fetched from the database
+---@field ctx table|nil Active panel context returned by common.init_entity_list
+---@field validation_cache table<string, {path: string|nil, error: string|nil}> Cached path-validation results
+---@field last_cursor_position number Last known cursor row in the panel window
+
+---@type ProjectsCache
 local cache = {
     project_ids_map = {},
     projects_from_db = {},
@@ -17,10 +39,12 @@ local cache = {
     last_cursor_position = 1,
 }
 
+---@type number|nil Window handle of the last non-plugin editor window
 local last_real_win = nil
 
 local is_plugin_panel_win = ui.is_plugin_window
 
+--- Saves the current window as the last real (non-plugin) editor window.
 local function save_window_context()
     local current_win = vim.api.nvim_get_current_win()
     if current_win and vim.api.nvim_win_is_valid(current_win) and not is_plugin_panel_win(current_win) then
@@ -28,6 +52,7 @@ local function save_window_context()
     end
 end
 
+--- Persists the current cursor row from the panel window into the cache.
 local function save_cursor_position()
     if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
         local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
@@ -35,6 +60,8 @@ local function save_cursor_position()
     end
 end
 
+--- Registers a CursorMoved autocmd that keeps `cache.last_cursor_position` up to date.
+---@param ctx table Panel context with `win` and `buf` fields
 local function setup_cursor_tracking(ctx)
     if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
         return
@@ -52,6 +79,8 @@ local function setup_cursor_tracking(ctx)
     })
 end
 
+--- Re-renders the project list in the existing panel window without reopening it.
+--- Falls back to `M.init` when the window or buffer is no longer valid.
 M.refresh = function()
     if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
         return M.init()
@@ -123,14 +152,20 @@ M.refresh = function()
         win_config.title = " " .. (state.lang.PROJECTS or "Projects") .. " "
         pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
     end
-
-    common.apply_cursor_blending(cache.ctx.win)
 end
 
+--- Returns the entity-type definition table for "project" from the common module.
+---@return EntityTypeDef|nil entity_def Entity-type definition with error keys, icons, and labels
 local function get_entity_def()
     return common.get_entity_type("project")
 end
 
+--- Validates a project name for an add or rename operation.
+--- Checks length/format via common validation and uniqueness in the database.
+---@param project_name string The candidate project name to validate
+---@param project_id_for_rename number|nil When renaming, the id of the project being renamed (allows keeping the same name)
+---@return string|nil validated_name Trimmed valid name, or nil on failure
+---@return string|nil err_code Error code string such as "EXIST_NAME", or nil on success
 local function validate_project_name_for_add_or_rename(project_name, project_id_for_rename)
     local ok, err_code = common.validate_entity_name("project", project_name)
     if not ok then
@@ -152,6 +187,12 @@ local function validate_project_name_for_add_or_rename(project_name, project_id_
     return trimmed_name, nil
 end
 
+--- Validates a filesystem path for a project, checking existence, permissions,
+--- and (for new projects) uniqueness in the database. Results are cached.
+---@param project_path string Raw path string entered by the user
+---@param is_new_project boolean When true, also checks that the path is not already registered
+---@return string|nil normalized_path Expanded and normalised absolute path with trailing slash, or nil on error
+---@return string|nil err_code Error code such as "DIRECTORY_NOT_FOUND", "DIRECTORY_NOT_ACCESS", or "PROJECT_PATH_EXIST"
 local function validate_project_path(project_path, is_new_project)
     if not project_path or vim.trim(project_path) == "" then
         return nil, "PROJECT_PATH_EMPTY"
@@ -169,7 +210,7 @@ local function validate_project_path(project_path, is_new_project)
     local error_code = nil
     if vim.fn.isdirectory(normalized_path) ~= 1 then
         error_code = "DIRECTORY_NOT_FOUND"
-    elseif not utils.has_permission(normalized_path) then
+    elseif not utils.file_system.has_permission(normalized_path) then
         error_code = "DIRECTORY_NOT_ACCESS"
     elseif is_new_project and data.is_project_path_exist(normalized_path) then
         error_code = "PROJECT_PATH_EXIST"
@@ -181,6 +222,11 @@ local function validate_project_path(project_path, is_new_project)
     return cache.validation_cache[cache_key].path, cache.validation_cache[cache_key].error
 end
 
+--- Inserts a new project record into the database and clears the validation cache.
+---@param project_path string Normalised absolute path for the project root
+---@param project_name string Display name for the new project
+---@return number|nil row_id The newly inserted row id, or nil on failure
+---@return string|nil err_code "PROJECT_ADD_FAILED" on failure, nil on success
 local function add_project_db(project_path, project_name)
     local row_id = data.add_project(project_path, project_name)
     if not row_id or type(row_id) ~= "number" or row_id <= 0 then
@@ -190,6 +236,12 @@ local function add_project_db(project_path, project_name)
     return row_id, nil
 end
 
+--- Persists a new name for an existing project and schedules a panel re-init.
+---@param project_id_to_rename number Database id of the project to rename
+---@param new_validated_name string Already-validated new name
+---@param _ any Unused context parameter (reserved for future use)
+---@param selected_line_num number|nil Visual line to restore cursor to after re-init
+---@return true|nil result true on success, nil on database failure
 local function rename_project_db(project_id_to_rename, new_validated_name, _, selected_line_num)
     local success = data.update_project_name(project_id_to_rename, new_validated_name)
     if not success then
@@ -201,6 +253,11 @@ local function rename_project_db(project_id_to_rename, new_validated_name, _, se
     return true
 end
 
+--- Deletes a project from the database and resets active state if it was the current project.
+---@param project_id number Database id of the project to delete
+---@param _ any Unused context parameter (reserved for future use)
+---@param selected_line_num number|nil Visual line to restore cursor to after re-init
+---@return true|nil result true on success, nil on database failure
 local function delete_project_db(project_id, _, selected_line_num)
     local success = data.delete_project(project_id)
     if not success then
@@ -221,6 +278,8 @@ local function delete_project_db(project_id, _, selected_line_num)
     return true
 end
 
+--- Persists the current workspace and tab state to the database when autosave is enabled.
+--- Writes the active workspace flag and encodes tab ids/active tab into the workspace record.
 local function update_project_state_in_db()
     if not config.autosave or not state.project_id then
         return
@@ -231,7 +290,7 @@ local function update_project_state_in_db()
     if state.workspace_id and state.tab_ids then
         local ws = data.find_workspace_by_id(state.workspace_id, state.project_id)
         if ws then
-            local tabs_json_obj = ws.tabs and vim.fn.json_decode(ws.tabs) or {}
+            local tabs_json_obj = safe_json_decode(ws.tabs, {})
             tabs_json_obj.tab_active = state.tab_active
             tabs_json_obj.tab_ids = state.tab_ids
             tabs_json_obj.updated_at = os.time()
@@ -240,6 +299,10 @@ local function update_project_state_in_db()
     end
 end
 
+--- Resolves and activates the appropriate workspace for the given project.
+--- Prefers the workspace previously marked active; falls back to the first workspace.
+--- Also restores tab state from the workspace's JSON blob and persists changes.
+---@param project_id number Database id of the project being switched to
 local function set_active_workspace_for_project(project_id)
     local all_workspaces = data.find_workspaces(project_id) or {}
     local selected_ws = nil
@@ -257,7 +320,7 @@ local function set_active_workspace_for_project(project_id)
     end
     if selected_ws then
         state.workspace_id = selected_ws.id
-        local tabs_obj = selected_ws.tabs and vim.fn.json_decode(selected_ws.tabs) or {}
+        local tabs_obj = safe_json_decode(selected_ws.tabs, {})
         state.tab_active = tabs_obj.tab_active
         state.tab_ids = tabs_obj.tab_ids or {}
     else
@@ -268,6 +331,11 @@ local function set_active_workspace_for_project(project_id)
     update_project_state_in_db()
 end
 
+--- Switches the active project in "space" mode: validates the path, saves the current
+--- session, changes the working directory, activates the workspace, and restores state.
+--- Triggers UI refresh once the session restore autocmd fires (or immediately if no session).
+---@param project_id number Database id of the project to switch to
+---@param selected_line_in_ui number|nil Visual line in the projects panel to restore after reinit
 local function space_load_project(project_id, selected_line_in_ui)
     local selected_project = data.find_project_by_id(project_id)
     if not selected_project then
@@ -276,11 +344,11 @@ local function space_load_project(project_id, selected_line_in_ui)
     end
     local path_to_check = selected_project.path
     if vim.fn.isdirectory(path_to_check) ~= 1 then
-        notify.error(state.lang.DIRECTORY_NOT_FOUND .. ": " .. path_to_check)
+        notify.error((state.lang.DIRECTORY_NOT_FOUND or "Directory not found") .. ": " .. path_to_check)
         return
     end
-    if not utils.has_permission(path_to_check) then
-        notify.error(state.lang.DIRECTORY_NOT_ACCESS .. ": " .. path_to_check)
+    if not utils.file_system.has_permission(path_to_check) then
+        notify.error((state.lang.DIRECTORY_NOT_ACCESS or "Directory not accessible") .. ": " .. path_to_check)
         return
     end
     if state.tab_active then
@@ -300,23 +368,11 @@ local function space_load_project(project_id, selected_line_in_ui)
     end
     state.project_id = project_id
     set_active_workspace_for_project(project_id)
-    local augroup_name = "LvimSpaceCursorBlend"
     local space_restore_augroup = vim.api.nvim_create_augroup("LvimSpaceProjectRestore", { clear = true })
-    vim.api.nvim_clear_autocmds({ group = augroup_name })
     local function final_ui_update_and_notify()
         M.init(selected_line_in_ui)
-        local cursor_blend_augroup = vim.api.nvim_create_augroup(augroup_name, { clear = true })
         if state.ui and state.ui.content and vim.api.nvim_win_is_valid(state.ui.content.win) then
-            vim.cmd("hi Cursor blend=100")
             local main_ui_win = state.ui.content.win
-            vim.api.nvim_create_autocmd({ "WinLeave", "WinEnter" }, {
-                group = cursor_blend_augroup,
-                callback = function()
-                    local current_event_win = vim.api.nvim_get_current_win()
-                    local blend_value = current_event_win == main_ui_win and 100 or 0
-                    vim.cmd("hi Cursor blend=" .. blend_value)
-                end,
-            })
             vim.api.nvim_set_current_win(main_ui_win)
             if selected_line_in_ui then
                 pcall(vim.api.nvim_win_set_cursor, main_ui_win, { selected_line_in_ui, 0 })
@@ -341,6 +397,10 @@ local function space_load_project(project_id, selected_line_in_ui)
     end
 end
 
+--- Switches to a project in "enter" mode: closes all panels, changes the working
+--- directory, restores the session if available, then opens the deepest relevant panel
+--- (files, tabs, or workspaces depending on the restored state).
+---@param project_id number Database id of the project to navigate into
 local function enter_navigate_next(project_id)
     local selected_project = data.find_project_by_id(project_id)
     if not selected_project then
@@ -349,11 +409,11 @@ local function enter_navigate_next(project_id)
     end
     local path_to_check = selected_project.path
     if vim.fn.isdirectory(path_to_check) ~= 1 then
-        notify.error(state.lang.DIRECTORY_NOT_FOUND .. ": " .. path_to_check)
+        notify.error((state.lang.DIRECTORY_NOT_FOUND or "Directory not found") .. ": " .. path_to_check)
         return
     end
-    if not utils.has_permission(path_to_check) then
-        notify.error(state.lang.DIRECTORY_NOT_ACCESS .. ": " .. path_to_check)
+    if not utils.file_system.has_permission(path_to_check) then
+        notify.error((state.lang.DIRECTORY_NOT_ACCESS or "Directory not accessible") .. ": " .. path_to_check)
         return
     end
     if state.tab_active then
@@ -385,7 +445,7 @@ local function enter_navigate_next(project_id)
                 require("lvim-space.ui.workspaces").init(nil, { select_workspace = false })
             end
         end
-        vim.schedule(function ()
+        vim.schedule(function()
             state.disable_auto_close = false
             if target_init_func then
                 target_init_func()
@@ -394,6 +454,10 @@ local function enter_navigate_next(project_id)
     end)
 end
 
+--- Moves the project under the cursor one position up or down in the sort order,
+--- swapping sort_order values with the adjacent project and refreshing the panel.
+---@param ctx table Panel context with `win` field pointing to the projects window
+---@param direction "up"|"down" Direction to move the project
 local function handle_move_operation(ctx, direction)
     if not ctx or not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
         return
@@ -455,10 +519,13 @@ local function handle_move_operation(ctx, direction)
     end
 end
 
+--- Public entry point that delegates to `M.add_project` to start the add-project flow.
 function M.handle_project_add()
     M.add_project()
 end
 
+--- Opens a rename prompt for the project under the cursor in the panel.
+---@param ctx table Panel context; used to read the current cursor line
 function M.handle_project_rename(ctx)
     local current_line_num = ctx
             and ctx.win
@@ -486,6 +553,8 @@ function M.handle_project_rename(ctx)
     )
 end
 
+--- Opens a confirmation/delete flow for the project under the cursor in the panel.
+---@param ctx table Panel context; used to read the current cursor line
 function M.handle_project_delete(ctx)
     local current_line_num = ctx
             and ctx.win
@@ -502,6 +571,10 @@ function M.handle_project_delete(ctx)
     end)
 end
 
+--- Activates the project under the cursor according to the provided mode option.
+--- `opts.space_mode` stays in the panel UI; `opts.enter_mode` closes panels and
+--- navigates to the deepest available child panel. Defaults to space_mode behaviour.
+---@param opts {space_mode: boolean|nil, enter_mode: boolean|nil}|nil Navigation mode flags
 function M.handle_project_go(opts)
     local project_id_selected = common.get_id_at_cursor(cache.project_ids_map)
     if not project_id_selected then
@@ -527,14 +600,20 @@ function M.handle_project_go(opts)
     space_load_project(project_id_selected, selected_line_in_ui)
 end
 
+--- Moves the project under the cursor one position up in the sort order.
+---@param ctx table Panel context with a valid `win` field
 function M.handle_move_up(ctx)
     handle_move_operation(ctx, "up")
 end
 
+--- Moves the project under the cursor one position down in the sort order.
+---@param ctx table Panel context with a valid `win` field
 function M.handle_move_down(ctx)
     handle_move_operation(ctx, "down")
 end
 
+--- Closes the current panel and opens the workspaces panel for the active project.
+--- Shows an error state if no project is currently active.
 function M.navigate_to_workspaces()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
@@ -546,6 +625,8 @@ function M.navigate_to_workspaces()
     require("lvim-space.ui.workspaces").init(nil, { select_workspace = true })
 end
 
+--- Closes the current panel and opens the tabs panel for the active workspace.
+--- Shows an error state if no project or workspace is currently active.
 function M.navigate_to_tabs()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
@@ -563,6 +644,8 @@ function M.navigate_to_tabs()
     require("lvim-space.ui.tabs").init()
 end
 
+--- Closes the current panel and opens the files panel for the active tab.
+--- Shows an error state if no project, workspace, or active tab exists.
 function M.navigate_to_files()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
@@ -586,6 +669,8 @@ function M.navigate_to_files()
     require("lvim-space.ui.files").init()
 end
 
+--- Closes the current panel and opens the search panel for the active tab.
+--- Shows an error state if no project, workspace, or active tab exists.
 function M.navigate_to_search()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
@@ -609,6 +694,8 @@ function M.navigate_to_search()
     require("lvim-space.ui.search").init()
 end
 
+--- Registers all buffer-local keymaps for the projects panel.
+---@param ctx table Panel context containing `buf` and `entities` fields
 local function setup_keymaps(ctx)
     local keymap_opts = { buffer = ctx.buf, noremap = true, silent = true, nowait = true }
     vim.keymap.set("n", config.keymappings.action.add, function()
@@ -666,6 +753,10 @@ local function setup_keymaps(ctx)
     end, keymap_opts)
 end
 
+--- Initialises (or re-initialises) the projects panel window.
+--- Fetches projects from the database, sorts them, creates the panel via the common
+--- module, sets the panel title, and registers keymaps and cursor tracking.
+---@param selected_line_num number|nil Visual line to place the cursor on after opening; falls back to last position or active project row
 M.init = function(selected_line_num)
     save_window_context()
 
@@ -723,6 +814,8 @@ M.init = function(selected_line_num)
     setup_cursor_tracking(ctx)
 end
 
+--- Starts the interactive add-project flow: prompts for a path and then a name,
+--- validates both inputs, inserts the project into the database, and refreshes the panel.
 M.add_project = function()
     M.clear_validation_cache()
     local current_dir = vim.fn.getcwd()
@@ -775,10 +868,13 @@ M.add_project = function()
     end)
 end
 
+--- Clears the path-validation result cache so subsequent calls re-validate paths.
 M.clear_validation_cache = function()
     cache.validation_cache = {}
 end
 
+--- Returns the database record for the currently active project, or nil if none is set.
+---@return table|nil project Project record table from the database, or nil
 M.get_current_project_info = function()
     if not state.project_id then
         return nil
@@ -786,6 +882,10 @@ M.get_current_project_info = function()
     return data.find_project_by_id(state.project_id)
 end
 
+--- Finds a project by its display name and switches to it using space_mode.
+--- Updates `cache.project_ids_map` so the panel selection stays consistent.
+---@param project_name string Exact display name of the project to switch to
+---@return boolean success true if a matching project was found and activated, false otherwise
 M.switch_to_project_by_name = function(project_name)
     local projects = data.find_projects() or {}
     for i, project in ipairs(projects) do

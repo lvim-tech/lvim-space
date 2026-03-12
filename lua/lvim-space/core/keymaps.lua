@@ -1,70 +1,75 @@
+--- Keymap utilities for lvim-space UI panels.
+--- Provides helpers to disable regular typing keys inside plugin buffers and to
+--- set the Escape key for closing all panels.
+
 local config = require("lvim-space.config")
-local state = require("lvim-space.api.state")
-local projects = require("lvim-space.ui.projects")
-local workspaces = require("lvim-space.ui.workspaces")
-local tabs = require("lvim-space.ui.tabs")
-local files = require("lvim-space.ui.files")
 
 local M = {}
 
-local function open_lvim_space(target)
-    if target == "projects" or target == "p" then
-        projects.init()
-    elseif target == "workspaces" or target == "w" then
-        workspaces.init(nil, { select_workspace = false })
-    elseif target == "tabs" or target == "t" then
-        tabs.init()
-    elseif target == "files" or target == "f" then
-        files.init()
-    else
-        if not state.project_id then
-            projects.init()
-            return
-        end
-        if not state.workspace_id then
-            workspaces.init(nil, { select_workspace = false })
-            return
-        end
-        if not state.tab_active then
-            tabs.init()
-            return
-        end
-        files.init()
+-- Cache the set of keys to disable so it is built only once.
+---@type string[]|nil
+local _disabled_keys_cache = nil
+
+--- Build the list of keys that should be no-op'd in plugin buffers.
+--- Reads `config.key_control` to determine categories and explicit overrides,
+--- then removes any keys listed in `allowed`.
+---@return string[] keys Sorted list of key strings to disable.
+local function build_disabled_keys()
+    local key_conf = config.key_control or {}
+    local allowed_map = {}
+    for _, k in ipairs(key_conf.allowed or {}) do
+        allowed_map[k] = true
     end
+
+    local candidates = {}
+    local cats = key_conf.disable_categories
+        or {
+            lowercase_letters = true,
+            uppercase_letters = true,
+            digits = true,
+        }
+
+    if cats.lowercase_letters then
+        for c = string.byte("a"), string.byte("z") do
+            table.insert(candidates, string.char(c))
+        end
+    end
+    if cats.uppercase_letters then
+        for c = string.byte("A"), string.byte("Z") do
+            table.insert(candidates, string.char(c))
+        end
+    end
+    if cats.digits then
+        for d = 0, 9 do
+            table.insert(candidates, tostring(d))
+        end
+    end
+
+    -- Add explicitly-disabled keys that are not already in the list.
+    local seen = {}
+    for _, k in ipairs(candidates) do
+        seen[k] = true
+    end
+    for _, k in ipairs(key_conf.explicitly_disabled or {}) do
+        if not seen[k] then
+            table.insert(candidates, k)
+            seen[k] = true
+        end
+    end
+
+    -- Remove allowed keys.
+    local result = {}
+    for _, k in ipairs(candidates) do
+        if not allowed_map[k] then
+            table.insert(result, k)
+        end
+    end
+    return result
 end
 
-function M.init()
-    vim.keymap.set("n", config.keymappings.main, function()
-        open_lvim_space()
-    end, {
-        noremap = true,
-        silent = true,
-        nowait = true,
-        desc = "Open LVIM Space",
-    })
-    vim.api.nvim_create_user_command("LvimSpace", function(opts)
-        local args = vim.split(opts.args or "", "%s+")
-        local target = args[1]
-        open_lvim_space(target)
-    end, {
-        nargs = "?",
-        complete = function(ArgLead, _, _)
-            local options = { "projects", "workspaces", "tabs", "files", "search" }
-            if ArgLead == "" then
-                return options
-            end
-            local matches = {}
-            for _, option in ipairs(options) do
-                if option:find("^" .. ArgLead) then
-                    table.insert(matches, option)
-                end
-            end
-            return matches
-        end,
-        desc = "Open LVIM Space interface",
-    })
-end
-
+--- Set up the essential Escape keymap for a plugin buffer.
+--- Pressing Escape in normal mode will call `ui.close_all()`.
+---@param buf integer Buffer handle to apply the keymap to.
 function M.enable_base_maps(buf)
     vim.api.nvim_buf_set_keymap(buf, "n", "<Esc>", "", {
         nowait = true,
@@ -76,55 +81,25 @@ function M.enable_base_maps(buf)
     })
 end
 
+--- Map all configured keys to `<nop>` in the given buffer so regular typing is
+--- suppressed inside plugin panels. The key list is computed once and cached.
+---@param buf integer Buffer handle to apply the no-op keymaps to.
 M.disable_all_maps = function(buf)
-    local key_conf = config.key_control or {}
-    local allowed_keys_map = {}
-    for _, k_allowed in ipairs(key_conf.allowed or {}) do
-        allowed_keys_map[k_allowed] = true
+    if not _disabled_keys_cache then
+        _disabled_keys_cache = build_disabled_keys()
     end
-    local keys_to_potentially_disable = {}
-    local categories = key_conf.disable_categories
-        or {
-            lowercase_letters = true,
-            uppercase_letters = true,
-            digits = true,
-        }
-    if categories.lowercase_letters then
-        for c = string.byte("a"), string.byte("z") do
-            table.insert(keys_to_potentially_disable, string.char(c))
-        end
-    end
-    if categories.uppercase_letters then
-        for c = string.byte("A"), string.byte("Z") do
-            table.insert(keys_to_potentially_disable, string.char(c))
-        end
-    end
-    if categories.digits then
-        for d = 0, 9 do
-            table.insert(keys_to_potentially_disable, tostring(d))
-        end
-    end
-    for _, k_disabled in ipairs(key_conf.explicitly_disabled or {}) do
-        local found = false
-        for _, k_existing in ipairs(keys_to_potentially_disable) do
-            if k_existing == k_disabled then
-                found = true
-                break
-            end
-        end
-        if not found then
-            table.insert(keys_to_potentially_disable, k_disabled)
-        end
-    end
-    for _, key_to_check in ipairs(keys_to_potentially_disable) do
-        if not allowed_keys_map[key_to_check] then
-            vim.keymap.set("n", key_to_check, "<nop>", { buffer = buf, nowait = true, silent = true })
-        end
+    for _, key in ipairs(_disabled_keys_cache) do
+        vim.keymap.set("n", key, "<nop>", { buffer = buf, nowait = true, silent = true })
     end
 end
 
-M.open = function(target)
-    open_lvim_space(target)
+--- Initialize the keymaps module.
+--- Global panel-navigation keymaps are set buffer-locally by each panel.
+--- The main toggle keymap is registered in core/commands.lua.
+function M.init()
+    -- Global navigation keymaps for panel switching (set buffer-local by each panel;
+    -- global panel-navigation keymaps are handled inside each panel's setup_keymaps).
+    -- The main toggle keymap and user commands are registered in core/commands.lua.
 end
 
 return M

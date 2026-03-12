@@ -1,3 +1,6 @@
+-- Shared UI helpers for lvim-space: entity-type definitions, list rendering, icon caching,
+-- and generic add/rename/delete/error-navigation flows used by all entity panels.
+
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
@@ -5,6 +8,38 @@ local ui = require("lvim-space.ui")
 
 local M = {}
 
+---@class EntityTypeDef
+---@field name string  Singular entity identifier used in key lookups (e.g. "project")
+---@field table string  Database table name
+---@field state_id string|nil  Key in the global state table that holds the active ID
+---@field empty_message string  Lang key shown when the list is empty
+---@field info_empty string  Lang key for the actions bar when the list is empty
+---@field info string  Lang key for the actions bar when the list is populated
+---@field title string  Lang key for the panel title
+---@field min_name_len number  Minimum accepted name length
+---@field name_len_error string  Lang key for the name-too-short error
+---@field name_exist_error string  Lang key for the name-already-exists error
+---@field add_failed string  Lang key for an insert failure
+---@field added_success string  Lang key shown after a successful insert
+---@field rename_failed string|nil  Lang key for a rename failure
+---@field renamed_success string|nil  Lang key shown after a successful rename
+---@field delete_confirm string|nil  Lang key for the deletion confirmation prompt
+---@field delete_failed string|nil  Lang key for a deletion failure
+---@field deleted_success string|nil  Lang key shown after a successful deletion
+---@field not_active string|nil  Lang key shown when no entity of this type is active
+---@field error_message string  Generic error lang key for this entity type
+---@field switched_to string  Lang key shown after switching to this entity
+---@field switch_failed string  Lang key for a switch failure
+---@field id_field string|nil  Field name used as the record identifier (defaults to "id" at runtime)
+---@field ui_cache_error string|nil  Lang key for a UI cache inconsistency error (reorder flows)
+---@field reorder_failed_error string|nil  Lang key for a generic reorder failure
+---@field reorder_missing_params_error string|nil  Lang key when reorder params are missing
+---@field already_at_top string|nil  Lang key shown when the entity is already first in the list
+---@field already_at_bottom string|nil  Lang key shown when the entity is already last in the list
+---@field not_found string|nil  Lang key for an entity-not-found error
+
+---Registry of all supported entity types and their associated UI/lang keys.
+---@type table<string, EntityTypeDef>
 M.entity_types = {
     project = {
         name = "project",
@@ -135,7 +170,15 @@ M.entity_types = {
     },
 }
 
+---@type table<string, string>
 local icon_cache = {}
+
+---Return the icon string for an entity type, consulting a module-level cache to avoid
+---repeated config lookups for the same combination of arguments.
+---@param type_name string  Entity type name (e.g. "project", "workspace", "tab", "file")
+---@param active boolean  Whether the item is currently active
+---@param empty boolean  Whether the list slot represents an "empty" placeholder
+---@return string  Icon string (may include trailing space as part of the glyph)
 M.get_entity_icon = function(type_name, active, empty)
     local key = type_name .. "_" .. tostring(active) .. "_" .. tostring(empty)
     if icon_cache[key] then
@@ -159,6 +202,14 @@ M.get_entity_icon = function(type_name, active, empty)
     return icon
 end
 
+---Determine whether a given entity record should be considered active.
+---Delegates to `custom_active_check` when provided; otherwise uses the workspace `active`
+---flag or compares the entity's ID field against `active_id`.
+---@param type_def EntityTypeDef  Entity type definition that describes this entity
+---@param ent table  The entity record to evaluate
+---@param active_id any  The ID of the currently active entity (may be nil)
+---@param custom_active_check (fun(ent: table, active_id: any): boolean)|nil  Optional override predicate
+---@return boolean  True when the entity should be rendered as active
 local function determine_active(type_def, ent, active_id, custom_active_check)
     if custom_active_check then
         return custom_active_check(ent, active_id)
@@ -173,6 +224,13 @@ local function determine_active(type_def, ent, active_id, custom_active_check)
     return false
 end
 
+---Build the display string for one entity list row, stripping any pre-existing leading
+---icon/prefix characters before prepending the canonical icon for the current state.
+---@param ent table  The entity record to format
+---@param type_name string  Entity type name passed to `get_entity_icon`
+---@param active boolean  Whether this entity is currently active
+---@param custom_formatter (fun(ent: table): string)|nil  Optional override for the text portion
+---@return string  Fully formatted display line (icon + trimmed text)
 local function format_line(ent, type_name, active, custom_formatter)
     local display_text
     if custom_formatter then
@@ -185,6 +243,11 @@ local function format_line(ent, type_name, active, custom_formatter)
     return M.get_entity_icon(type_name, active, false) .. display_text
 end
 
+---Safely read the cursor position of a window, returning (1, 0) when the window is
+---invalid or the API call fails.
+---@param win integer|nil  Window handle to query
+---@return integer row  1-based cursor row
+---@return integer col  0-based cursor column
 local function safe_get_cursor(win)
     if not win or not vim.api.nvim_win_is_valid(win) then
         return 1, 0
@@ -193,11 +256,17 @@ local function safe_get_cursor(win)
     return ok and cur[1] or 1, ok and cur[2] or 0
 end
 
+---Prepend the configured empty/error icon to a message string.
+---@param message string  Human-readable error description to decorate
+---@return string  Icon-prefixed error message
 local function format_error_message(message)
     local error_icon = (config.ui and config.ui.icons and config.ui.icons.empty) or "󰇘 "
     return error_icon .. message
 end
 
+---Return the entity ID mapped to the current cursor line in the content window.
+---@param id_list_map table<integer, any>  Map of 1-based line numbers to entity IDs
+---@return any|nil  Entity ID at the cursor line, or nil if the map is invalid
 M.get_id_at_cursor = function(id_list_map)
     if type(id_list_map) ~= "table" then
         return nil
@@ -207,6 +276,11 @@ M.get_id_at_cursor = function(id_list_map)
     return id_list_map[line_num]
 end
 
+---Open an input field prompting the user to name a new entity, then invoke `callback_fn`
+---with the trimmed input.
+---@param type_name string  Entity type key (must exist in `M.entity_types`)
+---@param callback_fn (fun(name: string, context: any): nil)|nil  Called with the validated name and context
+---@param parent_context any  Arbitrary context forwarded verbatim to `callback_fn`
 M.add_entity = function(type_name, callback_fn, parent_context)
     local entity_def = M.entity_types[type_name]
     if not entity_def then
@@ -225,6 +299,15 @@ M.add_entity = function(type_name, callback_fn, parent_context)
     end)
 end
 
+---Open an input field pre-filled with the current name, validate the new input, then call
+---`callback_fn` and display the appropriate success/error notification based on its return value.
+---@param type_name string  Entity type key (must exist in `M.entity_types`)
+---@param entity_id any  ID of the entity being renamed
+---@param current_name string|nil  Pre-filled value shown in the input field
+---@param parent_context any  Arbitrary context forwarded verbatim to `callback_fn`
+---@param callback_fn (fun(id: any, new_name: string, context: any): boolean|string|nil)|nil
+---  Called with the entity ID, trimmed new name, and context. Expected return values:
+---  `true` = success, `false`/`nil` = failure, `"LEN_NAME"` = too short, `"EXIST_NAME"` = duplicate.
 M.rename_entity = function(type_name, entity_id, current_name, parent_context, callback_fn)
     local entity_def = M.entity_types[type_name]
     if not entity_def then
@@ -265,6 +348,13 @@ M.rename_entity = function(type_name, entity_id, current_name, parent_context, c
     )
 end
 
+---Open a confirmation input prompt and, if the user confirms, call `callback_fn` to
+---perform the actual deletion, then display the appropriate notification.
+---@param type_name string  Entity type key (must exist in `M.entity_types`)
+---@param entity_id any  ID of the entity to delete
+---@param entity_display_name string|nil  Human-readable label used in the confirmation prompt
+---@param parent_context any  Arbitrary context forwarded verbatim to `callback_fn`
+---@param callback_fn (fun(id: any, context: any): boolean|nil)|nil  Called when the user confirms; returns true on success, nil on failure
 M.delete_entity = function(type_name, entity_id, entity_display_name, parent_context, callback_fn)
     local entity_def = M.entity_types[type_name]
     if not entity_def then
@@ -298,6 +388,27 @@ M.delete_entity = function(type_name, entity_id, entity_display_name, parent_con
     end)
 end
 
+---@class EntityListState
+---@field buf integer  Buffer handle for the entity list
+---@field win integer  Window handle for the entity list
+---@field is_empty boolean  True when no entities were provided
+---@field entities table[]  The original entities array
+---@field id_list_map table<integer, any>  Maps 1-based line numbers to entity IDs
+---@field entity_type_def EntityTypeDef  The resolved entity type definition
+---@field refresh_function function|nil  Callback to re-render the list
+
+---Render an entity list into the main UI panel. Builds display lines (with icons), populates
+---`id_to_line_map`, positions the cursor, and opens the actions bar with the appropriate info line.
+---@param type_name string  Entity type key (must exist in `M.entity_types`)
+---@param entities_list table[]|nil  Ordered list of entity records to display
+---@param id_to_line_map table<integer, any>  Mutable map that will be populated (line → entity ID)
+---@param refresh_fn function|nil  Callback stored in the returned state for external callers
+---@param active_entity_id any  ID of the entity that should appear highlighted/active
+---@param id_field_name string|nil  Field name on each record used as the ID key (defaults to "id")
+---@param preferred_selected_line integer|nil  Line number to position the cursor on (overrides active-item logic)
+---@param line_formatter_fn (fun(ent: table): string)|nil  Optional custom text formatter for each row
+---@param custom_active_check_fn (fun(ent: table, active_id: any): boolean)|nil  Optional active-state predicate
+---@return EntityListState|nil  Populated state table, or nil if the entity type is unknown or the UI fails
 M.init_entity_list = function(
     type_name,
     entities_list,
@@ -384,6 +495,11 @@ M.init_entity_list = function(
     }
 end
 
+---Open the main panel displaying a single formatted error message line.
+---@param type_name string  Entity type key used to derive the panel title
+---@param error_key string|nil  Lang key (or raw string) for the error message
+---@return integer|nil buf  Buffer handle, or nil on failure
+---@return integer|nil win  Window handle, or nil on failure
 M.open_entity_error = function(type_name, error_key)
     local entity_def = M.entity_types[type_name]
     local title_text = "Error"
@@ -404,6 +520,12 @@ M.open_entity_error = function(type_name, error_key)
     return buf_handle, win_handle
 end
 
+---Validate that a proposed entity name is non-empty and meets the minimum length requirement
+---defined by the entity type.
+---@param type_name string  Entity type key (must exist in `M.entity_types`)
+---@param name_to_validate string|nil  The candidate name string
+---@return boolean ok  True when the name passes all checks
+---@return string|nil err  Error key ("UNKNOWN_ENTITY_TYPE" or "LEN_NAME"), or nil on success
 M.validate_entity_name = function(type_name, name_to_validate)
     local entity_def = M.entity_types[type_name]
     if not entity_def then
@@ -418,10 +540,19 @@ M.validate_entity_name = function(type_name, name_to_validate)
     return true, nil
 end
 
+---Look up and return the entity type definition for `type_name`.
+---@param type_name string  Entity type key
+---@return EntityTypeDef|nil  The definition table, or nil if the type is not registered
 M.get_entity_type = function(type_name)
     return M.entity_types[type_name]
 end
 
+---Call `func_to_call` inside a protected call. On error, emit a formatted error notification
+---that includes `operation_name`; on success, return the function's result.
+---@param operation_name string  Human-readable label used in the error notification
+---@param func_to_call function  The UI function to invoke
+---@param ... any  Additional arguments forwarded to `func_to_call`
+---@return any  Return value of `func_to_call`, or nil if it raised an error
 M.safe_ui_operation = function(operation_name, func_to_call, ...)
     local ok, result = pcall(func_to_call, ...)
     if not ok then
@@ -431,6 +562,15 @@ M.safe_ui_operation = function(operation_name, func_to_call, ...)
     return result
 end
 
+---Re-render the icon prefix for every line in an entity list buffer without changing the
+---underlying data. Useful after an active-entity switch where only icons need to update.
+---@param buf_handle integer  Target buffer handle
+---@param entities_data table[]  Current ordered list of entity records
+---@param type_name string  Entity type key used for icon resolution
+---@param active_entity_id any  ID of the entity that should now appear active
+---@param custom_active_check_fn (fun(ent: table, active_id: any): boolean)|nil  Optional active predicate
+---@param line_formatter_fn (fun(ent: table): string)|nil  Optional custom text formatter
+---@return boolean  True when the buffer was successfully updated, false on invalid buffer or unknown type
 M.refresh_entity_icons = function(
     buf_handle,
     entities_data,
@@ -457,10 +597,22 @@ M.refresh_entity_icons = function(
     return true
 end
 
+---Invalidate the icon cache so that subsequent calls to `get_entity_icon` re-read from config.
+---Call this after the user changes icon configuration at runtime.
 M.clear_icon_cache = function()
     icon_cache = {}
 end
 
+---@class ErrorContext
+---@field win integer  Window handle of the error panel
+---@field buf integer  Buffer handle of the error panel
+---@field error_state_key string  The error type key that triggered this panel
+---@field last_real_win integer|nil  Window handle to restore focus to on close
+
+---Register buffer-local keymaps that let the user close the error panel or navigate to the
+---appropriate entity UI depending on which precondition failed.
+---@param error_context ErrorContext  Context describing the error panel state
+---@param error_type_key string  One of "PROJECT_NOT_ACTIVE", "WORKSPACE_NOT_ACTIVE", "TAB_NOT_ACTIVE", etc.
 local function setup_error_navigation_keymaps(error_context, error_type_key)
     local buf = error_context.buf
     local keymap_opts = { buffer = buf, silent = true, nowait = true }
@@ -508,6 +660,11 @@ local function setup_error_navigation_keymaps(error_context, error_type_key)
     end
 end
 
+---Return the localized info-bar string that guides the user out of an error state.
+---The message adapts based on how much of the project/workspace/tab hierarchy is established
+---in the global state.
+---@param error_type_key string  Error category key (e.g. "PROJECT_NOT_ACTIVE")
+---@return string  Localized instruction string for the actions bar
 local function get_error_info_line(error_type_key)
     local lang_keys = state.lang
     if error_type_key == "PROJECT_NOT_ACTIVE" then
@@ -530,6 +687,10 @@ local function get_error_info_line(error_type_key)
     return lang_keys.INFO_LINE_GENERIC_QUIT or "Press 'q' to quit."
 end
 
+---Attach error-navigation keymaps to the currently focused window/buffer and open the
+---actions bar with contextual guidance for the given error state.
+---@param error_type_key string  Error category key (e.g. "PROJECT_NOT_ACTIVE", "TAB_NOT_ACTIVE")
+---@param last_real_win_handle integer|nil  Window to restore focus to when the user closes the panel
 M.setup_error_navigation = function(error_type_key, last_real_win_handle)
     local current_win = vim.api.nvim_get_current_win()
     local current_buf = vim.api.nvim_get_current_buf()
@@ -541,24 +702,6 @@ M.setup_error_navigation = function(error_type_key, last_real_win_handle)
     }
     setup_error_navigation_keymaps(error_context_data, error_type_key)
     ui.open_actions(get_error_info_line(error_type_key))
-end
-
-M.apply_cursor_blending = function(win)
-    if not win or not vim.api.nvim_win_is_valid(win) then
-        return
-    end
-
-    local augroup_name = "LvimSpaceCursorBlend"
-    local cursor_blend_augroup = vim.api.nvim_create_augroup(augroup_name, { clear = true })
-    vim.cmd("hi Cursor blend=100")
-    vim.api.nvim_create_autocmd({ "WinLeave", "WinEnter" }, {
-        group = cursor_blend_augroup,
-        callback = function()
-            local current_event_win = vim.api.nvim_get_current_win()
-            local blend_value = current_event_win == win and 100 or 0
-            vim.cmd("hi Cursor blend=" .. blend_value)
-        end,
-    })
 end
 
 return M

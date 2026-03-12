@@ -1,3 +1,9 @@
+-- search.lua
+-- Fuzzy file-search panel for the lvim-space plugin.
+-- Uses fzf (via io.popen) for file discovery and applies an internal
+-- multi-tier scoring algorithm (exact > sequential > fuzzy-char) for ranking.
+-- Supports live incremental search with debounced updates.
+
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
@@ -8,6 +14,23 @@ local common = require("lvim-space.ui.common")
 
 local M = {}
 
+---@class SearchResultItem
+---@field id string Absolute file path used as a unique identifier.
+---@field path string Absolute file path.
+---@field relative_path string Path relative to the project root.
+---@field relative_path_display string|nil Display-ready relative path (may include query decoration).
+---@field name string Filename component (`:t` of path).
+---@field score number Fuzzy relevance score (higher = better match).
+
+---@class SearchCache
+---@field search_results SearchResultItem[] Currently displayed (possibly filtered) results.
+---@field file_ids_map table<number, string> Maps panel line number to absolute file path.
+---@field ctx table|nil Current panel window/buffer context.
+---@field current_query string The last search query string.
+---@field all_files SearchResultItem[] Full file list for the project (populated on init).
+---@field last_cursor_position number Last known cursor row in the panel.
+
+---@type SearchCache
 local cache = {
     search_results = {},
     file_ids_map = {},
@@ -17,9 +40,11 @@ local cache = {
     last_cursor_position = 1,
 }
 
+---@type integer|nil Last non-plugin editor window handle.
 local last_real_win = nil
 local is_plugin_panel_win = ui.is_plugin_window
 
+--- Saves the current non-plugin window as `last_real_win`.
 local function save_window_context()
     local current_win = vim.api.nvim_get_current_win()
     if current_win and vim.api.nvim_win_is_valid(current_win) and not is_plugin_panel_win(current_win) then
@@ -27,6 +52,9 @@ local function save_window_context()
     end
 end
 
+--- Returns the best non-plugin normal window handle for opening files.
+--- Prefers `last_real_win`, then the focused window, then any floating-free window.
+---@return integer win_handle A valid window handle.
 local function get_last_normal_win()
     if last_real_win and vim.api.nvim_win_is_valid(last_real_win) and not is_plugin_panel_win(last_real_win) then
         return last_real_win
@@ -50,6 +78,7 @@ local function get_last_normal_win()
     return current_win
 end
 
+--- Saves the cursor row from the search panel into `cache.last_cursor_position`.
 local function save_cursor_position()
     if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
         local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
@@ -57,6 +86,8 @@ local function save_cursor_position()
     end
 end
 
+--- Registers a CursorMoved autocmd on the panel buffer to keep `cache.last_cursor_position` up to date.
+---@param ctx table Panel context with `win` and `buf` fields.
 local function setup_cursor_tracking(ctx)
     if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
         return
@@ -74,6 +105,12 @@ local function setup_cursor_tracking(ctx)
     })
 end
 
+--- Performs a character-level fuzzy match of `query` against `text`.
+--- Each query character must appear in order inside `text` (case-insensitive).
+--- Returns an empty table when the query cannot be fully matched.
+---@param text string The haystack string to search.
+---@param query string The query string to fuzzy-match.
+---@return {start: number, length: number, exact_match: boolean, priority: number}[] matches List of match position descriptors (0-based start offsets).
 local function find_fuzzy_character_matches(text, query)
     if not text or not query or #query == 0 then
         return {}
@@ -104,6 +141,11 @@ local function find_fuzzy_character_matches(text, query)
     return {}
 end
 
+--- Splits `query` on dots and searches for each segment in sequence within `text`.
+--- All segments must match in order; on any miss the function returns an empty table.
+---@param text string The haystack string.
+---@param query string The query, potentially containing dot separators.
+---@return {start: number, length: number, exact_match: boolean, priority: number}[] matches Ordered match descriptors (0-based start offsets).
 local function find_sequential_matches(text, query)
     local text_lower = text:lower()
     local parts = {}
@@ -144,6 +186,11 @@ local function find_sequential_matches(text, query)
     return found_sequence
 end
 
+--- Returns all highlighted match positions for `query` inside `text`.
+--- Tries strategies in priority order: exact substring, sequential (dot-split), fuzzy-char, segment.
+---@param text string The haystack string to search for highlights.
+---@param query string The query string.
+---@return {start: number, length: number, exact_match: boolean, priority: number}[] matches List of match position descriptors (0-based start offsets, priority 30-120).
 local function find_all_match_positions(text, query)
     if not text or not query or query == "" then
         return {}
@@ -228,6 +275,11 @@ local function find_all_match_positions(text, query)
     return matches
 end
 
+--- Checks whether all dot-delimited segments of `pattern_lower` appear in order within `text_lower`.
+--- Returns the total score (8000 per matched segment) or 0 if any segment is missing.
+---@param text_lower string Lowercased haystack.
+---@param pattern_lower string Lowercased dot-delimited query.
+---@return number score Cumulative score (>0 on match, 0 on failure).
 local function check_sequential_match(text_lower, pattern_lower)
     local parts = {}
     local current_part = ""
@@ -260,6 +312,11 @@ local function check_sequential_match(text_lower, pattern_lower)
     return total_score
 end
 
+--- Calculates a fuzzy character-match score for how well `pattern_lower` matches `text_lower`.
+--- Rewards consecutive character matches and early first-match positions.
+---@param text_lower string Lowercased haystack.
+---@param pattern_lower string Lowercased query.
+---@return number score Score >= 1000 on full match, 0 when the pattern cannot be matched.
 local function calculate_fuzzy_char_score(text_lower, pattern_lower)
     local text_idx, pattern_idx, match_count = 1, 1, 0
     local consecutive_matches = 0
@@ -290,6 +347,10 @@ local function calculate_fuzzy_char_score(text_lower, pattern_lower)
     return 0
 end
 
+--- Returns true when `find_all_match_positions` finds at least one position for `pattern` in `text`.
+---@param text string The haystack string.
+---@param pattern string The query string.
+---@return boolean has_match Whether any match was found.
 local function has_valid_matches(text, pattern)
     if not text or not pattern or pattern == "" then
         return false
@@ -298,6 +359,11 @@ local function has_valid_matches(text, pattern)
     return #match_positions > 0
 end
 
+--- Computes the composite fuzzy relevance score of `pattern` against `text`.
+--- Scores are: exact full match (100000) > exact substring (>=50000) > sequential (>=8000) > fuzzy-char (>=1000) > segment partial (>=3000) > no match (0).
+---@param text string The haystack string.
+---@param pattern string The query string.
+---@return number score Relevance score (higher means better match, 0 means no match).
 local function calculate_fuzzy_score(text, pattern)
     if not text or not pattern then
         return 0
@@ -356,6 +422,11 @@ local function calculate_fuzzy_score(text, pattern)
     return 0
 end
 
+--- Returns the path of `file_path` relative to `project_root_arg`.
+--- Falls back to the filename only when the file is outside the project root or the root is unknown.
+---@param file_path string Absolute or relative file path.
+---@param project_root_arg string|nil Absolute path of the project root directory.
+---@return string relative_path Display-ready relative path.
 local function relpath_to_project(file_path, project_root_arg)
     if not file_path or file_path == "" then
         return ""
@@ -380,8 +451,23 @@ local function relpath_to_project(file_path, project_root_arg)
     end
 end
 
+--- Runs the configured `fd` command piped through `fzf --filter` in a shell subprocess
+--- and returns the scored, sorted file list.
+---@param project_path string Absolute path of the project root (used as the working directory for fd).
+---@param query string The fzf filter query string (may be empty to list all files).
+---@return {files: SearchResultItem[], count: number}|nil result Parsed result table, or nil on error.
 local function call_fzf_search(project_path, query)
     if not project_path then
+        return nil
+    end
+    if vim.fn.executable("fzf") ~= 1 then
+        notify.error("lvim-space search requires 'fzf' to be installed and on PATH.")
+        return nil
+    end
+    -- config.search is the fd command string; verify fd (or equivalent) is available
+    local fd_bin = (config.search or ""):match("^%S+") or "fd"
+    if vim.fn.executable(fd_bin) ~= 1 then
+        notify.error("lvim-space search requires '" .. fd_bin .. "' to be installed and on PATH.")
         return nil
     end
     local fd_cmd = config.search
@@ -442,6 +528,8 @@ local function call_fzf_search(project_path, query)
     end
 end
 
+--- Returns the absolute path of the currently active project.
+---@return string|nil project_path Absolute project root path, or nil when no project is active.
 local function get_project_path_abs()
     if not state.project_id then
         return nil
@@ -450,6 +538,8 @@ local function get_project_path_abs()
     return proj_data and proj_data.path and vim.fn.fnamemodify(proj_data.path, ":p") or nil
 end
 
+--- Populates `cache.all_files` with every file in the project by running fzf with an empty query.
+--- Skips the network call when the cache is already warm and the query is empty.
 local function load_all_files()
     if #cache.all_files > 0 and cache.current_query == "" then
         return
@@ -475,6 +565,10 @@ local function load_all_files()
     end
 end
 
+--- Filters `cache.all_files` against `query_str` using the internal scoring engine
+--- and stores the results in `cache.search_results`.
+--- An empty query copies all files sorted alphabetically.
+---@param query_str string The search query to filter by (empty string shows all files).
 local function filter_files(query_str)
     query_str = query_str or ""
     cache.current_query = query_str
@@ -514,6 +608,10 @@ local function filter_files(query_str)
     end
 end
 
+--- Runs a live search: calls fzf for the given query and falls back to the internal filter
+--- when fzf returns no results.
+--- Updates `cache.search_results` with the final ranked list.
+---@param query_term string The current search query (empty string shows all files).
 local function live_fzf_search(query_term)
     if not query_term or query_term == "" then
         filter_files("")
@@ -547,6 +645,7 @@ local function live_fzf_search(query_term)
     end
 end
 
+--- Schedules the panel cursor to be moved to line 1 on the next event loop tick.
 local function set_cursor_to_first_line()
     if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
         vim.schedule(function()
@@ -557,6 +656,9 @@ local function set_cursor_to_first_line()
     end
 end
 
+--- Refreshes the search panel in-place: re-runs the search, rewrites panel lines,
+--- updates fuzzy-match highlights, and resizes the floating window as needed.
+--- Falls back to `M.init` when the panel window or buffer is no longer valid.
 M.refresh = function()
     if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
         return M.init()
@@ -681,10 +783,11 @@ M.refresh = function()
         target_line = math.max(target_line, 1)
         pcall(vim.api.nvim_win_set_cursor, cache.ctx.win, { target_line, 0 })
     end
-
-    common.apply_cursor_blending(cache.ctx.win)
 end
 
+--- Rewrites the panel buffer with the current search results, applies fuzzy-match highlights,
+--- resizes the floating window, and updates the action bar.
+--- Intended as the lightweight refresh after a query change during live input.
 local function update_search_display()
     if not cache.ctx or not cache.ctx.buf or not vim.api.nvim_buf_is_valid(cache.ctx.buf) then
         return
@@ -782,6 +885,8 @@ local function update_search_display()
     ui.open_actions(action_bar_info)
 end
 
+--- Opens the search input floating window and wires up live-update autocmds
+--- so that the results panel updates as the user types (debounced at 80 ms).
 local function show_search_input()
     local input_prompt = (state.lang.SEARCH_PROMPT or "Search files:") .. " "
     local search_input_buf, search_input_win = ui.create_input_field(
@@ -791,12 +896,10 @@ local function show_search_input()
             if query_final_val == nil then
                 if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
                     vim.api.nvim_set_current_win(cache.ctx.win)
-                    vim.cmd("hi Cursor blend=100")
                 else
                     local target_focus_win = get_last_normal_win()
                     if target_focus_win and vim.api.nvim_win_is_valid(target_focus_win) then
                         vim.api.nvim_set_current_win(target_focus_win)
-                        vim.cmd("hi Cursor blend=100")
                     end
                 end
             else
@@ -805,7 +908,6 @@ local function show_search_input()
                 M.refresh()
                 if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
                     vim.api.nvim_set_current_win(cache.ctx.win)
-                    vim.cmd("hi Cursor blend=100")
                 end
             end
         end,
@@ -859,6 +961,9 @@ local function show_search_input()
     })
 end
 
+--- Checks whether the current session state allows a file operation
+--- (requires an active project, workspace, and tab).
+---@return boolean ok true when all prerequisites are met, false (with notification) otherwise.
 local function _can_perform_file_operation()
     if not state.project_id then
         notify.error(state.lang.PROJECT_NOT_ACTIVE or "No active project")
@@ -875,6 +980,10 @@ local function _can_perform_file_operation()
     return true
 end
 
+--- Loads `file_path_to_open` into the last non-plugin editor window (or edits it in-place).
+--- Saves the window context for the active tab and shows a success notification.
+---@param file_path_to_open string Absolute path of the file to open.
+---@return boolean success true when the file was opened, false on any error.
 local function _open_file_in_editor_window(file_path_to_open)
     if not _can_perform_file_operation() then
         return false
@@ -909,12 +1018,11 @@ local function _open_file_in_editor_window(file_path_to_open)
         last_real_win = vim.api.nvim_get_current_win()
     end
     notify.info(state.lang.SEARCH_FILE_OPENED or "File opened successfully.")
-    vim.defer_fn(function()
-        vim.cmd("hi Cursor blend=0")
-    end, 10)
     return true
 end
 
+--- Opens the search result under the cursor and, optionally, adds it to the active tab.
+---@param opts? {close_panel?: boolean} When `close_panel` is true, all panels are closed after opening.
 function M.handle_file_switch(opts)
     opts = opts or {}
     if not _can_perform_file_operation() then
@@ -941,7 +1049,7 @@ function M.handle_file_switch(opts)
     end
     local tab = data.find_tab_by_id(state.tab_active, state.workspace_id)
     if tab then
-        local ok, tdata = pcall(vim.fn.json_decode, tab.data or {})
+        local ok, tdata = pcall(vim.fn.json_decode, tab.data or "{}")
         if not ok or type(tdata) ~= "table" then
             tdata = {}
         end
@@ -968,7 +1076,6 @@ function M.handle_file_switch(opts)
         if target and vim.api.nvim_win_is_valid(target) then
             pcall(vim.api.nvim_set_current_win, target)
         end
-        vim.cmd("hi Cursor blend=100")
         return
     end
     M.refresh()
@@ -982,6 +1089,9 @@ function M.handle_file_switch(opts)
     end)
 end
 
+--- Internal helper: opens the file under the cursor using the given Vim split command.
+--- Closes all panels before splitting and updates `last_real_win`.
+---@param split_cmd "vsplit"|"split" The Vim split command to use.
 local function _split_file_common(split_cmd)
     if not _can_perform_file_operation() then
         return
@@ -1003,7 +1113,6 @@ local function _split_file_common(split_cmd)
         end
         vim.cmd(split_cmd .. " " .. vim.fn.fnameescape(file_id_to_split))
         last_real_win = vim.api.nvim_get_current_win()
-        vim.cmd("hi Cursor blend=100")
     end)
     local notify_success, notify_fail
     if split_cmd == "vsplit" then
@@ -1020,19 +1129,24 @@ local function _split_file_common(split_cmd)
     end
 end
 
+--- Opens the search result under the cursor in a new vertical split.
 function M.handle_split_vertical()
     _split_file_common("vsplit")
 end
 
+--- Opens the search result under the cursor in a new horizontal split.
 function M.handle_split_horizontal()
     _split_file_common("split")
 end
 
+--- Closes all plugin panels and opens the projects panel.
 function M.navigate_to_projects()
     ui.close_all()
     require("lvim-space.ui.projects").init()
 end
 
+--- Closes all plugin panels and opens the workspaces panel.
+--- Shows a notification when no project is active.
 function M.navigate_to_workspaces()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project")
@@ -1042,6 +1156,8 @@ function M.navigate_to_workspaces()
     require("lvim-space.ui.workspaces").init()
 end
 
+--- Closes all plugin panels and opens the tabs panel.
+--- Shows a notification when no project or workspace is active.
 function M.navigate_to_tabs()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project")
@@ -1055,6 +1171,8 @@ function M.navigate_to_tabs()
     require("lvim-space.ui.tabs").init()
 end
 
+--- Closes all plugin panels and opens the files panel.
+--- Shows a notification when no project, workspace, or active tab is available.
 function M.navigate_to_files()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project")
@@ -1072,6 +1190,8 @@ function M.navigate_to_files()
     require("lvim-space.ui.files").init()
 end
 
+--- Registers all buffer-local keymaps for the search panel.
+---@param context_arg table Panel context with `buf` field.
 local function setup_keymaps(context_arg)
     local keymap_options = { buffer = context_arg.buf, noremap = true, silent = true, nowait = true }
     vim.keymap.set("n", config.keymappings.action.switch, function()
@@ -1103,6 +1223,10 @@ local function setup_keymaps(context_arg)
     end, keymap_options)
 end
 
+--- Initialises or re-initialises the search panel from scratch.
+--- Loads all project files, applies the current query, and creates the panel window.
+--- Requires an active project, workspace, and tab.
+---@param initial_selected_line_num? number Panel line to place the cursor on after opening.
 M.init = function(initial_selected_line_num)
     save_window_context()
 

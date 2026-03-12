@@ -1,3 +1,7 @@
+--- Workspaces UI panel for lvim-space.
+--- Manages the workspace list panel for the active project: rendering, keymaps,
+--- CRUD operations, workspace switching/session restore, and navigation to sibling panels.
+
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
@@ -6,11 +10,40 @@ local ui = require("lvim-space.ui")
 local utils = require("lvim-space.utils")
 local common = require("lvim-space.ui.common")
 local session = require("lvim-space.core.session")
-local tabs_ui_module = require("lvim-space.ui.tabs")
-local files_ui_module = require("lvim-space.ui.files")
+local metrics = require("lvim-space.core.metrics")
 
 local M = {}
 
+---Safely decode a JSON string, returning `default` on malformed input or nil.
+---@param str string|nil JSON string to decode
+---@param default table Fallback value when decoding fails
+---@return table
+local function safe_json_decode(str, default)
+    if not str then return default end
+    local ok, result = pcall(vim.fn.json_decode, str)
+    return (ok and type(result) == "table") and result or default
+end
+
+--- Lazy-loads the files UI module to avoid circular require at startup.
+---@return table files_ui The lvim-space.ui.files module
+local function files_ui_module()
+    return require("lvim-space.ui.files")
+end
+
+--- Lazy-loads the tabs UI module to avoid circular require at startup.
+---@return table tabs_ui The lvim-space.ui.tabs module
+local function tabs_ui_module()
+    return require("lvim-space.ui.tabs")
+end
+
+---@class WorkspacesCache
+---@field workspace_ids_map table<number, number> Map from visual line number to workspace DB id
+---@field workspaces_from_db table[] Sorted list of workspace records fetched from the database
+---@field ctx table|nil Active panel context returned by common.init_entity_list
+---@field project_display_name string Display name of the currently active project
+---@field last_cursor_position number Last known cursor row in the panel window
+
+---@type WorkspacesCache
 local cache = {
     workspace_ids_map = {},
     workspaces_from_db = {},
@@ -19,22 +52,30 @@ local cache = {
     last_cursor_position = 1,
 }
 
+---@type number|nil Window handle of the last non-plugin editor window
 local last_real_win = nil
 
 local is_plugin_panel_win = ui.is_plugin_window
 
+--- Returns the entity-type definition table for "workspace" from the common module.
+---@return EntityTypeDef|nil entity_def Entity-type definition with error keys, icons, and labels
 local function get_entity_def()
     return common.get_entity_type("workspace")
 end
 
+--- Returns the entity-type definition table for "project" from the common module.
+---@return EntityTypeDef|nil entity_def Entity-type definition for projects
 local function get_project_def()
     return common.get_entity_type("project")
 end
 
+--- Creates an empty workspace tabs structure with initialised timestamps.
+---@return {tab_ids: table, tab_active: nil, created_at: number, updated_at: number} tabs_struct Default tabs object
 local function create_empty_workspace_tabs()
     return { tab_ids = {}, tab_active = nil, created_at = os.time(), updated_at = os.time() }
 end
 
+--- Saves the current window as the last real (non-plugin) editor window.
 local function save_window_context()
     local current_win = vim.api.nvim_get_current_win()
     if current_win and vim.api.nvim_win_is_valid(current_win) and not is_plugin_panel_win(current_win) then
@@ -42,6 +83,7 @@ local function save_window_context()
     end
 end
 
+--- Persists the current cursor row from the panel window into the cache.
 local function save_cursor_position()
     if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
         local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
@@ -49,6 +91,8 @@ local function save_cursor_position()
     end
 end
 
+--- Registers a CursorMoved autocmd that keeps `cache.last_cursor_position` up to date.
+---@param ctx table Panel context with `win` and `buf` fields
 local function setup_cursor_tracking(ctx)
     if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
         return
@@ -66,6 +110,8 @@ local function setup_cursor_tracking(ctx)
     })
 end
 
+--- Re-renders the workspace list in the existing panel window without reopening it.
+--- Falls back to `M.init` when the window or buffer is no longer valid.
 M.refresh = function()
     if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
         return M.init()
@@ -104,7 +150,7 @@ M.refresh = function()
         cache.workspace_ids_map[i] = workspace_entry.id
         local is_active = tostring(workspace_entry.id) == tostring(state.workspace_id)
         local tab_count = get_tab_count(workspace_entry)
-        local tab_count_display = utils.to_superscript(tab_count)
+        local tab_count_display = utils.string.to_superscript(tab_count)
         local display_text = (workspace_entry.name or "???") .. tab_count_display
 
         if is_active then
@@ -163,10 +209,15 @@ M.refresh = function()
         win_config.title = " " .. final_panel_title .. " "
         pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
     end
-
-    common.apply_cursor_blending(cache.ctx.win)
 end
 
+--- Validates a workspace name for an add or rename operation.
+--- Checks format/length via common validation and uniqueness within the project scope.
+---@param workspace_name string The candidate workspace name to validate
+---@param project_id_context number Project id used to scope uniqueness checks
+---@param workspace_id_for_rename number|nil When renaming, the id of the workspace being renamed (allows keeping the same name)
+---@return string|nil validated_name Trimmed valid name, or nil on failure
+---@return string|nil err_code Error code such as "EXIST_NAME" or "LEN_NAME", or nil on success
 local function validate_workspace_name_for_add_or_rename(workspace_name, project_id_context, workspace_id_for_rename)
     local ok, err_code = common.validate_entity_name("workspace", workspace_name)
     if not ok then
@@ -184,6 +235,8 @@ local function validate_workspace_name_for_add_or_rename(workspace_name, project
     return trimmed_name, nil
 end
 
+--- Persists the current workspace activation and tab state to the database when
+--- autosave is enabled. Marks the active workspace flag and encodes tab ids/active tab.
 local function update_workspace_state_in_db()
     if not config.autosave or not state.project_id then
         return
@@ -192,7 +245,7 @@ local function update_workspace_state_in_db()
         data.set_workspace_active(state.workspace_id, state.project_id)
         local ws = data.find_workspace_by_id(state.workspace_id, state.project_id)
         if ws then
-            local tabs_json_obj = ws.tabs and vim.fn.json_decode(ws.tabs) or create_empty_workspace_tabs()
+            local tabs_json_obj = safe_json_decode(ws.tabs, create_empty_workspace_tabs())
             tabs_json_obj.tab_active = state.tab_active
             tabs_json_obj.tab_ids = state.tab_ids or {}
             tabs_json_obj.updated_at = os.time()
@@ -203,6 +256,11 @@ local function update_workspace_state_in_db()
     end
 end
 
+--- Inserts a new workspace record into the database with an empty tabs JSON structure
+--- and schedules a panel refresh on success.
+---@param workspace_name string Display name for the new workspace
+---@param project_id number Database id of the owning project
+---@return number|string result New row id (number > 0) on success, or an error code string on failure
 local function add_workspace_db(workspace_name, project_id)
     local ws_def = get_entity_def()
     local initial_tabs_structure = create_empty_workspace_tabs()
@@ -220,6 +278,12 @@ local function add_workspace_db(workspace_name, project_id)
     end
 end
 
+--- Persists a new name for an existing workspace and schedules a panel re-init.
+---@param workspace_id number Database id of the workspace to rename
+---@param new_validated_name string Already-validated new name
+---@param project_id number Database id of the owning project (passed through to the data layer)
+---@param selected_line_num number|nil Visual line to restore cursor to after re-init
+---@return boolean|string result true on success, false or an error code string on failure
 local function rename_workspace_db(workspace_id, new_validated_name, project_id, selected_line_num)
     local status = data.update_workspace_name(workspace_id, new_validated_name, project_id)
     if status == true then
@@ -236,6 +300,11 @@ local function rename_workspace_db(workspace_id, new_validated_name, project_id,
     return false
 end
 
+--- Deletes a workspace from the database and resets active state if it was the current workspace.
+---@param workspace_id number Database id of the workspace to delete
+---@param project_id number Database id of the owning project
+---@param selected_line_num number|nil Visual line to restore cursor to after re-init
+---@return true|nil result true on success, nil on database failure
 local function delete_workspace_db(workspace_id, project_id, selected_line_num)
     local status = data.delete_workspace(workspace_id, project_id)
     if not status then
@@ -258,14 +327,18 @@ local function delete_workspace_db(workspace_id, project_id, selected_line_num)
     return true
 end
 
+--- Switches the active workspace in "space" mode: restores tab state, persists to DB,
+--- and restores the last session. Refreshes the panel once the session autocmd fires
+--- (or immediately if no active tab exists).
+---@param workspace_id number Database id of the workspace to activate
+---@param selected_line_in_ui number|nil Visual line in the workspaces panel to restore after reinit
 local function space_load_session(workspace_id, selected_line_in_ui)
     if not cache.ctx or not cache.ctx.buf or not vim.api.nvim_buf_is_valid(cache.ctx.buf) then
         return
     end
     state.workspace_id = workspace_id
     local workspace = data.find_workspace_by_id(workspace_id, state.project_id)
-    local workspace_tabs_obj = workspace and workspace.tabs and vim.fn.json_decode(workspace.tabs)
-        or create_empty_workspace_tabs()
+    local workspace_tabs_obj = safe_json_decode(workspace and workspace.tabs, create_empty_workspace_tabs())
 
     state.tab_ids = workspace_tabs_obj.tab_ids or {}
     state.tab_active = workspace_tabs_obj.tab_active
@@ -283,9 +356,7 @@ local function space_load_session(workspace_id, selected_line_in_ui)
     end
     local old_disable_auto_close = state.disable_auto_close
     state.disable_auto_close = true
-    local augroup_name = "LvimSpaceCursorBlend"
     local space_restore_augroup = vim.api.nvim_create_augroup("LvimSpaceWorkspaceRestore", { clear = true })
-    vim.api.nvim_clear_autocmds({ group = augroup_name })
     vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
         group = space_restore_augroup,
         callback = function()
@@ -297,18 +368,8 @@ local function space_load_session(workspace_id, selected_line_in_ui)
                 local ws_name_for_notify = (workspace and workspace.name) or "Selected Workspace"
                 notify.info(switched_to_msg .. ws_name_for_notify)
                 M.init(selected_line_in_ui)
-                local cursor_blend_augroup = vim.api.nvim_create_augroup(augroup_name, { clear = true })
                 if state.ui and state.ui.content and vim.api.nvim_win_is_valid(state.ui.content.win) then
-                    vim.cmd("hi Cursor blend=100")
                     local main_ui_win = state.ui.content.win
-                    vim.api.nvim_create_autocmd({ "WinLeave", "WinEnter" }, {
-                        group = cursor_blend_augroup,
-                        callback = function()
-                            local current_event_win = vim.api.nvim_get_current_win()
-                            local blend_value = current_event_win == main_ui_win and 100 or 0
-                            vim.cmd("hi Cursor blend=" .. blend_value)
-                        end,
-                    })
                     vim.api.nvim_set_current_win(main_ui_win)
                     if selected_line_in_ui then
                         pcall(vim.api.nvim_win_set_cursor, main_ui_win, { selected_line_in_ui, 0 })
@@ -322,11 +383,13 @@ local function space_load_session(workspace_id, selected_line_in_ui)
     session.restore_state(state.tab_active, true)
 end
 
+--- Switches to a workspace in "enter" mode: closes all panels, restores session state,
+--- increments the workspace-switch metric, and navigates to the files or tabs panel.
+---@param workspace_id number Database id of the workspace to navigate into
 local function enter_navigate_to_last_panel(workspace_id)
     state.workspace_id = workspace_id
     local workspace = data.find_workspace_by_id(workspace_id, state.project_id)
-    local workspace_tabs_obj = workspace and workspace.tabs and vim.fn.json_decode(workspace.tabs)
-        or create_empty_workspace_tabs()
+    local workspace_tabs_obj = safe_json_decode(workspace and workspace.tabs, create_empty_workspace_tabs())
     state.tab_ids = workspace_tabs_obj.tab_ids or {}
     state.tab_active = workspace_tabs_obj.tab_active
     if config.autosave then
@@ -338,18 +401,25 @@ local function enter_navigate_to_last_panel(workspace_id)
         or "Switched to workspace: "
     local ws_name_for_notify = (workspace and workspace.name) or "Selected Workspace"
     notify.info(switched_to_msg .. ws_name_for_notify)
+    if metrics.stats then
+        metrics.stats.session.workspace_switches = metrics.stats.session.workspace_switches + 1
+    end
     if state.tab_active then
         session.restore_state(state.tab_active, true)
         vim.schedule(function()
-            files_ui_module.init()
+            files_ui_module().init()
         end)
     else
         vim.schedule(function()
-            tabs_ui_module.init()
+            tabs_ui_module().init()
         end)
     end
 end
 
+--- Moves the workspace under the cursor one position up or down in the sort order,
+--- swapping sort_order values with the adjacent workspace and refreshing the panel.
+---@param ctx table Panel context with `win` field pointing to the workspaces window
+---@param direction "up"|"down" Direction to move the workspace
 local function handle_move_operation(ctx, direction)
     if not ctx or not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
         return
@@ -417,6 +487,8 @@ local function handle_move_operation(ctx, direction)
     end
 end
 
+--- Opens an input prompt to create a new workspace under the active project.
+--- Validates the name and inserts the record, then refreshes the panel.
 M.handle_workspace_add = function()
     local ws_def = get_entity_def()
     if not ws_def then
@@ -460,6 +532,8 @@ M.handle_workspace_add = function()
     end, { input_filetype = "lvim-space-workspace-input" })
 end
 
+--- Opens a rename prompt for the workspace under the cursor in the panel.
+---@param ctx table Panel context; used to read the current cursor line
 M.handle_workspace_rename = function(ctx)
     local current_line_num = ctx
             and ctx.win
@@ -495,6 +569,8 @@ M.handle_workspace_rename = function(ctx)
     )
 end
 
+--- Opens a confirmation/delete flow for the workspace under the cursor in the panel.
+---@param ctx table Panel context; used to read the current cursor line
 M.handle_workspace_delete = function(ctx)
     local current_line_num = ctx
             and ctx.win
@@ -519,6 +595,11 @@ M.handle_workspace_delete = function(ctx)
     end)
 end
 
+--- Activates the workspace under the cursor according to the provided mode option.
+--- `opts.space_mode` restores session inside the panel UI; `opts.enter_mode` closes panels
+--- and navigates to the deepest available child panel. Default (no mode) selects the workspace
+--- and opens the tabs panel.
+---@param opts {space_mode: boolean|nil, enter_mode: boolean|nil, close_panel: boolean|nil}|nil Navigation mode flags
 M.handle_workspace_go = function(opts)
     local ws_def = get_entity_def()
     local workspace_id_selected = common.get_id_at_cursor(cache.workspace_ids_map)
@@ -540,8 +621,7 @@ M.handle_workspace_go = function(opts)
     end
     state.workspace_id = workspace_id_selected
     local workspace = data.find_workspace_by_id(state.workspace_id, state.project_id)
-    local workspace_tabs_obj = workspace and workspace.tabs and vim.fn.json_decode(workspace.tabs)
-        or create_empty_workspace_tabs()
+    local workspace_tabs_obj = safe_json_decode(workspace and workspace.tabs, create_empty_workspace_tabs())
     state.tab_ids = workspace_tabs_obj.tab_ids or {}
     state.tab_active = workspace_tabs_obj.tab_active
     if config.autosave then
@@ -554,22 +634,29 @@ M.handle_workspace_go = function(opts)
     if opts and opts.close_panel then
         ui.close_all()
     end
-    tabs_ui_module.init()
+    tabs_ui_module().init()
 end
 
+--- Moves the workspace under the cursor one position up in the sort order.
+---@param ctx table Panel context with a valid `win` field
 M.handle_move_up = function(ctx)
     handle_move_operation(ctx, "up")
 end
 
+--- Moves the workspace under the cursor one position down in the sort order.
+---@param ctx table Panel context with a valid `win` field
 M.handle_move_down = function(ctx)
     handle_move_operation(ctx, "down")
 end
 
+--- Closes the current panel and opens the projects panel.
 M.navigate_to_projects = function()
     ui.close_all()
     require("lvim-space.ui.projects").init()
 end
 
+--- Closes the current panel and opens the tabs panel for the active workspace.
+--- Shows an error state if no project, workspace, or active tab is set.
 M.navigate_to_tabs = function()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
@@ -583,16 +670,12 @@ M.navigate_to_tabs = function()
         common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win)
         return
     end
-    if not state.tab_active then
-        notify.info(state.lang.TAB_NOT_ACTIVE)
-        common.open_entity_error("file", "TAB_NOT_ACTIVE")
-        common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win)
-        return
-    end
     ui.close_all()
-    tabs_ui_module.init()
+    tabs_ui_module().init()
 end
 
+--- Closes the current panel and opens the files panel for the active tab.
+--- Shows an error state if no project, workspace, or active tab is set.
 M.navigate_to_files = function()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
@@ -613,9 +696,11 @@ M.navigate_to_files = function()
         return
     end
     ui.close_all()
-    files_ui_module.init()
+    files_ui_module().init()
 end
 
+--- Closes the current panel and opens the search panel for the active tab.
+--- Shows an error state if no project, workspace, or active tab is set.
 function M.navigate_to_search()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
@@ -639,6 +724,8 @@ function M.navigate_to_search()
     require("lvim-space.ui.search").init()
 end
 
+--- Registers all buffer-local keymaps for the workspaces panel.
+---@param ctx table Panel context containing `buf` and `entities` fields
 local function setup_keymaps(ctx)
     local keymap_opts = { buffer = ctx.buf, noremap = true, silent = true, nowait = true }
     vim.keymap.set("n", config.keymappings.action.add, function()
@@ -694,6 +781,11 @@ local function setup_keymaps(ctx)
     end, keymap_opts)
 end
 
+--- Initialises (or re-initialises) the workspaces panel window for the active project.
+--- Fetches and sorts workspaces, builds the panel via the common module, sets the panel
+--- title (including the project name), and registers keymaps and cursor tracking.
+---@param selected_line_num number|nil Visual line to place the cursor on after opening
+---@param opts {select_workspace: boolean|nil}|nil Options table; set `select_workspace = false` to suppress active-workspace highlighting
 M.init = function(selected_line_num, opts)
     save_window_context()
 
@@ -768,7 +860,7 @@ M.init = function(selected_line_num, opts)
         entity_selected_line,
         function(workspace_entry)
             local tab_count = get_tab_count(workspace_entry)
-            local tab_count_display = utils.to_superscript(tab_count)
+            local tab_count_display = utils.string.to_superscript(tab_count)
             return (workspace_entry.name or "???") .. tab_count_display
         end,
         function(entity, active_id_in_list_param)
@@ -808,6 +900,12 @@ M.init = function(selected_line_num, opts)
     setup_cursor_tracking(cache.ctx)
 end
 
+--- Finds a workspace by its display name within a project and activates it.
+--- Updates `cache.workspace_ids_map` for panel consistency when possible;
+--- falls back to a direct state mutation and session restore when the panel cache is stale.
+---@param workspace_name string Exact display name of the workspace to switch to
+---@param project_id_context number|nil Project scope to search in; defaults to the currently active project
+---@return boolean success true if a matching workspace was found and activated, false otherwise
 M.switch_to_workspace_by_name = function(workspace_name, project_id_context)
     local target_project_id = project_id_context or state.project_id
     if not target_project_id then
@@ -839,8 +937,7 @@ M.switch_to_workspace_by_name = function(workspace_name, project_id_context)
             return true
         else
             state.workspace_id = found_workspace.id
-            local workspace_tabs_obj = found_workspace.tabs and vim.fn.json_decode(found_workspace.tabs)
-                or create_empty_workspace_tabs()
+            local workspace_tabs_obj = safe_json_decode(found_workspace.tabs, create_empty_workspace_tabs())
             state.tab_ids = workspace_tabs_obj.tab_ids or {}
             state.tab_active = workspace_tabs_obj.tab_active
             if config.autosave then
@@ -849,9 +946,9 @@ M.switch_to_workspace_by_name = function(workspace_name, project_id_context)
             ui.close_all()
             if state.tab_active then
                 session.restore_state(state.tab_active, true)
-                files_ui_module.init()
+                files_ui_module().init()
             else
-                tabs_ui_module.init()
+                tabs_ui_module().init()
             end
             return true
         end

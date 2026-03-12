@@ -1,11 +1,25 @@
+--- Session management for lvim-space.
+--- Handles saving, restoring, and switching tab sessions, including buffer/window
+--- layout persistence and debounced auto-save logic.
+
 local config = require("lvim-space.config")
 local data = require("lvim-space.api.data")
 local state = require("lvim-space.api.state")
 local ui = require("lvim-space.ui")
 local notify = require("lvim-space.api.notify")
+local metrics = require("lvim-space.core.metrics")
 
 local M = {}
 
+---@class SessionConfig
+---@field save_interval integer Minimum milliseconds between consecutive saves.
+---@field restore_delay integer Delay in milliseconds before restoring a session.
+---@field debounce_delay integer Debounce delay in milliseconds for save operations.
+---@field cache_cleanup_interval integer Seconds between periodic cache cleanups.
+---@field autocommand_group string Name of the augroup used for session autocommands.
+---@field max_cache_size integer Maximum number of entries in the path validation cache.
+
+---@type SessionConfig
 local SESSION_CONFIG = {
     save_interval = 2000,
     restore_delay = 200,
@@ -15,6 +29,18 @@ local SESSION_CONFIG = {
     max_cache_size = 1000,
 }
 
+---@class SessionCache
+---@field last_save integer Timestamp (ms) of the last successful save.
+---@field current_tab_id integer|nil ID of the tab whose session is currently loaded.
+---@field is_restoring boolean True while a session restore is in progress.
+---@field pending_save integer|nil Handle of the active debounce timer, or nil.
+---@field buffer_cache table<string, integer> Weak-value map from file path to buffer number.
+---@field buffer_type_cache table<integer, BufferClassification> Weak map from bufnr to classification result.
+---@field path_validation_cache table<string, boolean> Weak-key map caching file-path validity.
+---@field cache_stats { hits: integer, misses: integer, evictions: integer } Hit/miss counters.
+---@field cleanup_timer integer|nil Handle for the periodic cache-cleanup timer.
+
+---@type SessionCache
 local cache = {
     last_save = 0,
     current_tab_id = nil,
@@ -26,6 +52,16 @@ local cache = {
     cache_stats = { hits = 0, misses = 0, evictions = 0 },
 }
 
+---@class BufferClassification
+---@field is_special boolean True if the buffer is not a regular listed file buffer.
+---@field is_valid boolean False when `bufnr` was invalid at classification time.
+---@field is_listed boolean|nil Whether the buffer is listed (buflisted option).
+---@field name string|nil Absolute buffer name (file path).
+---@field filetype string|nil Buffer filetype string.
+
+--- Classify a buffer as special/ordinary and cache the result.
+---@param bufnr integer Buffer handle to classify.
+---@return BufferClassification classification Table describing the buffer type.
 local function classify_buffer(bufnr)
     if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
         return { is_special = false, is_valid = false }
@@ -59,6 +95,10 @@ local function classify_buffer(bufnr)
     return classification
 end
 
+--- Remove stale entries from all internal caches.
+--- Evicts entries for invalid buffers and resets the path-validation cache when
+--- it exceeds `SESSION_CONFIG.max_cache_size`.
+---@return integer cleaned_count Number of entries removed.
 local function cleanup_buffer_caches()
     local cleaned_count = 0
     for bufnr in pairs(cache.buffer_type_cache) do
@@ -84,6 +124,10 @@ local function cleanup_buffer_caches()
     return cleaned_count
 end
 
+--- Check whether a path points to a readable, non-directory file.
+--- Results are cached in `cache.path_validation_cache`.
+---@param file_path string Absolute or relative file path to validate.
+---@return boolean is_valid True when the file is readable and is not a directory.
 local function is_valid_file_path(file_path)
     if not file_path or file_path == "" or type(file_path) ~= "string" then
         return false
@@ -96,9 +140,13 @@ local function is_valid_file_path(file_path)
     return is_valid
 end
 
+--- Return a valid buffer for `file_path`, creating one with `bufadd` if needed.
+--- Caches the result in `cache.buffer_cache`. Returns nil on any error.
+---@param file_path string Absolute path to the file.
+---@return integer|nil bufnr Valid buffer handle, or nil if the buffer could not be created.
 local function get_or_create_buffer(file_path)
     if not file_path or file_path == "" or type(file_path) ~= "string" then
-        notify("get_or_create_buffer called with invalid file_path: " .. tostring(file_path), vim.log.levels.ERROR)
+        notify.error("get_or_create_buffer called with invalid file_path: " .. tostring(file_path))
         return nil
     end
     local cached_bufnr = cache.buffer_cache[file_path]
@@ -109,12 +157,12 @@ local function get_or_create_buffer(file_path)
         cache.buffer_cache[file_path] = nil
     end
     if not is_valid_file_path(file_path) then
-        notify("get_or_create_buffer: file_path not valid/existing: " .. tostring(file_path), vim.log.levels.WARN)
+        notify.warn("get_or_create_buffer: file_path not valid/existing: " .. tostring(file_path))
         return nil
     end
     local bufnr = vim.fn.bufadd(file_path)
     if not bufnr or bufnr == 0 then
-        notify("get_or_create_buffer: bufadd failed for " .. tostring(file_path), vim.log.levels.ERROR)
+        notify.error("get_or_create_buffer: bufadd failed for " .. tostring(file_path))
         return nil
     end
     vim.bo[bufnr].buflisted = true
@@ -122,13 +170,51 @@ local function get_or_create_buffer(file_path)
     return bufnr
 end
 
+---@class CursorInfo
+---@field cursor_line integer 1-based line number of the cursor.
+---@field cursor_col integer 0-based column number of the cursor.
+---@field topline integer First visible line of the window.
+---@field leftcol integer Leftmost visible column of the window.
+
+---@class BufferSessionEntry
+---@field filePath string Absolute path of the file.
+---@field bufnr integer Buffer handle at save time.
+---@field filetype string Filetype string of the buffer.
+---@field cursor_line integer|nil Saved cursor line (if the buffer had a focused window).
+---@field cursor_col integer|nil Saved cursor column.
+---@field topline integer|nil Saved topline.
+---@field leftcol integer|nil Saved leftcol.
+
+---@class WindowSessionEntry
+---@field file_path string Absolute path shown in this window.
+---@field buffer_index integer Index into the `buffers` list.
+---@field width integer Window width in columns.
+---@field height integer Window height in lines.
+---@field row integer Window row position.
+---@field col integer Window column position.
+---@field cursor_line integer Saved cursor line.
+---@field cursor_col integer Saved cursor column.
+---@field topline integer Saved topline.
+---@field leftcol integer Saved leftcol.
+
+---@class TabSessionData
+---@field buffers BufferSessionEntry[] Ordered list of session buffers.
+---@field windows WindowSessionEntry[] Ordered list of session windows.
+---@field current_window integer Index of the focused window in `windows`.
+---@field timestamp integer Unix timestamp of when the data was collected.
+---@field tab_id integer|nil The tab ID this session belongs to (populated by the caller).
+
+--- Collect the current buffer/window layout for the given tab into a serialisable table.
+---@param tab_id integer The tab whose session data should be collected.
+---@return TabSessionData|nil session_data Collected session data, or nil on failure.
+---@return string|nil err Error message when session_data is nil.
 local function collect_tab_session_data(tab_id)
     local valid_buffers = {}
     local path_to_idx = {}
     local files_in_tab = data.find_files(tab_id, state.workspace_id) or {}
     local valid_paths = {}
     for _, entry in ipairs(files_in_tab) do
-        local path = entry.path or entry.filePath
+        local path = entry.path or entry.filePath --[[@diagnostic disable-line: undefined-field]]
         if path and type(path) == "string" and path ~= "" then
             valid_paths[vim.fn.fnamemodify(path, ":p")] = true
         end
@@ -197,8 +283,8 @@ local function collect_tab_session_data(tab_id)
                 if path_to_idx[abs] then
                     valid_window_count = valid_window_count + 1
                     local pos = vim.api.nvim_win_get_position(win)
-                    local cursor = pcall(vim.api.nvim_win_get_cursor, win) and vim.api.nvim_win_get_cursor(win)
-                        or { 1, 0 }
+                    local ok_cur, cursor = pcall(vim.api.nvim_win_get_cursor, win)
+                    if not ok_cur then cursor = { 1, 0 } end
                     local topline = vim.api.nvim_win_call(win, function()
                         return vim.fn.line("w0")
                     end)
@@ -236,6 +322,11 @@ local function collect_tab_session_data(tab_id)
         nil
 end
 
+--- Build a debounced save callback for the given tab.
+--- Calling the returned function cancels any previously pending save and
+--- schedules a new one after `SESSION_CONFIG.debounce_delay` ms.
+---@param tab_id integer The tab to save when the debounce fires.
+---@return function save_fn Zero-argument callback that triggers the debounced save.
 local function create_debounced_save(tab_id)
     return function()
         if cache.pending_save then
@@ -249,6 +340,11 @@ local function create_debounced_save(tab_id)
     end
 end
 
+--- Persist the current buffer/window layout for the given tab to the database.
+--- Respects the save-interval throttle unless `force` is true.
+---@param tab_id integer|nil Tab ID to save; falls back to `state.tab_active`.
+---@param force boolean|nil When true, bypass the save-interval throttle.
+---@return boolean success True when the session was saved successfully.
 M.save_current_state = function(tab_id, force)
     local t = tab_id or state.tab_active
     if not t then
@@ -258,7 +354,7 @@ M.save_current_state = function(tab_id, force)
         vim.fn.timer_stop(cache.pending_save)
         cache.pending_save = nil
     end
-    local now = vim.uv and vim.uv.now() or vim.loop.now()
+    local now = (vim.uv or vim.loop).now()
     if not force and not cache.is_restoring and now - cache.last_save < SESSION_CONFIG.save_interval then
         create_debounced_save(t)()
         return false
@@ -283,9 +379,15 @@ M.save_current_state = function(tab_id, force)
     if not data.update_tab_data(t, js, state.workspace_id) then
         return false
     end
+    if metrics.stats then
+        metrics.stats.operations.total_saves = metrics.stats.operations.total_saves + 1
+    end
     return true
 end
 
+--- Close all non-plugin windows except the first usable one.
+--- If no regular file windows exist, creates a new empty window.
+---@return integer win Handle of the single remaining (or newly created) window.
 local function force_single_window()
     local wins = {}
     for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
@@ -323,6 +425,9 @@ local function force_single_window()
     return t
 end
 
+--- Delete loaded file buffers that are not in the keep-list and not shown in plugin windows.
+--- Preserves at least one buffer when only a single normal window is open.
+---@param keep integer[]|nil List of buffer handles that must not be deleted.
 local function cleanup_old_session_buffers(keep)
     local kp = {}
     for _, b in ipairs(keep or {}) do
@@ -374,6 +479,12 @@ local function cleanup_old_session_buffers(keep)
     end
 end
 
+--- Recreate the window layout described by `sd` using the buffers in `fmap`.
+--- Cursor positions and scroll state are restored asynchronously via `vim.schedule`.
+---@param sd TabSessionData Decoded session data containing window descriptions.
+---@param fmap table<string, integer> Map from file path to buffer handle.
+---@param init integer Window handle to reuse as the first window.
+---@return table<integer, integer> created Map from session window index to window handle.
 local function restore_session_layout(sd, fmap, init)
     if not sd.windows or type(sd.windows) ~= "table" or #sd.windows == 0 then
         return { [1] = init }
@@ -470,6 +581,12 @@ local function restore_session_layout(sd, fmap, init)
     return created
 end
 
+--- Restore the persisted session for the given tab.
+--- Decodes the JSON session data, recreates buffers and windows, and sets the
+--- active window. The heavy work is deferred via `vim.schedule`.
+---@param tab_id integer Tab ID whose session should be restored.
+---@param force boolean|nil When true, restore even if `tab_id` matches the currently active tab.
+---@return boolean success True when restoration was initiated (or skipped for a valid reason).
 M.restore_state = function(tab_id, force)
     if not tab_id then
         return false
@@ -549,10 +666,16 @@ M.restore_state = function(tab_id, force)
         end)
         vim.cmd("redraw!")
         cache.is_restoring = false
+        if metrics.stats then
+            metrics.stats.session.session_restores = metrics.stats.session.session_restores + 1
+            metrics.stats.session.files_opened = metrics.stats.session.files_opened + #sd.buffers
+        end
     end)
     return true
 end
 
+--- Clear the current session: close extra windows, open a blank buffer, and
+--- purge all internal caches. Used before loading a different tab's session.
 M.clear_current_state = function()
     cache.is_restoring = true
     local tw = force_single_window()
@@ -566,6 +689,10 @@ M.clear_current_state = function()
     cache.is_restoring = false
 end
 
+--- Save the current tab session, switch active tab state, and restore the target tab.
+--- Falls back to the previous tab on failure.
+---@param tab_id integer The tab ID to switch to.
+---@return boolean success True when the switch completed successfully.
 M.switch_tab = function(tab_id)
     if not tab_id then
         return false
@@ -599,9 +726,14 @@ M.switch_tab = function(tab_id)
         end
         return false
     end
+    if metrics.stats then
+        metrics.stats.session.tab_switches = metrics.stats.session.tab_switches + 1
+    end
     return true
 end
 
+--- Close all non-plugin windows (keeping one) and delete all non-active file buffers.
+--- Opens a new empty buffer when no normal windows exist.
 M.close_all_file_windows_and_buffers = function()
     local normal_windows = {}
     for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -663,6 +795,8 @@ M.close_all_file_windows_and_buffers = function()
     cleanup_buffer_caches()
 end
 
+--- Register all session-related autocommands (BufEnter, BufWritePost, BufWinEnter,
+--- VimLeavePre) and start the periodic cache-cleanup timer.
 M.setup_autocmds = function()
     local aug = vim.api.nvim_create_augroup(SESSION_CONFIG.autocommand_group, { clear = true })
     local function smart_debounced_save()
@@ -712,7 +846,7 @@ M.setup_autocmds = function()
                 local files = data.find_files(state.tab_active, state.workspace_id) or {}
                 local abs = vim.fn.fnamemodify(name, ":p")
                 for _, e in ipairs(files) do
-                    local p = e.path or e.filePath
+                    local p = e.path or e.filePath --[[@diagnostic disable-line: undefined-field]]
                     if p and vim.fn.fnamemodify(p, ":p") == abs then
                         return
                     end
@@ -736,12 +870,23 @@ M.setup_autocmds = function()
     cache.cleanup_timer = cleanup_timer
 end
 
+--- Initialize the session module: register autocommands and run initial cache cleanup.
+---@return boolean success Always returns true.
 M.init = function()
     M.setup_autocmds()
     cleanup_buffer_caches()
     return true
 end
 
+---@class SessionInfo
+---@field tab_id integer The queried tab ID.
+---@field buffer_count integer Number of buffers in the saved session.
+---@field window_count integer Number of windows in the saved session.
+---@field timestamp integer Unix timestamp when the session was last saved.
+
+--- Return a summary of the persisted session for the given tab.
+---@param tab_id integer|nil Tab ID to query; falls back to `state.tab_active`.
+---@return SessionInfo|nil info Session summary, or nil if no session data is found.
 M.get_session_info = function(tab_id)
     local t = tab_id or state.tab_active
     if not t then
@@ -763,14 +908,34 @@ M.get_session_info = function(tab_id)
     return nil
 end
 
+--- Force-save the session for the given tab, bypassing the save-interval throttle.
+---@param tab_id integer|nil Tab ID to save; falls back to `state.tab_active`.
+---@return boolean success True when the save succeeded.
 M.force_save = function(tab_id)
     return M.save_current_state(tab_id, true)
 end
 
+--- Force-restore the session for the given tab, even if it is already active.
+---@param tab_id integer Tab ID to restore.
+---@return boolean success True when restoration was initiated.
 M.force_restore = function(tab_id)
     return M.restore_state(tab_id, true)
 end
 
+---@class CacheStats
+---@field buffer_cache_entries integer Number of entries in the file-path-to-bufnr cache.
+---@field type_cache_entries integer Number of entries in the buffer-classification cache.
+---@field path_cache_entries integer Number of entries in the path-validation cache.
+---@field is_restoring boolean Whether a session restore is currently in progress.
+---@field current_tab_id integer|nil ID of the tab whose session is loaded.
+---@field last_save integer Timestamp (ms) of the last save.
+---@field cache_hits integer Cumulative classification cache hit count.
+---@field cache_misses integer Cumulative classification cache miss count.
+---@field cache_evictions integer Number of path-validation cache full-evictions.
+---@field hit_ratio number Fraction of cache lookups that were hits (0–1).
+
+--- Return a snapshot of internal cache metrics for diagnostics.
+---@return CacheStats stats Current cache statistics.
 M.get_cache_stats = function()
     local bc, tc, pc = 0, 0, 0
     for _ in pairs(cache.buffer_cache) do
@@ -796,6 +961,10 @@ M.get_cache_stats = function()
     }
 end
 
+--- Save the active tab session and persist workspace tab metadata to the database.
+--- Also marks the active workspace as the current one for the project.
+---@return boolean success True when the save completed (false if no active project).
+---@return string|nil err Error message when success is false.
 M.save_all = function()
     if not state.project_id then
         return false, "No active project"
@@ -815,11 +984,6 @@ M.save_all = function()
     end
     if state.project_id and state.workspace_id then
         data.set_workspace_active(state.workspace_id, state.project_id)
-    end
-    if state.workspace_id and state.tab_ids then
-        for _, tab_id in ipairs(state.tab_ids) do
-            M.save_current_state(tab_id, true)
-        end
     end
     return true
 end
