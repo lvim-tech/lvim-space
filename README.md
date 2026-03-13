@@ -15,6 +15,7 @@ https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
   "lvim-tech/lvim-space",
   dependencies = {
     "kkharji/sqlite.lua",
+    "lvim-tech/lvim-utils",
   },
   config = function()
     require("lvim-space").setup({
@@ -370,6 +371,7 @@ If `autosave = false`, persist the full state manually:
 - **[fd](https://github.com/sharkdp/fd)** — used by the file search feature
 - **[fzf](https://github.com/junegunn/fzf)** — used by the file search feature
 - **[sqlite.lua](https://github.com/kkharji/sqlite.lua)** — Neovim SQLite wrapper
+- **[lvim-utils](https://github.com/lvim-tech/lvim-utils)** — cursor management and UI components
 
 > The search feature requires both `fd` and `fzf` on your `PATH`. All other features work without them.
 

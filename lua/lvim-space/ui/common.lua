@@ -276,7 +276,7 @@ M.get_id_at_cursor = function(id_list_map)
     return id_list_map[line_num]
 end
 
----Open an input field prompting the user to name a new entity, then invoke `callback_fn`
+---Open an input dialog prompting the user to name a new entity, then invoke `callback_fn`
 ---with the trimmed input.
 ---@param type_name string  Entity type key (must exist in `M.entity_types`)
 ---@param callback_fn (fun(name: string, context: any): nil)|nil  Called with the validated name and context
@@ -288,18 +288,23 @@ M.add_entity = function(type_name, callback_fn, parent_context)
         return
     end
     local prompt_key = string.upper(type_name) .. "_NAME"
-    ui.create_input_field(state.lang[prompt_key] or ("Enter " .. type_name .. " name:"), "", function(input_name)
-        if not input_name or vim.trim(input_name) == "" then
-            notify.info(state.lang.OPERATION_CANCELLED or "Operation cancelled.")
-            return
-        end
-        if callback_fn then
-            callback_fn(vim.trim(input_name), parent_context)
-        end
-    end)
+    state.disable_auto_close = true
+    require("lvim-utils.ui").input({
+        title = state.lang[prompt_key] or ("Enter " .. type_name .. " name:"),
+        callback = function(confirmed, value)
+            state.disable_auto_close = false
+            if not confirmed or not value or vim.trim(value) == "" then
+                notify.info(state.lang.OPERATION_CANCELLED or "Operation cancelled.")
+                return
+            end
+            if callback_fn then
+                callback_fn(vim.trim(value), parent_context)
+            end
+        end,
+    })
 end
 
----Open an input field pre-filled with the current name, validate the new input, then call
+---Open an input dialog pre-filled with the current name, validate the new input, then call
 ---`callback_fn` and display the appropriate success/error notification based on its return value.
 ---@param type_name string  Entity type key (must exist in `M.entity_types`)
 ---@param entity_id any  ID of the entity being renamed
@@ -315,15 +320,17 @@ M.rename_entity = function(type_name, entity_id, current_name, parent_context, c
         return
     end
     local prompt_key = string.upper(type_name) .. "_NEW_NAME"
-    ui.create_input_field(
-        state.lang[prompt_key] or ("Enter new " .. type_name .. " name:"),
-        current_name or "",
-        function(input_name)
-            if not input_name or vim.trim(input_name) == "" then
+    state.disable_auto_close = true
+    require("lvim-utils.ui").input({
+        title = state.lang[prompt_key] or ("Enter new " .. type_name .. " name:"),
+        placeholder = current_name or "",
+        callback = function(confirmed, value)
+            state.disable_auto_close = false
+            if not confirmed or not value or vim.trim(value) == "" then
                 notify.info(state.lang.OPERATION_CANCELLED or "Operation cancelled.")
                 return
             end
-            local trimmed_new_name = vim.trim(input_name)
+            local trimmed_new_name = vim.trim(value)
             if trimmed_new_name == current_name then
                 notify.info(state.lang.NO_CHANGES or "No changes made.")
                 return
@@ -344,11 +351,11 @@ M.rename_entity = function(type_name, entity_id, current_name, parent_context, c
             else
                 notify.error(tostring(result_code))
             end
-        end
-    )
+        end,
+    })
 end
 
----Open a confirmation input prompt and, if the user confirms, call `callback_fn` to
+---Open a confirmation select dialog and, if the user confirms, call `callback_fn` to
 ---perform the actual deletion, then display the appropriate notification.
 ---@param type_name string  Entity type key (must exist in `M.entity_types`)
 ---@param entity_id any  ID of the entity to delete
@@ -363,17 +370,20 @@ M.delete_entity = function(type_name, entity_id, entity_display_name, parent_con
     end
     local display_name_for_prompt = entity_display_name or "this item"
     local confirm_prompt_key = entity_def.delete_confirm
-    local confirm_prompt = (
+    local confirm_title = (
         state.lang[confirm_prompt_key] and string.format(state.lang[confirm_prompt_key], display_name_for_prompt)
-    ) or ("Are you sure you want to delete '" .. display_name_for_prompt .. "'? (yes/no)")
+    ) or ("Delete '" .. display_name_for_prompt .. "'?")
 
-    ui.create_input_field(confirm_prompt, "", function(user_answer)
-        if not user_answer then
-            notify.info(state.lang.OPERATION_CANCELLED or "Operation cancelled.")
-            return
-        end
-        local normalized_answer = vim.trim(user_answer:lower())
-        if normalized_answer == "y" or normalized_answer == "yes" then
+    state.disable_auto_close = true
+    require("lvim-utils.ui").select({
+        title = confirm_title,
+        items = { "Yes", "No" },
+        callback = function(confirmed, index)
+            state.disable_auto_close = false
+            if not confirmed or index ~= 1 then
+                notify.info(state.lang.DELETION_CANCELLED or "Deletion cancelled.")
+                return
+            end
             local success = callback_fn and callback_fn(entity_id, parent_context) or false
             if not success then
                 notify.error(state.lang[entity_def.delete_failed] or "Failed to delete.")
@@ -382,10 +392,8 @@ M.delete_entity = function(type_name, entity_id, entity_display_name, parent_con
                     notify.info(state.lang[entity_def.deleted_success])
                 end
             end
-        else
-            notify.info(state.lang.DELETION_CANCELLED or "Deletion cancelled.")
-        end
-    end)
+        end,
+    })
 end
 
 ---@class EntityListState

@@ -2,9 +2,9 @@
 -- Core UI module: window creation, management, input fields, and state
 -- persistence for the lvim-space floating panel system.
 
-local config = require("lvim-space.config")
-local state = require("lvim-space.api.state")
-local cursor = require("lvim-space.ui.cursor")
+local config      = require("lvim-space.config")
+local state       = require("lvim-space.api.state")
+local lvim_cursor = require("lvim-utils.cursor")
 
 local M = {}
 
@@ -352,7 +352,13 @@ end
 ---that tears down the panel whenever focus moves to a non-plugin window.
 M.init = function()
     state.disable_auto_close = false
-    cursor.setup()
+    lvim_cursor.setup({
+        ft = {
+            config.filetype or "lvim-space",
+            "lvim-space-panel",
+            "lvim-space-prompt",
+        },
+    })
     local auto_close_group = api.nvim_create_augroup("LvimSpaceAutoClose", { clear = true })
     api.nvim_create_autocmd("WinEnter", {
         group = auto_close_group,
@@ -581,6 +587,9 @@ function M.create_input_field(prompt, default_value, callback, options)
             if not is_valid_win(win) or not is_valid_buf(buf) then
                 return
             end
+
+            -- Exempt this buffer from cursor hiding (user types here).
+            lvim_cursor.mark_input_buffer(buf, true)
 
             api.nvim_buf_set_var(buf, "input_callback", callback)
             api.nvim_buf_set_var(buf, "input_default", default_value or "")
