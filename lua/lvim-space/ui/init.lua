@@ -393,7 +393,7 @@ M.open_main = function(lines, name, selected_line)
     local main_border = build_border(config.ui.border.main or {}, "main")
 
     if not selected_line then
-        selected_line = (saved_state.input_line and lines[saved_state.input_line]) and saved_state.input_line or 1
+        selected_line = (saved_state.input_line and saved_state.input_line <= #lines) and saved_state.input_line or 1
     end
     selected_line = math.max(1, math.min(selected_line, #lines))
 

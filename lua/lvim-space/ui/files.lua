@@ -360,6 +360,9 @@ M.refresh = function()
     update_tab_display_name()
 
     local current_buf_info = get_current_buffer_info()
+    local icons = config.ui.icons
+    local file_active_icon = icons.file_active or " "
+    local file_icon        = icons.file        or " "
 
     local new_lines = {}
 
@@ -376,13 +379,8 @@ M.refresh = function()
             and candidate_path
             and vim.fn.fnamemodify(candidate_path, ":p") == vim.fn.fnamemodify(state.file_active, ":p")
 
-        if is_current_buffer_match or (not current_buf_info.name and is_state_active_match) then
-            local file_active_icon = (config.ui and config.ui.icons and config.ui.icons.file_active) or " "
-            display_text = file_active_icon .. display_text
-        else
-            local file_icon = (config.ui and config.ui.icons and config.ui.icons.file) or " "
-            display_text = file_icon .. display_text
-        end
+        local is_file_active = is_current_buffer_match or (not current_buf_info.name and is_state_active_match)
+        display_text = (is_file_active and file_active_icon or file_icon) .. display_text
 
         table.insert(new_lines, display_text)
     end

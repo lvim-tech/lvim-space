@@ -103,19 +103,16 @@ M.refresh = function()
     end)
     cache.project_ids_map = {}
 
+    local icons = config.ui.icons
+    local project_active_icon = icons.project_active or " "
+    local project_icon        = icons.project        or " "
+
     local new_lines = {}
     for i, project_entry in ipairs(cache.projects_from_db) do
         cache.project_ids_map[i] = project_entry.id
         local is_active = tostring(project_entry.id) == tostring(state.project_id)
         local display_text = string.format("%s [%s]", project_entry.name or "???", project_entry.path or "???")
-
-        if is_active then
-            local project_active_icon = (config.ui and config.ui.icons and config.ui.icons.project_active) or " "
-            display_text = project_active_icon .. display_text
-        else
-            local project_icon = (config.ui and config.ui.icons and config.ui.icons.project) or " "
-            display_text = project_icon .. display_text
-        end
+        display_text = (is_active and project_active_icon or project_icon) .. display_text
 
         table.insert(new_lines, display_text)
     end

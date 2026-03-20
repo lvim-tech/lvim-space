@@ -139,21 +139,18 @@ M.refresh = function()
         return 0
     end
 
+    local icons = config.ui.icons
+    local tab_active_icon = icons.tab_active or " "
+    local tab_icon        = icons.tab        or " "
+
     local new_lines = {}
     for i, tab_entry in ipairs(cache.tabs_from_db) do
         cache.tab_ids_map[i] = tab_entry.id
         local is_active = tostring(tab_entry.id) == tostring(state.tab_active)
         local buffer_count = get_buffer_count(tab_entry)
-        local buffer_count_display = utils.string.to_superscript and utils.string.to_superscript(buffer_count) or ""
+        local buffer_count_display = utils.string.to_superscript(buffer_count)
         local display_text = (tab_entry.name or "???") .. buffer_count_display
-
-        if is_active then
-            local tab_active_icon = (config.ui and config.ui.icons and config.ui.icons.tab_active) or " "
-            display_text = tab_active_icon .. display_text
-        else
-            local tab_icon = (config.ui and config.ui.icons and config.ui.icons.tab) or " "
-            display_text = tab_icon .. display_text
-        end
+        display_text = (is_active and tab_active_icon or tab_icon) .. display_text
 
         table.insert(new_lines, display_text)
     end
@@ -772,7 +769,7 @@ M.init = function(selected_line_num)
         actual_selected_line,
         function(tab_entry)
             local buffer_count = get_buffer_count(tab_entry)
-            local buffer_count_display = utils.string.to_superscript and utils.string.to_superscript(buffer_count) or ""
+            local buffer_count_display = utils.string.to_superscript(buffer_count)
             return (tab_entry.name or "???") .. buffer_count_display
         end
     )

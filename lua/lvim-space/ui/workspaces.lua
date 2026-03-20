@@ -145,6 +145,10 @@ M.refresh = function()
         return 0
     end
 
+    local icons = config.ui.icons
+    local workspace_active_icon = icons.workspace_active or " "
+    local workspace_icon        = icons.workspace        or " "
+
     local new_lines = {}
     for i, workspace_entry in ipairs(cache.workspaces_from_db) do
         cache.workspace_ids_map[i] = workspace_entry.id
@@ -152,14 +156,7 @@ M.refresh = function()
         local tab_count = get_tab_count(workspace_entry)
         local tab_count_display = utils.string.to_superscript(tab_count)
         local display_text = (workspace_entry.name or "???") .. tab_count_display
-
-        if is_active then
-            local workspace_active_icon = (config.ui and config.ui.icons and config.ui.icons.workspace_active) or " "
-            display_text = workspace_active_icon .. display_text
-        else
-            local workspace_icon = (config.ui and config.ui.icons and config.ui.icons.workspace) or " "
-            display_text = workspace_icon .. display_text
-        end
+        display_text = (is_active and workspace_active_icon or workspace_icon) .. display_text
 
         table.insert(new_lines, display_text)
     end

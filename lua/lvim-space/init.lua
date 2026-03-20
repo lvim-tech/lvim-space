@@ -5,7 +5,6 @@
 
 local config = require("lvim-space.config")
 local autocommands = require("lvim-space.hooks.autocommands")
-local keymaps = require("lvim-space.core.keymaps")
 local commands = require("lvim-space.hooks.commands")
 local metrics = require("lvim-space.core.metrics")
 local state = require("lvim-space.api.state")
@@ -39,7 +38,6 @@ function M.setup(user_config)
     metrics.setup()
     ui.init()
     autocommands.init()
-    keymaps.init()
     commands.init()
     highlight.setup()
 end

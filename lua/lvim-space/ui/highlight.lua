@@ -13,12 +13,12 @@ local M = {}
 ---Registers an on_change listener so that groups are force-reapplied with fresh
 ---palette values whenever lvim-colorscheme syncs the palette.
 function M.setup()
-    local force = config.highlights_force
-    lhl.register(config.build_highlights(), force)
+    local force = config.force
+    lhl.register(config.build(), force)
     lhl.setup()
 
     colors.on_change(function()
-        lhl.register(config.build_highlights(), force)
+        lhl.register(config.build(), force)
     end)
 end
 

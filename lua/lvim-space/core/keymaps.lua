@@ -93,13 +93,4 @@ M.disable_all_maps = function(buf)
     end
 end
 
---- Initialize the keymaps module.
---- Global panel-navigation keymaps are set buffer-locally by each panel.
---- The main toggle keymap is registered in core/commands.lua.
-function M.init()
-    -- Global navigation keymaps for panel switching (set buffer-local by each panel;
-    -- global panel-navigation keymaps are handled inside each panel's setup_keymaps).
-    -- The main toggle keymap and user commands are registered in core/commands.lua.
-end
-
 return M
