@@ -25,6 +25,20 @@ https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
 }
 ```
 
+### Native (Neovim 0.11+)
+
+```lua
+vim.pack.add({
+    "https://github.com/kkharji/sqlite.lua",
+    "https://github.com/lvim-tech/lvim-utils",
+    "https://github.com/lvim-tech/lvim-space",
+})
+
+require("lvim-space").setup({
+    -- Your configuration here
+})
+```
+
 ### Packer
 
 ```lua
@@ -32,6 +46,7 @@ use({
     "lvim-tech/lvim-space",
     requires = {
         "kkharji/sqlite.lua",
+        "lvim-tech/lvim-utils",
     },
     config = function()
         require("lvim-space").setup({
@@ -258,17 +273,16 @@ require("lvim-space").setup({
             empty            = "󰇘 ",
             pre              = "➤ ",
         },
-
-        highlight = {
-            bg               = "#1a1a22",
-            bg_line          = "#1a1a22",
-            fg               = "#505067",
-            fg_line          = "#4a6494",
-            bg_fuzzy         = "#1a1a22",   -- background for fuzzy match highlights
-            fg_fuzzy_primary = "#b65252",   -- primary character match colour
-            fg_fuzzy_secondary = "#a26666", -- secondary character match colour
-        },
     },
+
+    -- -------------------------------------------------------------------------
+    -- Highlight groups
+    -- -------------------------------------------------------------------------
+    -- When false (default), highlight groups are defined only if the active
+    -- colorscheme has not already set them — the theme takes priority.
+    -- When true, lvim-space always applies its own palette-based colors,
+    -- overriding anything the colorscheme may have defined.
+    highlights_force = false,
 
     -- -------------------------------------------------------------------------
     -- Notifications
@@ -359,7 +373,7 @@ require("lvim-space").setup({
 If `autosave = false`, persist the full state manually:
 
 ```
-:LvimSpaceSave
+:LvimSpace save
 ```
 
 ---
@@ -371,7 +385,7 @@ If `autosave = false`, persist the full state manually:
 - **[fd](https://github.com/sharkdp/fd)** — used by the file search feature
 - **[fzf](https://github.com/junegunn/fzf)** — used by the file search feature
 - **[sqlite.lua](https://github.com/kkharji/sqlite.lua)** — Neovim SQLite wrapper
-- **[lvim-utils](https://github.com/lvim-tech/lvim-utils)** — cursor management and UI components
+- **[lvim-utils](https://github.com/lvim-tech/lvim-utils)** — color palette, highlight group management, and cursor handling
 
 > The search feature requires both `fd` and `fzf` on your `PATH`. All other features work without them.
 
