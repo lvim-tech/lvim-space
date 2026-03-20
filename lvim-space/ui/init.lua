@@ -11,6 +11,9 @@ local M = {}
 local api = vim.api
 local cmd = vim.cmd
 
+local ns_syntax     = api.nvim_create_namespace("lvim_space_syntax")
+local ns_cursorline = api.nvim_create_namespace("lvim_space_cursorline")
+
 ---@class LvimSpaceSavedState
 ---@field main string[]|nil Lines saved from the main content window
 ---@field actions string|nil Content saved from the status-line/actions window
@@ -158,7 +161,7 @@ local function setup_custom_cursorline(buf, win)
         return
     end
 
-    local ns = api.nvim_create_namespace("lvim_space_cursorline")
+    local ns = ns_cursorline
 
     local function update_cursor_highlight()
         if not is_valid_buf(buf) or not is_valid_win(win) then
@@ -175,6 +178,7 @@ local function setup_custom_cursorline(buf, win)
             api.nvim_buf_set_extmark(buf, ns, line, 0, {
                 end_line = line + 1,
                 hl_group = "LvimSpaceCursorLine",
+                hl_eol = true,
                 priority = 50,
             })
         end
@@ -211,9 +215,7 @@ M.add_highlight = function(buf, line, start_col, end_col, hl_group)
         return
     end
 
-    local ns = api.nvim_create_namespace("lvim_space_syntax")
-
-    api.nvim_buf_set_extmark(buf, ns, line, start_col, {
+    api.nvim_buf_set_extmark(buf, ns_syntax, line, start_col, {
         end_col = end_col,
         hl_group = hl_group,
         priority = 200,
@@ -227,8 +229,7 @@ M.clear_highlights = function(buf)
         return
     end
 
-    local ns = api.nvim_create_namespace("lvim_space_syntax")
-    api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+    api.nvim_buf_clear_namespace(buf, ns_syntax, 0, -1)
 end
 
 ---@class LvimSpaceWindowOptions
@@ -391,7 +392,9 @@ M.open_main = function(lines, name, selected_line)
     local win_height = math.min(math.max(content_height, 1), config.max_height or 10)
     local main_border = build_border(config.ui.border.main or {}, "main")
 
-    selected_line = selected_line or get_target_line(lines)
+    if not selected_line then
+        selected_line = (saved_state.input_line and lines[saved_state.input_line]) and saved_state.input_line or 1
+    end
     selected_line = math.max(1, math.min(selected_line, #lines))
 
     local buf, win = M.create_window({

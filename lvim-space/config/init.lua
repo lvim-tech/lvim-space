@@ -20,10 +20,11 @@
 ---@field default_refresh_interval integer  Live-window refresh interval (seconds)
 ---@field auto_save_interval       integer  Auto-save period in milliseconds (0 = off)
 
-local base     = require("lvim-space.config.base")
-local ui       = require("lvim-space.config.ui")
-local keys     = require("lvim-space.config.keys")
-local messages = require("lvim-space.config.messages")
+local base       = require("lvim-space.config.base")
+local ui         = require("lvim-space.config.ui")
+local keys       = require("lvim-space.config.keys")
+local messages   = require("lvim-space.config.messages")
+local highlights = require("lvim-space.config.highlights")
 
 local M = {}
 
@@ -41,6 +42,10 @@ M.title                  = ui.title
 M.title_position         = ui.title_position
 M.max_height             = ui.max_height
 M.ui                     = ui
+
+-- Highlight groups (shared lvim-utils color palette)
+M.build_highlights       = highlights.build
+M.highlights_force       = highlights.force
 
 -- Keymaps
 M.keymappings            = keys.keymappings

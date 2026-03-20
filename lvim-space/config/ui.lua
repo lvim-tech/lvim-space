@@ -32,13 +32,4 @@ return {
         pre = "➤ ",
     },
 
-    highlight = {
-        bg = "#1a1a22",
-        bg_line = "#1a1a22",
-        fg = "#505067",
-        fg_line = "#4a6494",
-        bg_fuzzy = "#1a1a22",
-        fg_fuzzy_primary = "#b65252",
-        fg_fuzzy_secondary = "#a26666",
-    },
 }

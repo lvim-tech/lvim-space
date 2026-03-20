@@ -435,10 +435,11 @@ local function cleanup_old_session_buffers(keep)
     end
     local del = {}
     for _, b in ipairs(vim.api.nvim_list_bufs()) do
+        local cb = classify_buffer(b)
         if
             not kp[b]
-            and classify_buffer(b).is_valid
-            and not classify_buffer(b).is_special
+            and cb.is_valid
+            and not cb.is_special
             and vim.api.nvim_buf_get_name(b) ~= ""
         then
             local skip = false
