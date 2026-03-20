@@ -43,24 +43,24 @@ end
 
 --- Known error categories used in record_error().
 local ERROR_TYPES = {
-    OTHER      = "other",
-    NOT_FOUND  = "not_found",
+    OTHER = "other",
+    NOT_FOUND = "not_found",
     PERMISSION = "permission",
-    IO         = "io",
+    IO = "io",
 }
 
 --- Event name emitted by utils/debug.lua that this module subscribes to.
 local EVENT_DEBUG = "debug"
 
 -- Performance-sensitive aliases
-local os_time      = os.time
-local os_difftime  = os.difftime
-local math_floor   = math.floor
-local math_min     = math.min
-local math_max     = math.max
+local os_time = os.time
+local os_difftime = os.difftime
+local math_floor = math.floor
+local math_min = math.min
+local math_max = math.max
 local table_concat = table.concat
-local str_format   = string.format
-local vim_uv       = vim.uv or vim.loop
+local str_format = string.format
+local vim_uv = vim.uv or vim.loop
 
 -- ============================================================================
 -- Module table
@@ -70,7 +70,7 @@ local vim_uv       = vim.uv or vim.loop
 ---@field stats            LvimSpace.MetricsStats|nil  Live statistics (nil before setup())
 ---@field _current_measure table|nil                   Active start_measure() context
 local M = {
-    stats            = nil,
+    stats = nil,
     _current_measure = nil,
 }
 
@@ -117,38 +117,38 @@ local function create_stats()
     local L = vim.log.levels
     return {
         session = {
-            tab_switches       = 0,
+            tab_switches = 0,
             workspace_switches = 0,
-            session_restores   = 0,
-            files_opened       = 0,
-            start_time         = os_time(),
+            session_restores = 0,
+            files_opened = 0,
+            start_time = os_time(),
         },
         -- One counter per vim.log.levels value (0/1/2/3/4)
         by_level = {
             [L.DEBUG] = 0,
-            [L.INFO]  = 0,
-            [L.WARN]  = 0,
+            [L.INFO] = 0,
+            [L.WARN] = 0,
             [L.ERROR] = 0,
         },
-        msg_types    = {},
+        msg_types = {},
         msg_examples = {},
-        performance  = {
+        performance = {
             load_times = {},
-            slowest    = { name = "", time = 0 },
+            slowest = { name = "", time = 0 },
         },
         errors = {
-            total   = 0,
+            total = 0,
             by_type = {},
         },
         operations = {
             total_saves = 0,
         },
         timestamps = {
-            start      = os_time(),
+            start = os_time(),
             last_reset = os_time(),
         },
         timeline = {
-            operations  = {},
+            operations = {},
             max_entries = 100,
         },
     }
@@ -166,7 +166,9 @@ local function get_message_type(msg)
     local words = {}
     for word in msg:gmatch("%S+") do
         words[#words + 1] = word
-        if #words >= 3 then break end
+        if #words >= 3 then
+            break
+        end
     end
     if #words >= 3 then
         return table_concat(words, " ") .. "..."
@@ -179,9 +181,9 @@ end
 ---@param msg_type string  Key returned by get_message_type()
 ---@param msg      string  Original message
 local function store_example(msg_type, msg)
-    local max  = mcfg("max_examples", 3)
+    local max = mcfg("max_examples", 3)
     local slot = M.stats.msg_examples[msg_type]
-    local now  = os_time()
+    local now = os_time()
 
     if not slot then
         M.stats.msg_examples[msg_type] = { messages = { msg }, timestamp = now }
@@ -201,20 +203,26 @@ end
 ---@return string
 local function generate_sparkline(values, max_width)
     max_width = max_width or 30
-    if #values == 0 then return "" end
+    if #values == 0 then
+        return ""
+    end
 
     local max_val = 0
-    for _, v in ipairs(values) do max_val = math_max(max_val, v) end
-    if max_val == 0 then return "" end
+    for _, v in ipairs(values) do
+        max_val = math_max(max_val, v)
+    end
+    if max_val == 0 then
+        return ""
+    end
 
-    local chars  = { "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" }
+    local chars = { "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" }
     local result = {}
 
     for i = 1, math_min(max_width, #values) do
         local idx = #values - max_width + i
         if idx >= 1 then
             local normalized = values[idx] / max_val
-            local char_idx   = math_floor(normalized * (#chars - 1)) + 1
+            local char_idx = math_floor(normalized * (#chars - 1)) + 1
             result[#result + 1] = chars[char_idx]
         end
     end
@@ -227,12 +235,16 @@ end
 ---@param msg string
 local function record_performance_from_msg(msg)
     local duration = tonumber(msg:match("(%d+)ms"))
-    if not duration then return end
+    if not duration then
+        return
+    end
 
     local times = M.stats.performance.load_times
     times[#times + 1] = duration
     -- Keep ring buffer bounded at 1 000 entries
-    if #times > 1000 then table.remove(times, 1) end
+    if #times > 1000 then
+        table.remove(times, 1)
+    end
 
     M.record_operation("debug_timing", duration)
 end
@@ -241,8 +253,8 @@ end
 ---@param msg string
 local function record_error_from_msg(msg)
     local error_type = (msg:match("not found") and ERROR_TYPES.NOT_FOUND)
-        or (msg:match("permission")             and ERROR_TYPES.PERMISSION)
-        or (msg:match("%bio%b")                 and ERROR_TYPES.IO)
+        or (msg:match("permission") and ERROR_TYPES.PERMISSION)
+        or (msg:match("%bio%b") and ERROR_TYPES.IO)
         or ERROR_TYPES.OTHER
     M.record_error(nil, error_type)
 end
@@ -256,7 +268,9 @@ end
 ---@param msg   string
 ---@param level string|integer vim.log.levels constant
 function M.handle_debug(msg, level)
-    if not M.stats then return end
+    if not M.stats then
+        return
+    end
 
     -- Count by severity level
     local level_num = type(level) == "string" and levels.to_level_number(level) or level
@@ -286,7 +300,9 @@ end
 ---@param _manager_type? string  Reserved for future per-subsystem breakdowns
 ---@param error_type?    string  One of the ERROR_TYPES constants
 function M.record_error(_manager_type, error_type)
-    if not M.stats then return end
+    if not M.stats then
+        return
+    end
     M.stats.errors.total = M.stats.errors.total + 1
     local et = error_type or ERROR_TYPES.OTHER
     M.stats.errors.by_type[et] = (M.stats.errors.by_type[et] or 0) + 1
@@ -297,11 +313,13 @@ end
 ---@param name     string
 ---@param duration number  Duration in milliseconds
 function M.record_operation(name, duration)
-    if not M.stats then return end
+    if not M.stats then
+        return
+    end
     local tl = M.stats.timeline
     tl.operations[#tl.operations + 1] = {
-        name      = name,
-        duration  = duration,
+        name = name,
+        duration = duration,
         timestamp = os_time(),
     }
     -- Evict oldest entry when the ring buffer is full
@@ -315,7 +333,7 @@ end
 ---@param name string  Descriptive label for the operation
 function M.start_measure(name)
     M._current_measure = {
-        name  = name,
+        name = name,
         start = vim_uv.hrtime(),
     }
 end
@@ -324,16 +342,20 @@ end
 --- Records the duration in the performance sparkline and the timeline.
 ---@return number duration  Elapsed time in milliseconds
 function M.end_measure()
-    if not M._current_measure then return 0 end
+    if not M._current_measure then
+        return 0
+    end
     if not M.stats then
         M._current_measure = nil
         return 0
     end
 
     local duration = (vim_uv.hrtime() - M._current_measure.start) / 1e6
-    local times    = M.stats.performance.load_times
+    local times = M.stats.performance.load_times
     times[#times + 1] = duration
-    if #times > 1000 then table.remove(times, 1) end
+    if #times > 1000 then
+        table.remove(times, 1)
+    end
 
     -- Track the single slowest operation seen so far
     if duration > M.stats.performance.slowest.time then
@@ -348,7 +370,9 @@ end
 --- Increment the state-save counter.
 --- Called by session.save_current_state() on every successful write.
 function M.record_save()
-    if not M.stats then return end
+    if not M.stats then
+        return
+    end
     M.stats.operations.total_saves = M.stats.operations.total_saves + 1
 end
 
@@ -359,11 +383,17 @@ end
 --- Average duration of all recorded timing samples (milliseconds).
 ---@return number
 function M.get_avg_load_time()
-    if not M.stats then return 0 end
+    if not M.stats then
+        return 0
+    end
     local times = M.stats.performance.load_times
-    if #times == 0 then return 0 end
+    if #times == 0 then
+        return 0
+    end
     local sum = 0
-    for i = 1, #times do sum = sum + times[i] end
+    for i = 1, #times do
+        sum = sum + times[i]
+    end
     return math_floor((sum / #times) * 100) / 100
 end
 
@@ -371,37 +401,46 @@ end
 ---@return number
 function M.get_error_rate()
     local s = M.stats
-    if not s then return 0 end
+    if not s then
+        return 0
+    end
     local total_ops = s.session.tab_switches
         + s.session.workspace_switches
         + s.session.files_opened
         + s.operations.total_saves
-    return total_ops == 0 and 0
-        or math_floor((s.errors.total / total_ops) * 10000) / 100
+    return total_ops == 0 and 0 or math_floor((s.errors.total / total_ops) * 10000) / 100
 end
 
 --- Top N message-type buckets sorted by count descending.
 ---@param  n? integer  Number of results (default: config.metrics.max_top_messages)
 ---@return {type:string, count:integer}[]
 function M.get_top_message_types(n)
-    if not M.stats then return {} end
+    if not M.stats then
+        return {}
+    end
     n = n or mcfg("max_top_messages", 5)
     local sorted = {}
     for msg_type, count in pairs(M.stats.msg_types) do
         sorted[#sorted + 1] = { type = msg_type, count = count }
     end
-    table.sort(sorted, function(a, b) return a.count > b.count end)
+    table.sort(sorted, function(a, b)
+        return a.count > b.count
+    end)
     local result = {}
-    for i = 1, math_min(n, #sorted) do result[i] = sorted[i] end
+    for i = 1, math_min(n, #sorted) do
+        result[i] = sorted[i]
+    end
     return result
 end
 
 --- Reset all statistics while preserving the original session start time.
 function M.reset()
-    if not M.stats then return end
+    if not M.stats then
+        return
+    end
     local original_start = M.stats.timestamps.start
     M.stats = create_stats()
-    M.stats.timestamps.start      = original_start
+    M.stats.timestamps.start = original_start
     M.stats.timestamps.last_reset = os_time()
 end
 
@@ -415,20 +454,28 @@ end
 ---@param val any
 ---@return any
 local function prepare_for_json(val)
-    if type(val) ~= "table" then return val end
+    if type(val) ~= "table" then
+        return val
+    end
 
     local n, count = #val, 0
-    for _ in pairs(val) do count = count + 1 end
+    for _ in pairs(val) do
+        count = count + 1
+    end
 
     if n > 0 and n == count then
         -- Dense array: recurse values only
         local out = {}
-        for i, v in ipairs(val) do out[i] = prepare_for_json(v) end
+        for i, v in ipairs(val) do
+            out[i] = prepare_for_json(v)
+        end
         return out
     else
         -- Sparse array or map: stringify all keys
         local out = {}
-        for k, v in pairs(val) do out[tostring(k)] = prepare_for_json(v) end
+        for k, v in pairs(val) do
+            out[tostring(k)] = prepare_for_json(v)
+        end
         return out
     end
 end
@@ -505,26 +552,30 @@ end
 ---@return string
 function M.report()
     local s = M.stats
-    if not s then return "No metrics available (setup not called)." end
+    if not s then
+        return "No metrics available (setup not called)."
+    end
 
     local lines = {}
     local function add(...)
-        for i = 1, select("#", ...) do lines[#lines + 1] = select(i, ...) end
+        for i = 1, select("#", ...) do
+            lines[#lines + 1] = select(i, ...)
+        end
     end
     local duration = os_difftime(os_time(), s.session.start_time)
-    local uptime   = str_format("%dm %ds", math_floor(duration / 60), duration % 60)
+    local uptime = str_format("%dm %ds", math_floor(duration / 60), duration % 60)
 
     -- Header
     add("# LvimSpace Metrics", "")
 
     -- Session activity
     add("## Session", "")
-    add(str_format("- **Uptime:** %s",              uptime))
-    add(str_format("- **Tab switches:** %d",        s.session.tab_switches))
-    add(str_format("- **Workspace switches:** %d",  s.session.workspace_switches))
-    add(str_format("- **Session restores:** %d",    s.session.session_restores))
-    add(str_format("- **Files opened:** %d",        s.session.files_opened))
-    add(str_format("- **State saves:** %d",         s.operations.total_saves))
+    add(str_format("- **Uptime:** %s", uptime))
+    add(str_format("- **Tab switches:** %d", s.session.tab_switches))
+    add(str_format("- **Workspace switches:** %d", s.session.workspace_switches))
+    add(str_format("- **Session restores:** %d", s.session.session_restores))
+    add(str_format("- **Files opened:** %d", s.session.files_opened))
+    add(str_format("- **State saves:** %d", s.operations.total_saves))
     add("")
 
     -- Log-level counters
@@ -561,11 +612,10 @@ function M.report()
         add("## Performance", "")
         add(str_format("- **Avg time:** %.2f ms", M.get_avg_load_time()))
         if s.performance.slowest.time > 0 then
-            add(str_format("- **Slowest:** `%s` (%.2f ms)",
-                s.performance.slowest.name, s.performance.slowest.time))
+            add(str_format("- **Slowest:** `%s` (%.2f ms)", s.performance.slowest.name, s.performance.slowest.time))
         end
         local recent = {}
-        local from   = math_max(1, #s.performance.load_times - 50)
+        local from = math_max(1, #s.performance.load_times - 50)
         for i = from, #s.performance.load_times do
             recent[#recent + 1] = s.performance.load_times[i]
         end
@@ -578,7 +628,7 @@ function M.report()
     -- Errors
     if s.errors.total > 0 then
         add("## Errors", "")
-        add(str_format("- **Total:** %d",   s.errors.total))
+        add(str_format("- **Total:** %d", s.errors.total))
         add(str_format("- **Rate:** %.1f%%", M.get_error_rate()))
         if next(s.errors.by_type) then
             add("### By Type", "")
@@ -604,26 +654,26 @@ end
 ---@return integer buf
 ---@return integer win
 local function open_float(title, content)
-    local api  = vim.api
-    local buf  = api.nvim_create_buf(false, true)
-    vim.bo[buf].buftype   = "nofile"
-    vim.bo[buf].filetype  = "markdown"
+    local api = vim.api
+    local buf = api.nvim_create_buf(false, true)
+    vim.bo[buf].buftype = "nofile"
+    vim.bo[buf].filetype = "markdown"
 
     local raw_lines = vim.split(content, "\n")
-    local width     = math_min(90, math_max(60, vim.o.columns - 10))
-    local height    = math_min(40, math_max(10, #raw_lines + 2))
-    local row       = math_floor((vim.o.lines   - height) / 2)
-    local col       = math_floor((vim.o.columns - width)  / 2)
+    local width = math_min(90, math_max(60, vim.o.columns - 10))
+    local height = math_min(40, math_max(10, #raw_lines + 2))
+    local row = math_floor((vim.o.lines - height) / 2)
+    local col = math_floor((vim.o.columns - width) / 2)
 
     local win = api.nvim_open_win(buf, true, {
-        relative  = "editor",
-        width     = width,
-        height    = height,
-        row       = row,
-        col       = col,
-        style     = "minimal",
-        border    = "rounded",
-        title     = " " .. title .. " ",
+        relative = "editor",
+        width = width,
+        height = height,
+        row = row,
+        col = col,
+        style = "minimal",
+        border = "rounded",
+        title = " " .. title .. " ",
         title_pos = "center",
     })
 
@@ -633,8 +683,12 @@ local function open_float(title, content)
 
     -- Universal close keymaps
     local opts = { buffer = buf, silent = true, nowait = true }
-    vim.keymap.set("n", "q",     function() api.nvim_win_close(win, true) end, opts)
-    vim.keymap.set("n", "<ESC>", function() api.nvim_win_close(win, true) end, opts)
+    vim.keymap.set("n", "q", function()
+        api.nvim_win_close(win, true)
+    end, opts)
+    vim.keymap.set("n", "<ESC>", function()
+        api.nvim_win_close(win, true)
+    end, opts)
 
     return buf, win
 end
@@ -644,7 +698,9 @@ end
 ---@param content string
 ---@return boolean  true if the buffer was still valid and was updated
 local function update_buf(buf, content)
-    if not vim.api.nvim_buf_is_valid(buf) then return false end
+    if not vim.api.nvim_buf_is_valid(buf) then
+        return false
+    end
     local lines = vim.split(content, "\n")
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -666,7 +722,9 @@ end
 ---@return integer|nil win
 function M.show()
     local buf, win = open_float("LvimSpace Metrics", M.report())
-    if not buf then return nil, nil end
+    if not buf then
+        return nil, nil
+    end
 
     local opts = { buffer = buf, silent = true, nowait = true }
 
@@ -686,7 +744,9 @@ function M.show()
         M.show()
     end, opts)
 
-    vim.keymap.set("n", "s", function() M.save() end, opts)
+    vim.keymap.set("n", "s", function()
+        M.save()
+    end, opts)
 
     vim.keymap.set("n", "l", function()
         M.load()
@@ -711,32 +771,50 @@ function M.show_live(refresh_interval)
     refresh_interval = refresh_interval or mcfg("default_refresh_interval", 2)
 
     local buf, win = open_float("LvimSpace Metrics (live)", M.report())
-    if not buf or not vim.api.nvim_win_is_valid(win) then return buf, win end
+    if not buf or not vim.api.nvim_win_is_valid(win) then
+        return buf, win
+    end
 
     local timer = vim_uv.new_timer()
-    if not timer then return buf, win end
+    if not timer then
+        return buf, win
+    end
 
     local interval_ms = refresh_interval * 1000
-    timer:start(interval_ms, interval_ms, vim.schedule_wrap(function()
-        if not vim.api.nvim_win_is_valid(win) then
-            pcall(function() timer:stop(); timer:close() end)
-            return
-        end
-        update_buf(buf, M.report())
-    end))
+    timer:start(
+        interval_ms,
+        interval_ms,
+        vim.schedule_wrap(function()
+            if not vim.api.nvim_win_is_valid(win) then
+                pcall(function()
+                    timer:stop()
+                    timer:close()
+                end)
+                return
+            end
+            update_buf(buf, M.report())
+        end)
+    )
 
     local function close_live()
-        pcall(function() timer:stop(); timer:close() end)
+        pcall(function()
+            timer:stop()
+            timer:close()
+        end)
         if vim.api.nvim_win_is_valid(win) then
             vim.api.nvim_win_close(win, true)
         end
     end
 
     local opts = { buffer = buf, silent = true, nowait = true }
-    vim.keymap.set("n", "q",     close_live, opts)
+    vim.keymap.set("n", "q", close_live, opts)
     vim.keymap.set("n", "<ESC>", close_live, opts)
-    vim.keymap.set("n", "r", function() update_buf(buf, M.report()) end, opts)
-    vim.keymap.set("n", "s", function() M.save() end, opts)
+    vim.keymap.set("n", "r", function()
+        update_buf(buf, M.report())
+    end, opts)
+    vim.keymap.set("n", "s", function()
+        M.save()
+    end, opts)
 
     return buf, win
 end
@@ -767,13 +845,20 @@ function M.setup()
     local interval = mcfg("auto_save_interval", 3600000)
     if interval and interval > 0 then
         if _auto_save_timer then
-            pcall(function() _auto_save_timer:stop(); _auto_save_timer:close() end)
+            pcall(function()
+                _auto_save_timer:stop()
+                _auto_save_timer:close()
+            end)
         end
         _auto_save_timer = vim_uv.new_timer()
         if _auto_save_timer then
-            _auto_save_timer:start(interval, interval, vim.schedule_wrap(function()
-                M.save()
-            end))
+            _auto_save_timer:start(
+                interval,
+                interval,
+                vim.schedule_wrap(function()
+                    M.save()
+                end)
+            )
         end
     end
 end

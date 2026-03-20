@@ -18,7 +18,9 @@ local M = {}
 ---@param default table Fallback value when decoding fails
 ---@return table
 local function safe_json_decode(str, default)
-    if not str then return default end
+    if not str then
+        return default
+    end
     local ok, result = pcall(vim.fn.json_decode, str)
     return (ok and type(result) == "table") and result or default
 end
@@ -141,7 +143,7 @@ M.refresh = function()
 
     local icons = config.ui.icons
     local tab_active_icon = icons.tab_active or " "
-    local tab_icon        = icons.tab        or " "
+    local tab_icon = icons.tab or " "
 
     local new_lines = {}
     for i, tab_entry in ipairs(cache.tabs_from_db) do

@@ -3,16 +3,16 @@
 -- Controlled independently from notifications via config.debug.
 -- Each log line is written asynchronously to avoid blocking the UI.
 
-local config      = require("lvim-space.config")
+local config = require("lvim-space.config")
 local file_system = require("lvim-space.utils.file_system")
-local levels      = require("lvim-space.utils.levels")
+local levels = require("lvim-space.utils.levels")
 
 --- Build a formatted log line with ISO timestamp and level name.
 ---@param msg       string
 ---@param level_num integer vim.log.levels constant
 ---@return string
 local function format_log_line(msg, level_num)
-    local timestamp  = os.date("%Y-%m-%d %H:%M:%S")
+    local timestamp = os.date("%Y-%m-%d %H:%M:%S")
     local level_name = levels.get_level_name(level_num)
     return string.format("%s [%s] %s\n", timestamp, level_name, tostring(msg))
 end
@@ -28,7 +28,7 @@ local function write_to_file(msg, level_num)
     end
     vim.schedule(function()
         local expanded = vim.fn.expand(file)
-        local line     = format_log_line(msg, level_num)
+        local line = format_log_line(msg, level_num)
         file_system.ensure_dir(expanded)
         file_system.append_line(expanded, line)
     end)

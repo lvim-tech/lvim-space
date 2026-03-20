@@ -3,7 +3,7 @@
 -- which handles the ColorScheme autocmd and "define only when missing" logic.
 
 local config = require("lvim-space.config")
-local lhl    = require("lvim-utils.highlight")
+local lhl = require("lvim-utils.highlight")
 local colors = require("lvim-utils.colors")
 
 local M = {}

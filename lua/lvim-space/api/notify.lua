@@ -26,7 +26,7 @@ local function notify(msg, level)
         return
     end
 
-    local title   = (type(cfg) == "table" and cfg.title)   or config.title or "LVIM Space"
+    local title = (type(cfg) == "table" and cfg.title) or config.title or "LVIM Space"
     local timeout = (type(cfg) == "table" and cfg.timeout) or 5000
 
     -- Pick an icon based on severity when one is available
@@ -42,8 +42,8 @@ local function notify(msg, level)
 
     vim.schedule(function()
         vim.notify(msg, level, {
-            title   = title,
-            icon    = icon,
+            title = title,
+            icon = icon,
             timeout = timeout,
         })
     end)

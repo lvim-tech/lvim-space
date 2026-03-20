@@ -9,7 +9,9 @@ local M = {}
 ---@param t2 table Overrides table
 ---@return table t1 Modified base table
 function M.merge(t1, t2)
-    if type(t2) ~= "table" then return t1 end
+    if type(t2) ~= "table" then
+        return t1
+    end
     for k, v in pairs(t2) do
         if type(v) == "table" and type(t1[k] or false) == "table" then
             if M.is_array(t1[k]) then

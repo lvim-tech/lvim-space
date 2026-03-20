@@ -276,7 +276,6 @@ M.get_id_at_cursor = function(id_list_map)
     return id_list_map[line_num]
 end
 
-
 ---@class EntityListState
 ---@field buf integer  Buffer handle for the entity list
 ---@field win integer  Window handle for the entity list

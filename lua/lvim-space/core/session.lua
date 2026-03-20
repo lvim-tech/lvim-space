@@ -284,7 +284,9 @@ local function collect_tab_session_data(tab_id)
                     valid_window_count = valid_window_count + 1
                     local pos = vim.api.nvim_win_get_position(win)
                     local ok_cur, cursor = pcall(vim.api.nvim_win_get_cursor, win)
-                    if not ok_cur then cursor = { 1, 0 } end
+                    if not ok_cur then
+                        cursor = { 1, 0 }
+                    end
                     local topline = vim.api.nvim_win_call(win, function()
                         return vim.fn.line("w0")
                     end)
@@ -436,12 +438,7 @@ local function cleanup_old_session_buffers(keep)
     local del = {}
     for _, b in ipairs(vim.api.nvim_list_bufs()) do
         local cb = classify_buffer(b)
-        if
-            not kp[b]
-            and cb.is_valid
-            and not cb.is_special
-            and vim.api.nvim_buf_get_name(b) ~= ""
-        then
+        if not kp[b] and cb.is_valid and not cb.is_special and vim.api.nvim_buf_get_name(b) ~= "" then
             local skip = false
             for _, win in ipairs(vim.api.nvim_list_wins()) do
                 if

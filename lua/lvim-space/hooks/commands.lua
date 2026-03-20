@@ -28,10 +28,10 @@ end
 ---@param target string|nil One of "projects"/"p", "workspaces"/"w", "tabs"/"t",
 ---                         "files"/"f", "search"/"s", or nil for auto-detect.
 local function open_lvim_space(target)
-    local projects   = require("lvim-space.ui.projects")
+    local projects = require("lvim-space.ui.projects")
     local workspaces = require("lvim-space.ui.workspaces")
-    local tabs       = require("lvim-space.ui.tabs")
-    local files      = require("lvim-space.ui.files")
+    local tabs = require("lvim-space.ui.tabs")
+    local files = require("lvim-space.ui.files")
 
     if target == "projects" or target == "p" then
         projects.init()
@@ -70,10 +70,14 @@ local function get_next_tab_name(tabs_list)
     local used = {}
     for _, tab in ipairs(tabs_list) do
         local num = string.match(tab.name or "", "^Tab (%d+)$")
-        if num then used[tonumber(num)] = true end
+        if num then
+            used[tonumber(num)] = true
+        end
     end
     local i = 1
-    while used[i] do i = i + 1 end
+    while used[i] do
+        i = i + 1
+    end
     return "Tab " .. tostring(i)
 end
 
@@ -98,18 +102,18 @@ end
 ---@return { project_name: string, workspace_name: string, tabs: { id: integer, name: string, active: boolean }[] }
 local function tab_get_info()
     local data = get_data()
-    local ws   = data.find_workspace_by_id and data.find_workspace_by_id(state.workspace_id, state.project_id)
-    local proj = data.find_project_by_id   and data.find_project_by_id(state.project_id)
-    local tabs = data.find_tabs             and data.find_tabs(state.workspace_id) or {}
+    local ws = data.find_workspace_by_id and data.find_workspace_by_id(state.workspace_id, state.project_id)
+    local proj = data.find_project_by_id and data.find_project_by_id(state.project_id)
+    local tabs = data.find_tabs and data.find_tabs(state.workspace_id) or {}
     local result = {
-        project_name   = proj and proj.name or "Unknown",
-        workspace_name = ws   and ws.name   or "Unknown",
-        tabs           = {},
+        project_name = proj and proj.name or "Unknown",
+        workspace_name = ws and ws.name or "Unknown",
+        tabs = {},
     }
     for _, tab in ipairs(tabs) do
         table.insert(result.tabs, {
-            id     = tab.id,
-            name   = tab.name,
+            id = tab.id,
+            name = tab.name,
             active = tostring(tab.id) == tostring(state.tab_active),
         })
     end
@@ -118,9 +122,9 @@ end
 
 ---@param offset integer
 local function tab_navigate(offset)
-    local data    = get_data()
+    local data = get_data()
     local session = get_session()
-    local tabs    = data.find_tabs and data.find_tabs(state.workspace_id) or {}
+    local tabs = data.find_tabs and data.find_tabs(state.workspace_id) or {}
     local idx
     for i, tab in ipairs(tabs) do
         if tostring(tab.id) == tostring(state.tab_active) then
@@ -128,7 +132,10 @@ local function tab_navigate(offset)
             break
         end
     end
-    if not idx then notify.warn("No active tab.") return end
+    if not idx then
+        notify.warn("No active tab.")
+        return
+    end
     local target = tabs[((idx - 1 + offset) % #tabs) + 1]
     if target then
         session.switch_tab(target.id)
@@ -138,9 +145,12 @@ end
 
 ---@param tab_name string|nil
 local function tab_new(tab_name)
-    local data  = get_data()
+    local data = get_data()
     local ws_id = state.workspace_id
-    if not ws_id then notify.warn("No active workspace.") return end
+    if not ws_id then
+        notify.warn("No active workspace.")
+        return
+    end
     local tabs = data.find_tabs and data.find_tabs(ws_id) or {}
     if not tab_name or vim.trim(tab_name) == "" then
         tab_name = get_next_tab_name(tabs)
@@ -150,7 +160,7 @@ local function tab_new(tab_name)
         try = try + 1
         tab_name = orig .. "_" .. tostring(try)
     end
-    local json  = vim.fn.json_encode({ buffers = {}, created_at = os.time(), modified_at = os.time() })
+    local json = vim.fn.json_encode({ buffers = {}, created_at = os.time(), modified_at = os.time() })
     local newid = data.add_tab(tab_name, json, ws_id)
     if not newid or type(newid) ~= "number" or newid <= 0 then
         notify.error("Failed to create tab.")
@@ -169,10 +179,13 @@ end
 
 ---@param tab_id integer|nil
 local function tab_close(tab_id)
-    local data    = get_data()
+    local data = get_data()
     local session = get_session()
     tab_id = tab_id or state.tab_active
-    if not tab_id then notify.warn("No tab to close.") return end
+    if not tab_id then
+        notify.warn("No tab to close.")
+        return
+    end
     data.delete_tab(tab_id, state.workspace_id)
     notify.info("Tab deleted: " .. tostring(tab_id))
     local remaining = data.find_tabs and data.find_tabs(state.workspace_id) or {}
@@ -185,8 +198,8 @@ end
 
 ---@param offset integer
 local function tab_move(offset)
-    local data  = get_data()
-    local tabs  = data.find_tabs and data.find_tabs(state.workspace_id) or {}
+    local data = get_data()
+    local tabs = data.find_tabs and data.find_tabs(state.workspace_id) or {}
     local a_tab, a_idx, a_sort
     for i, tab in ipairs(tabs) do
         if tostring(tab.id) == tostring(state.tab_active) then
@@ -194,13 +207,23 @@ local function tab_move(offset)
             break
         end
     end
-    if not a_tab or not a_sort then notify.warn("No active tab or sort_order not found.") return end
+    if not a_tab or not a_sort then
+        notify.warn("No active tab or sort_order not found.")
+        return
+    end
     local t_idx = a_idx + offset
-    if t_idx < 1 then t_idx = #tabs elseif t_idx > #tabs then t_idx = 1 end
+    if t_idx < 1 then
+        t_idx = #tabs
+    elseif t_idx > #tabs then
+        t_idx = 1
+    end
     local t_tab = tabs[t_idx]
-    if not t_tab or not t_tab.sort_order then notify.warn("Target tab not found.") return end
+    if not t_tab or not t_tab.sort_order then
+        notify.warn("Target tab not found.")
+        return
+    end
     local t_sort = tonumber(t_tab.sort_order)
-    local order  = {}
+    local order = {}
     for _, tab in ipairs(tabs) do
         local s = tonumber(tab.sort_order)
         if tab.id == a_tab.id then
@@ -221,10 +244,10 @@ end
 
 ---@param index integer|string
 local function tab_goto(index)
-    local data    = get_data()
+    local data = get_data()
     local session = get_session()
-    local tabs    = data.find_tabs and data.find_tabs(state.workspace_id) or {}
-    local entry   = tabs[tonumber(index)]
+    local tabs = data.find_tabs and data.find_tabs(state.workspace_id) or {}
+    local entry = tabs[tonumber(index)]
     if entry and entry.id then
         session.switch_tab(entry.id)
         notify.info("Switched to tab: " .. entry.name)
@@ -261,14 +284,18 @@ end
 -- ---------------------------------------------------------------------------
 
 M.tab = {
-    info       = tab_get_info,
-    next       = function() tab_navigate(1) end,
-    prev       = function() tab_navigate(-1) end,
-    new        = tab_new,
-    close      = tab_close,
-    move       = tab_move,
+    info = tab_get_info,
+    next = function()
+        tab_navigate(1)
+    end,
+    prev = function()
+        tab_navigate(-1)
+    end,
+    new = tab_new,
+    close = tab_close,
+    move = tab_move,
     goto_index = tab_goto,
-    rename     = tab_rename,
+    rename = tab_rename,
 }
 
 -- ---------------------------------------------------------------------------
@@ -312,26 +339,38 @@ local COMMANDS = {
     -- :LvimSpace tab <op> [args...]
     tab = {
         impl = function(args)
-            local op  = args[1]
+            local op = args[1]
             local arg = args[2]
             if not op or op == "" then
                 vim.print(tab_get_info())
                 return
             end
-            if op == "next"      then tab_navigate(1)
-            elseif op == "prev"  then tab_navigate(-1)
-            elseif op == "new"   then tab_new(arg)
-            elseif op == "close" then tab_close(arg ~= nil and tonumber(arg) or nil)
-            elseif op == "move-next" then tab_move(1)
-            elseif op == "move-prev" then tab_move(-1)
-            elseif op == "goto"  then
-                if not arg then notify.warn("Provide a tab position (number).") return end
+            if op == "next" then
+                tab_navigate(1)
+            elseif op == "prev" then
+                tab_navigate(-1)
+            elseif op == "new" then
+                tab_new(arg)
+            elseif op == "close" then
+                tab_close(arg ~= nil and tonumber(arg) or nil)
+            elseif op == "move-next" then
+                tab_move(1)
+            elseif op == "move-prev" then
+                tab_move(-1)
+            elseif op == "goto" then
+                if not arg then
+                    notify.warn("Provide a tab position (number).")
+                    return
+                end
                 local idx = tonumber(arg)
-                if not idx then notify.warn("Tab index must be a number.") return end
+                if not idx then
+                    notify.warn("Tab index must be a number.")
+                    return
+                end
                 tab_goto(idx)
             elseif op == "rename" then
                 tab_rename(arg)
-            elseif op == "info"  then
+            elseif op == "info" then
                 vim.print(tab_get_info())
             else
                 notify.warn("Unknown tab operation: " .. op)
@@ -367,7 +406,9 @@ local COMMANDS = {
 ---@param list string[]
 ---@return string[]
 local function filter_prefix(lead, list)
-    if lead == "" then return list end
+    if lead == "" then
+        return list
+    end
     local out = {}
     for _, item in ipairs(list) do
         if vim.startswith(item, lead) then
@@ -387,7 +428,7 @@ function M.init()
 
     vim.api.nvim_create_user_command("LvimSpace", function(opts)
         local parts = vim.split(vim.trim(opts.args or ""), "%s+", { plain = false })
-        local sub   = parts[1] or ""
+        local sub = parts[1] or ""
 
         -- No subcommand → open panel (context-aware)
         if sub == "" then
@@ -427,7 +468,9 @@ function M.init()
             -- Completing the subcommand itself
             if n <= 2 then
                 local top = {}
-                for name in pairs(COMMANDS) do table.insert(top, name) end
+                for name in pairs(COMMANDS) do
+                    table.insert(top, name)
+                end
                 -- Also expose bare panel names for convenience
                 for _, p in ipairs({ "projects", "workspaces", "tabs", "files", "search" }) do
                     table.insert(top, p)

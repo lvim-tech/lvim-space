@@ -362,7 +362,7 @@ M.refresh = function()
     local current_buf_info = get_current_buffer_info()
     local icons = config.ui.icons
     local file_active_icon = icons.file_active or " "
-    local file_icon        = icons.file        or " "
+    local file_icon = icons.file or " "
 
     local new_lines = {}
 

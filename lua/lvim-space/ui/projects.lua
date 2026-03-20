@@ -18,7 +18,9 @@ local M = {}
 ---@param default table Fallback value when decoding fails
 ---@return table
 local function safe_json_decode(str, default)
-    if not str then return default end
+    if not str then
+        return default
+    end
     local ok, result = pcall(vim.fn.json_decode, str)
     return (ok and type(result) == "table") and result or default
 end
@@ -105,7 +107,7 @@ M.refresh = function()
 
     local icons = config.ui.icons
     local project_active_icon = icons.project_active or " "
-    local project_icon        = icons.project        or " "
+    local project_icon = icons.project or " "
 
     local new_lines = {}
     for i, project_entry in ipairs(cache.projects_from_db) do

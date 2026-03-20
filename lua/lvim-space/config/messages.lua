@@ -11,7 +11,7 @@ return {
     -- -------------------------------------------------------------------------
     notify = {
         -- Master switch: set to false to silence all plugin notifications.
-        enabled   = true,
+        enabled = true,
 
         -- Minimum log level to display.
         -- Messages below this level are silently dropped.
@@ -19,10 +19,10 @@ return {
         min_level = vim.log.levels.INFO,
 
         -- Title shown in the notification popup (e.g. nvim-notify).
-        title     = "Lvim Space",
+        title = "Lvim Space",
 
         -- How long (ms) the notification stays visible.
-        timeout   = 3000,
+        timeout = 3000,
     },
 
     -- -------------------------------------------------------------------------
@@ -32,14 +32,14 @@ return {
     debug = {
         -- Master switch: set to true to enable file logging.
         -- Disabled by default to avoid unexpected disk writes for end users.
-        enabled   = false,
+        enabled = false,
 
         -- Minimum log level to write to the log file.
         min_level = vim.log.levels.DEBUG,
 
         -- Absolute path of the log file.
         -- Uses the Neovim state directory so it survives plugin updates.
-        file      = file_system.get_state_file("debug.log"),
+        file = file_system.get_state_file("debug.log"),
     },
 
     -- -------------------------------------------------------------------------

@@ -15,22 +15,22 @@ function M.get_tab_info()
     end
     -- Fallback: query state and data directly
     local ok_state, state = pcall(require, "lvim-space.api.state")
-    local ok_data, data   = pcall(require, "lvim-space.api.data")
+    local ok_data, data = pcall(require, "lvim-space.api.data")
     if not ok_state or not ok_data then
         return { project_name = "Unknown", workspace_name = "Unknown", tabs = {} }
     end
-    local ws   = ok_data and data.find_workspace_by_id and data.find_workspace_by_id(state.workspace_id, state.project_id)
-    local proj = ok_data and data.find_project_by_id  and data.find_project_by_id(state.project_id)
-    local tabs = ok_data and data.find_tabs            and data.find_tabs(state.workspace_id) or {}
+    local ws = ok_data and data.find_workspace_by_id and data.find_workspace_by_id(state.workspace_id, state.project_id)
+    local proj = ok_data and data.find_project_by_id and data.find_project_by_id(state.project_id)
+    local tabs = ok_data and data.find_tabs and data.find_tabs(state.workspace_id) or {}
     local result = {
-        project_name   = (proj and proj.name)  or "Unknown",
-        workspace_name = (ws   and ws.name)    or "Unknown",
-        tabs           = {},
+        project_name = (proj and proj.name) or "Unknown",
+        workspace_name = (ws and ws.name) or "Unknown",
+        tabs = {},
     }
     for _, tab in ipairs(tabs) do
         table.insert(result.tabs, {
-            id     = tab.id,
-            name   = tab.name,
+            id = tab.id,
+            name = tab.name,
             active = tostring(tab.id) == tostring(state.tab_active),
         })
     end

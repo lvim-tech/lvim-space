@@ -194,11 +194,11 @@ end
 ---@return AutocmdStats stats Current state values.
 M.get_stats = function()
     return {
-        initialized  = cache.initialized,
-        is_saving    = cache.is_saving,
-        project_id   = state.project_id,
+        initialized = cache.initialized,
+        is_saving = cache.is_saving,
+        project_id = state.project_id,
         workspace_id = state.workspace_id,
-        tab_active   = state.tab_active,
+        tab_active = state.tab_active,
     }
 end
 

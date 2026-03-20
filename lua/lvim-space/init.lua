@@ -24,7 +24,9 @@ local _initialized = false
 ---calls are no-ops.
 ---@param user_config table|nil User-supplied configuration table (partial overrides are accepted)
 function M.setup(user_config)
-    if _initialized then return end
+    if _initialized then
+        return
+    end
     _initialized = true
     if user_config ~= nil then
         utils.table.merge(config, user_config)

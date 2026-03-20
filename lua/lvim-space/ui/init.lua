@@ -2,8 +2,8 @@
 -- Core UI module: window creation, management, input fields, and state
 -- persistence for the lvim-space floating panel system.
 
-local config      = require("lvim-space.config")
-local state       = require("lvim-space.api.state")
+local config = require("lvim-space.config")
+local state = require("lvim-space.api.state")
 local lvim_cursor = require("lvim-utils.cursor")
 
 local M = {}
@@ -11,7 +11,7 @@ local M = {}
 local api = vim.api
 local cmd = vim.cmd
 
-local ns_syntax     = api.nvim_create_namespace("lvim_space_syntax")
+local ns_syntax = api.nvim_create_namespace("lvim_space_syntax")
 local ns_cursorline = api.nvim_create_namespace("lvim_space_cursorline")
 
 ---@class LvimSpaceSavedState
@@ -648,7 +648,9 @@ function M.create_input_field(prompt, default_value, callback, options)
 
     if not input_buf or not input_win then
         M.close_window("prompt_window")
-        if prompt_win then safe_close_win(prompt_win) end
+        if prompt_win then
+            safe_close_win(prompt_win)
+        end
         return nil, nil
     end
 

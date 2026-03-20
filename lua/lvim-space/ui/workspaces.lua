@@ -19,7 +19,9 @@ local M = {}
 ---@param default table Fallback value when decoding fails
 ---@return table
 local function safe_json_decode(str, default)
-    if not str then return default end
+    if not str then
+        return default
+    end
     local ok, result = pcall(vim.fn.json_decode, str)
     return (ok and type(result) == "table") and result or default
 end
@@ -147,7 +149,7 @@ M.refresh = function()
 
     local icons = config.ui.icons
     local workspace_active_icon = icons.workspace_active or " "
-    local workspace_icon        = icons.workspace        or " "
+    local workspace_icon = icons.workspace or " "
 
     local new_lines = {}
     for i, workspace_entry in ipairs(cache.workspaces_from_db) do
