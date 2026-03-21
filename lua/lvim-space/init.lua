@@ -8,7 +8,6 @@ local autocommands = require("lvim-space.hooks.autocommands")
 local commands = require("lvim-space.hooks.commands")
 local metrics = require("lvim-space.core.metrics")
 local state = require("lvim-space.api.state")
-local highlight = require("lvim-space.ui.highlight")
 local ui = require("lvim-space.ui")
 local utils = require("lvim-space.utils")
 
@@ -41,7 +40,18 @@ function M.setup(user_config)
     ui.init()
     autocommands.init()
     commands.init()
-    highlight.setup()
+
+    local ok, hl = pcall(require, "lvim-utils.highlight")
+    if ok then
+        hl.register(config.build(), config.force)
+        hl.setup()
+        local colors_ok, colors = pcall(require, "lvim-utils.colors")
+        if colors_ok then
+            colors.on_change(function()
+                hl.register(config.build(), config.force)
+            end)
+        end
+    end
 end
 
 return M
