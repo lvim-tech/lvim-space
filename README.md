@@ -18,9 +18,7 @@ https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
     "lvim-tech/lvim-utils",
   },
   config = function()
-    require("lvim-space").setup({
-      -- Your configuration here
-    })
+    require("lvim-space").setup({ ... })
   end
 }
 ```
@@ -34,9 +32,7 @@ vim.pack.add({
     "https://github.com/lvim-tech/lvim-space",
 })
 
-require("lvim-space").setup({
-    -- Your configuration here
-})
+require("lvim-space").setup({ ... })
 ```
 
 ### Packer
@@ -49,9 +45,7 @@ use({
         "lvim-tech/lvim-utils",
     },
     config = function()
-        require("lvim-space").setup({
-            -- Your configuration here
-        })
+        require("lvim-space").setup({ ... })
     end,
 })
 ```
@@ -64,8 +58,8 @@ use({
 - **Workspaces**: Each project can contain multiple workspaces (contexts). You can add, rename, delete, and switch workspaces.
 - **Tabs**: Each workspace supports multiple tabs, each with its own window/buffer layout.
 - **Files**: Tabs remember their files, window layout, and cursor positions.
-- **🆕 Reordering**: Move projects, workspaces, and tabs up/down to organize them exactly how you want.
-- **🆕 File Search**: Powerful fuzzy search functionality for quickly finding and opening files in your project with intelligent matching and highlighting.
+- **Reordering**: Move projects, workspaces, and tabs up/down to organize them exactly how you want.
+- **File Search**: Powerful fuzzy search functionality for quickly finding and opening files in your project with intelligent matching and highlighting.
 - **Session Management**: Automatically or manually save and restore the state of your workspaces, tabs, and files.
 - **Visual UI Panels**: Navigate and manage projects, workspaces, tabs, and files with a floating panel UI and icons.
 - **NerdFont Icons**: Visual indicators for all entities (project, workspace, tab, file, empty, etc).
@@ -86,12 +80,12 @@ local pub = require("lvim-space.pub")
 
 ### Available functions
 
-| Function | Returns | Description |
-|---|---|---|
-| `pub.get_tab_info()` | `{ project_name, workspace_name, tabs[] }` | Full state summary |
-| `pub.get_active_tab()` | `{ id, name }` or `nil` | Currently active tab |
-| `pub.get_workspace_name()` | `string` or `nil` | Active workspace name |
-| `pub.get_project_name()` | `string` or `nil` | Active project name |
+| Function                   | Returns                                    | Description           |
+| -------------------------- | ------------------------------------------ | --------------------- |
+| `pub.get_tab_info()`       | `{ project_name, workspace_name, tabs[] }` | Full state summary    |
+| `pub.get_active_tab()`     | `{ id, name }` or `nil`                    | Currently active tab  |
+| `pub.get_workspace_name()` | `string` or `nil`                          | Active workspace name |
+| `pub.get_project_name()`   | `string` or `nil`                          | Active project name   |
 
 `get_tab_info()` returns:
 
@@ -176,37 +170,37 @@ Everything is routed through a single `:LvimSpace` command with subcommands and 
 
 ### UI
 
-| Command | Description |
-|---|---|
-| `:LvimSpace` | Open context-aware panel (projects → workspaces → tabs → files) |
+| Command                   | Description                                                                 |
+| ------------------------- | --------------------------------------------------------------------------- |
+| `:LvimSpace`              | Open context-aware panel (projects → workspaces → tabs → files)             |
 | `:LvimSpace open [panel]` | Open a specific panel (`projects`, `workspaces`, `tabs`, `files`, `search`) |
 
 ### Session
 
-| Command | Description |
-|---|---|
+| Command           | Description                          |
+| ----------------- | ------------------------------------ |
 | `:LvimSpace save` | Manually save the full session state |
 
 ### Tab management
 
-| Command | Description |
-|---|---|
-| `:LvimSpace tab` | Print current project / workspace / tab state to `:messages` |
-| `:LvimSpace tab info` | Same as above |
-| `:LvimSpace tab next` | Switch to the next tab (wraps around) |
-| `:LvimSpace tab prev` | Switch to the previous tab (wraps around) |
-| `:LvimSpace tab new [name]` | Create a new tab with an optional name |
-| `:LvimSpace tab close [id]` | Close the specified tab (defaults to active tab) |
-| `:LvimSpace tab move-next` | Move active tab one position forward |
-| `:LvimSpace tab move-prev` | Move active tab one position backward |
-| `:LvimSpace tab goto <n>` | Switch to tab at 1-based position `n` |
-| `:LvimSpace tab rename <name>` | Rename the active tab |
+| Command                        | Description                                                  |
+| ------------------------------ | ------------------------------------------------------------ |
+| `:LvimSpace tab`               | Print current project / workspace / tab state to `:messages` |
+| `:LvimSpace tab info`          | Same as above                                                |
+| `:LvimSpace tab next`          | Switch to the next tab (wraps around)                        |
+| `:LvimSpace tab prev`          | Switch to the previous tab (wraps around)                    |
+| `:LvimSpace tab new [name]`    | Create a new tab with an optional name                       |
+| `:LvimSpace tab close [id]`    | Close the specified tab (defaults to active tab)             |
+| `:LvimSpace tab move-next`     | Move active tab one position forward                         |
+| `:LvimSpace tab move-prev`     | Move active tab one position backward                        |
+| `:LvimSpace tab goto <n>`      | Switch to tab at 1-based position `n`                        |
+| `:LvimSpace tab rename <name>` | Rename the active tab                                        |
 
 ### Diagnostics
 
-| Command | Description |
-|---|---|
-| `:LvimSpace metrics` | Show metrics report |
+| Command                   | Description                              |
+| ------------------------- | ---------------------------------------- |
+| `:LvimSpace metrics`      | Show metrics report                      |
 | `:LvimSpace metrics live` | Show auto-refreshing live metrics window |
 
 ---
@@ -244,34 +238,34 @@ require("lvim-space").setup({
     -- UI appearance
     -- -------------------------------------------------------------------------
     ui = {
-        filetype       = "lvim-space",
-        title          = "LVIM SPACE",
-        title_position = "center",  -- "left" | "center" | "right"
-        max_height     = 10,
-        spacing        = 2,         -- padding spaces in the status/info line
+        filetype = "lvim-space",
+        title = "LVIM SPACE",
+        title_position = "center", -- "left" | "center" | "right"
+        max_height = 10,
+        spacing = 2, -- padding spaces in the status/info line
 
         border = {
-            sign   = " ",
-            main   = { left = true, right = true },
-            info   = { left = true, right = true },
+            sign = " ",
+            main = { left = true, right = true },
+            info = { left = true, right = true },
             prompt = { left = true, right = true, separate = ":" },
-            input  = { left = true, right = true },
+            input = { left = true, right = true },
         },
 
         icons = {
-            error            = " ",
-            warn             = " ",
-            info             = " ",
-            project          = " ",
-            project_active   = " ",
-            workspace        = " ",
+            error = " ",
+            warn = " ",
+            info = " ",
+            project = " ",
+            project_active = " ",
+            workspace = " ",
             workspace_active = " ",
-            tab              = " ",
-            tab_active       = " ",
-            file             = " ",
-            file_active      = " ",
-            empty            = "󰇘 ",
-            pre              = "➤ ",
+            tab = " ",
+            tab_active = " ",
+            file = " ",
+            file_active = " ",
+            empty = "󰇘 ",
+            pre = "➤ ",
         },
     },
 
@@ -288,30 +282,30 @@ require("lvim-space").setup({
     -- Notifications
     -- -------------------------------------------------------------------------
     notify = {
-        enabled   = true,
+        enabled = true,
         min_level = vim.log.levels.INFO, -- suppress DEBUG / TRACE messages
-        title     = "Lvim Space",
-        timeout   = 3000,               -- milliseconds
+        title = "Lvim Space",
+        timeout = 3000, -- milliseconds
     },
 
     -- -------------------------------------------------------------------------
     -- Debug file logging (disabled by default)
     -- -------------------------------------------------------------------------
     debug = {
-        enabled   = false,
+        enabled = false,
         min_level = vim.log.levels.DEBUG,
-        file      = vim.fn.stdpath("state") .. "/lvim-space/debug.log",
+        file = vim.fn.stdpath("state") .. "/lvim-space/debug.log",
     },
 
     -- -------------------------------------------------------------------------
     -- Metrics collection (disabled by default, opt-in)
     -- -------------------------------------------------------------------------
     metrics = {
-        enabled                  = false,
-        max_examples             = 3,
-        max_top_messages         = 5,
-        default_refresh_interval = 2,       -- seconds (live window)
-        auto_save_interval       = 3600000, -- milliseconds (0 = off)
+        enabled = false,
+        max_examples = 3,
+        max_top_messages = 5,
+        default_refresh_interval = 2, -- seconds (live window)
+        auto_save_interval = 3600000, -- milliseconds (0 = off)
     },
 
     -- -------------------------------------------------------------------------
@@ -320,22 +314,22 @@ require("lvim-space").setup({
     keymappings = {
         main = "<C-Space>",
         global = {
-            projects   = "p",
+            projects = "p",
             workspaces = "w",
-            tabs       = "t",
-            files      = "f",
-            search     = "s",
+            tabs = "t",
+            files = "f",
+            search = "s",
         },
         action = {
-            add       = "a",
-            delete    = "d",
-            rename    = "r",
-            switch    = "<Space>",
-            enter     = "<CR>",
-            split_v   = "v",
-            split_h   = "h",
+            add = "a",
+            delete = "d",
+            rename = "r",
+            switch = "<Space>",
+            enter = "<CR>",
+            split_v = "v",
+            split_h = "h",
             move_down = "<C-j>",
-            move_up   = "<C-k>",
+            move_up = "<C-k>",
         },
     },
 
@@ -343,14 +337,22 @@ require("lvim-space").setup({
     key_control = {
         allowed = { "j", "k", "<C-j>", "<C-k>" },
         explicitly_disabled = {
-            "$", "gg", "G", "<C-d>", "<C-u>",
-            "<Left>", "<Right>", "<Up>", "<Down>",
-            "<Space>", "BS",
+            "$",
+            "gg",
+            "G",
+            "<C-d>",
+            "<C-u>",
+            "<Left>",
+            "<Right>",
+            "<Up>",
+            "<Down>",
+            "<Space>",
+            "BS",
         },
         disable_categories = {
             lowercase_letters = true,
             uppercase_letters = true,
-            digits            = true,
+            digits = true,
         },
     },
 })
