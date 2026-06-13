@@ -11,15 +11,18 @@ local hl = require("lvim-utils.highlight")
 local function build()
     local blue_high = hl.blend(c.blue, c.bg, 0.1)
     local main_color = c.blue_dark
+    -- Drop the panel background (NONE) when the theme is transparent so lvim-space follows a
+    -- translucent terminal; the tinted chrome cells (title/input/fuzzy) keep their accents.
+    local panel_bg = c.transparent and c.none or c.bg_dark
     return {
-        LvimSpaceNormal = { bg = c.bg_dark },
-        LvimSpaceCursorLine = { bg = c.bg_dark, fg = main_color, bold = true },
+        LvimSpaceNormal = { bg = panel_bg },
+        LvimSpaceCursorLine = { bg = panel_bg, fg = main_color, bold = true },
         LvimSpaceTitle = { bg = blue_high, fg = main_color, bold = true },
-        LvimSpaceInfo = { bg = c.bg_dark, fg = main_color, bold = true },
-        LvimSpacePrompt = { bg = c.bg_dark, fg = main_color, bold = true },
+        LvimSpaceInfo = { bg = panel_bg, fg = main_color, bold = true },
+        LvimSpacePrompt = { bg = panel_bg, fg = main_color, bold = true },
         LvimSpaceInput = { bg = blue_high, fg = c.blue },
-        LvimSpaceSign = { bg = c.bg_dark, fg = main_color },
-        LvimSpaceCursor = { bg = c.bg_dark, fg = c.bg_dark },
+        LvimSpaceSign = { bg = panel_bg, fg = main_color },
+        LvimSpaceCursor = { bg = panel_bg, fg = c.bg_dark },
         LvimSpaceFuzzyPrimary = { bg = blue_high, fg = c.blue, bold = true },
         LvimSpaceFuzzySecondary = { bg = blue_high, fg = c.blue_dark, bold = true },
     }
