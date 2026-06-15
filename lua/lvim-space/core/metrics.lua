@@ -658,23 +658,50 @@ local function open_float(title, content)
     local buf = api.nvim_create_buf(false, true)
     vim.bo[buf].buftype = "nofile"
     vim.bo[buf].filetype = "markdown"
+    vim.bo[buf].bufhidden = "wipe" -- closing the window wipes the buffer (and its resize autocmd)
 
     local raw_lines = vim.split(content, "\n")
-    local width = math_min(90, math_max(60, vim.o.columns - 10))
-    local height = math_min(40, math_max(10, #raw_lines + 2))
-    local row = math_floor((vim.o.lines - height) / 2)
-    local col = math_floor((vim.o.columns - width) / 2)
+    -- Centred geometry from the live screen size; recomputed on resize below.
+    local function geometry()
+        local width = math_min(90, math_max(60, vim.o.columns - 10))
+        local height = math_min(40, math_max(10, #raw_lines + 2))
+        return {
+            width = width,
+            height = height,
+            row = math_floor((vim.o.lines - height) / 2),
+            col = math_floor((vim.o.columns - width) / 2),
+        }
+    end
+    local g = geometry()
 
     local win = api.nvim_open_win(buf, true, {
         relative = "editor",
-        width = width,
-        height = height,
-        row = row,
-        col = col,
+        width = g.width,
+        height = g.height,
+        row = g.row,
+        col = g.col,
         style = "minimal",
         border = "rounded",
         title = " " .. title .. " ",
         title_pos = "center",
+    })
+
+    -- Re-centre on terminal/window resize (buffer-scoped, so it clears when the buffer is wiped).
+    api.nvim_create_autocmd("VimResized", {
+        buffer = buf,
+        callback = function()
+            if not api.nvim_win_is_valid(win) then
+                return
+            end
+            local ng = geometry()
+            pcall(api.nvim_win_set_config, win, {
+                relative = "editor",
+                width = ng.width,
+                height = ng.height,
+                row = ng.row,
+                col = ng.col,
+            })
+        end,
     })
 
     vim.bo[buf].modifiable = true

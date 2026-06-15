@@ -849,6 +849,13 @@ M.setup_autocmds = function()
                         return
                     end
                 end
+                -- `add_current_buffer_to_tab` reads the CURRENT buffer, but this scheduled callback
+                -- validated `b`. If a file opened in a NON-current window (e.g. a peek/preview
+                -- float, leaving a scratch buffer current), they differ — adding would read the
+                -- nameless scratch and error. Only add when the validated buffer is the current one.
+                if vim.api.nvim_get_current_buf() ~= b then
+                    return
+                end
                 require("lvim-space.ui.files").add_current_buffer_to_tab(not config.open_panel_on_add_file)
             end)
         end,
