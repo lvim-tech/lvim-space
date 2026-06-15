@@ -6,6 +6,8 @@ https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
 
 ---
 
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](https://github.com/lvim-tech/lvim-space/blob/main/LICENSE)
+
 ## Installation
 
 ### Lazy
