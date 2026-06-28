@@ -334,6 +334,14 @@ end
 ---@param win integer Window handle to test
 ---@return boolean is_plugin_window True when `win` is owned by lvim-space
 M.is_plugin_window = function(win)
+    -- A lvim-utils managed frame (the installer prompt, control-center, colorscheme/qf-loc popups, …) marks its
+    -- windows with `w:lvim_frame`. Treat those as plugin-owned too, so the auto-close `WinEnter` hook does NOT
+    -- fire `close_all()` when one grabs focus, and `switch_tab` / `close_all_file_windows_and_buffers` never
+    -- close them — that synchronous teardown during the popup's own `enter=true` open is what raised
+    -- "Window was closed immediately".
+    if win and api.nvim_win_is_valid(win) and vim.w[win].lvim_frame then
+        return true
+    end
     if not state.ui then
         return false
     end
