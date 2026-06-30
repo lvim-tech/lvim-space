@@ -1,0 +1,315 @@
+*lvim-space.txt*    Projects, workspaces, tabs and files — a persistent session UI
+
+==============================================================================
+CONTENTS                                                          *lvim-space*
+
+  1. Introduction ........................... |lvim-space-intro|
+  2. Requirements ........................... |lvim-space-requirements|
+  3. Setup .................................. |lvim-space-setup|
+  4. Configuration .......................... |lvim-space-config|
+  5. Entity model ........................... |lvim-space-model|
+  6. UI modes ............................... |lvim-space-modes|
+  7. Panel keymaps .......................... |lvim-space-keymaps|
+  8. Picker search .......................... |lvim-space-search|
+  9. Commands ............................... |lvim-space-commands|
+ 10. API ................................... |lvim-space-api|
+ 11. Highlights ............................ |lvim-space-highlights|
+ 12. Health ................................ |lvim-space-health|
+
+==============================================================================
+1. INTRODUCTION                                            *lvim-space-intro*
+
+lvim-space manages a four-level hierarchy — Projects, Workspaces, Tabs and
+Files — and persists the whole session (window layout, buffers, cursor
+positions) to a SQLite database. Each level is browsed and edited through a
+panel that renders on the shared lvim-utils surface chassis: by default in the
+"area" zone (the Emacs-style minibuffer/cmdline space, with the editor and the
+statusline staying above it), optionally as a centred float or a bottom dock.
+
+File search is the shared lvim-utils picker: a fuzzy finder that filters as you
+type, shows coloured filetype devicons, and opens the chosen file (recording it
+in the active tab) or in a split. Every entity panel also gains a `/` key that
+opens that same picker over the current list.
+
+==============================================================================
+2. REQUIREMENTS                                     *lvim-space-requirements*
+
+  - Neovim >= 0.11
+  - sqlite.lua (kkharji/sqlite.lua) — the session persistence backend; lvim-
+    space cannot store any state without it. REQUIRED.
+  - lvim-utils (lvim-tech/lvim-utils) — the UI renders through its `ui.surface`,
+    `picker` and `cursor` modules, and self-themes from its colour palette.
+    REQUIRED.
+  - A NerdFont-enabled terminal, for the entity icons.
+  - fd (sharkdp/fd) — the default file-search command. Only needed for
+    |lvim-space-search|; everything else works without it.
+
+Run |lvim-space-health| (`:checkhealth lvim-space`) to verify these.
+
+==============================================================================
+3. SETUP                                                   *lvim-space-setup*
+
+Call setup() once. User options are merged in place over the defaults, so any
+key omitted keeps its default value.
+>lua
+  require("lvim-space").setup({
+      save = "~/.local/share/nvim/lvim-space",
+      lang = "en",
+      autosave = true,
+      autorestore = true,
+      open_panel_on_add_file = false,
+      search = "fd --type f --hidden --follow --exclude .git",
+      ui = {
+          mode = "area",          -- "area" | "float" | "bottom"
+      },
+  })
+<
+==============================================================================
+4. CONFIGURATION                                          *lvim-space-config*
+
+Full option set with defaults.
+
+Core ~
+                                                       *lvim-space-config-core*
+  save            (string)  Directory holding the SQLite session database.
+                            Default: "~/.local/share/nvim/lvim-space".
+  lang            (string)  Language pack to load. Default: "en".
+  autosave        (boolean) Save session state on buffer events. Default: true.
+  autorestore     (boolean) Restore the last session on startup. Default: true.
+  open_panel_on_add_file (boolean)
+                            Reopen the files panel after adding a file.
+                            Default: false.
+  search          (string)  Shell command listing project files for the picker
+                            search, run in the project root. Default: an
+                            `fd --type f --hidden --follow` invocation with a
+                            broad set of `--exclude` globs.
+
+UI ~
+                                                         *lvim-space-config-ui*
+  ui.mode         (string)  Where the panel docks — "area" (default), "float"
+                            or "bottom". See |lvim-space-modes|.
+  ui.title_line   (string)  In "area" mode, where the panel title is drawn —
+                            "border" (the native border-title: title left,
+                            count right on the top border, default) or
+                            "statusline" (published to the lvim-utils chrome
+                            overlay, minibuffer style). "float"/"bottom" always
+                            use the border-title. The frame border itself is the
+                            single shared lvim-utils `config.ui.border` — change
+                            that one key to re-border every lvim-tech panel.
+  ui.filetype     (string)  Panel buffer 'filetype'. Default: "lvim-space".
+  ui.title        (string)  Panel title text. Default: "LVIM SPACE".
+  ui.title_position (string) "left" | "center" | "right". Default: "center".
+  ui.max_height   (number)  Maximum visible rows before the list scrolls.
+                            Default: 10.
+  ui.spacing      (number)  Padding in the status/info line. Default: 2.
+  ui.icons        (table)   NerdFont glyphs per entity state (project/
+                            workspace/tab/file, active variants, error/warn/
+                            info, `empty`, and the `pre` pointer "➤ ").
+
+Highlights ~
+                                                 *lvim-space-config-highlights*
+  highlights_force (boolean) When false (default) groups are defined only if
+                            the colorscheme has not set them; when true lvim-
+                            space always applies its own palette colours.
+
+Notifications ~
+                                                     *lvim-space-config-notify*
+  notify.enabled   (boolean) Master switch. Default: true.
+  notify.min_level (number)  Minimum |vim.log.levels| shown. Default: INFO.
+  notify.title     (string)  Popup title. Default: "Lvim Space".
+  notify.timeout   (number)  Display time (ms). Default: 3000.
+
+Debug logging ~
+                                                      *lvim-space-config-debug*
+  debug.enabled    (boolean) Write a structured log file. Default: false.
+  debug.min_level  (number)  Minimum level logged. Default: DEBUG.
+  debug.file       (string)  Log file path (in the state directory).
+
+Metrics ~
+                                                    *lvim-space-config-metrics*
+  metrics.enabled  (boolean) Collect usage statistics. Default: false.
+  metrics.max_examples (number)        Examples kept per bucket. Default: 3.
+  metrics.max_top_messages (number)    Rows in the report. Default: 5.
+  metrics.default_refresh_interval (number) Live-window refresh (s). Default: 2.
+  metrics.auto_save_interval (number)  Auto-save period (ms, 0 = off).
+                            Default: 3600000.
+
+Keymaps ~
+                                                       *lvim-space-config-keys*
+  keymappings.main    (string)  Global key that opens the context-aware panel.
+                            Default: "<C-Space>".
+  keymappings.global  (table)   Per-panel keys (projects/workspaces/tabs/
+                            files/search) active inside a panel.
+  keymappings.action  (table)   Entity action keys — see |lvim-space-keymaps|.
+  key_control          (table)  Which keys are allowed/blocked inside panels.
+
+==============================================================================
+5. ENTITY MODEL                                            *lvim-space-model*
+
+The hierarchy is strictly nested: >
+    Project  ─┬─ Workspace ─┬─ Tab ─┬─ File
+              │             │       └─ File
+              │             └─ Tab ─── File
+              └─ Workspace ─── Tab ─── File
+<
+  Project    A root directory. Holds workspaces.
+  Workspace  A named context within a project. Holds tabs.
+  Tab        A named window/buffer layout within a workspace. Holds files.
+  File       A buffer recorded in a tab, with its window layout and cursor.
+
+A panel for a level lists its entities and lets you add/delete/rename/reorder
+them and descend into the next level. The active project, workspace and tab
+are tracked in the session and restored on startup when `autorestore` is set.
+
+==============================================================================
+6. UI MODES                                                *lvim-space-modes*
+
+`ui.mode` selects where every panel, input prompt and the search picker dock.
+All three render through lvim-utils.ui.surface.
+
+  "area"    (default) The Emacs-minibuffer cmdline zone. When the lvim-utils
+            msgarea zone is enabled the panel is hosted ABOVE the messages
+            (the editor and statusline stay in place); when the zone is off it
+            falls back to growing 'cmdheight'. The title is published to the
+            statusline overlay.
+
+  "float"   A centred rounded modal with a native border-title.
+
+  "bottom"  A bar docked over the bottom rows of the screen.
+
+NOTE: in "area" mode without the msgarea zone enabled the panel grows
+'cmdheight' instead of floating above the messages — |lvim-space-health|
+warns about this. Use "float" or "bottom" if you do not run the msgarea zone.
+
+==============================================================================
+7. PANEL KEYMAPS                                          *lvim-space-keymaps*
+
+Inside any entity panel (configurable via `keymappings`):
+
+  j / k             Move the selection down / up
+  K / J             Move the selected entity UP / DOWN in order (reorder)
+  a                 Add a new entity
+  d                 Delete the selected entity
+  r                 Rename the selected entity
+  <Space>           Switch to / load the entity, keeping the panel open
+  <CR>              Enter the entity (descend a level / open the deepest view)
+  /                 Open the picker over the CURRENT list to filter and jump
+                    (see |lvim-space-search|)
+
+Sector navigation (the same convention as the lvim-utils picker):
+
+  <C-j>             Descend the focus sector: list -> footer bar -> messages
+  <C-k>             Ascend the focus sector: footer bar -> list -> editor
+
+  With the footer bar focused, h / l move along its buttons and <CR> / <Space>
+  fire the focused one (each runs the same action as its panel hotkey); <C-k>
+  returns focus to the list. These keys are the surface chassis defaults — they
+  are deliberately NOT in `key_control.allowed`, so the panel never claims them.
+
+Files panel only:
+
+  v                 Open the selected file in a vertical split
+  h                 Open the selected file in a horizontal split
+
+Panel-switch keys (jump straight to another level's panel):
+
+  p / w / t / f     Projects / Workspaces / Tabs / Files
+  s                 Search picker
+
+Keys not in `key_control.allowed` are blocked inside panels so navigation
+stays predictable. `K` / `J` are in the allowed set (otherwise the uppercase
+blanket-disable would no-op the reorder keys).
+
+==============================================================================
+8. PICKER SEARCH                                           *lvim-space-search*
+
+`:LvimSpace open search` (or `s` in a panel) opens the shared lvim-utils
+picker over the project's files. It requires an active project, workspace and
+tab. Candidates come from the `search` command (run in the project root).
+
+  <type>            Fuzzy-filter the list as you type
+  <CR>              Open the file in the editor AND record it in the active tab
+                    (persisted)
+  <C-v>             Open the selection in a vertical split (no tab change)
+  <C-x>             Open the selection in a horizontal split (no tab change)
+  <Esc>             Cancel
+
+The split keys are chords (`<C-v>`/`<C-x>`, not plain v/h) because the picker
+also binds row actions while you are typing the query.
+
+The `/` key inside an entity panel opens the same picker over the CURRENT list
+(filter "Projects"/"Workspaces"/"Tabs"/"Files"); confirming jumps the panel
+cursor to the chosen entity and triggers its switch action.
+
+==============================================================================
+9. COMMANDS                                              *lvim-space-commands*
+
+Everything is routed through a single :LvimSpace dispatcher with hierarchical
+subcommands and tab-completion.
+
+                                                                  *:LvimSpace*
+  :LvimSpace                    Open the context-aware panel (projects →
+                                workspaces → tabs → files, by what is active).
+  :LvimSpace open [panel]       Open a specific panel: projects | workspaces |
+                                tabs | files | search.
+  :LvimSpace save               Manually save the full session state.
+
+  :LvimSpace tab                Print project/workspace/tab state to |messages|.
+  :LvimSpace tab info           Same as above.
+  :LvimSpace tab next           Switch to the next tab (wraps).
+  :LvimSpace tab prev           Switch to the previous tab (wraps).
+  :LvimSpace tab new [name]     Create a new tab (auto-named if omitted).
+  :LvimSpace tab close [id]     Close a tab (defaults to the active tab).
+  :LvimSpace tab move-next      Move the active tab one position forward.
+  :LvimSpace tab move-prev      Move the active tab one position backward.
+  :LvimSpace tab goto {n}       Switch to the tab at 1-based position {n}.
+  :LvimSpace tab rename {name}  Rename the active tab.
+
+  :LvimSpace metrics            Show the metrics report.
+  :LvimSpace metrics live       Show an auto-refreshing live metrics window.
+
+==============================================================================
+10. API                                                      *lvim-space-api*
+
+A public API for status lines and other plugins: >lua
+    local pub = require("lvim-space.pub")
+<
+  pub.get_tab_info()        { project_name, workspace_name, tabs[] }
+  pub.get_active_tab()      { id, name } or nil
+  pub.get_workspace_name()  string or nil
+  pub.get_project_name()    string or nil
+
+All return safe defaults (empty tables / nil) when the plugin is not set up or
+no session is active — safe to call at any time.
+
+==============================================================================
+11. HIGHLIGHTS                                        *lvim-space-highlights*
+
+Built from the lvim-utils palette and re-applied on |ColorScheme| change.
+Panel backgrounds drop to NONE when the active theme is transparent.
+
+  LvimSpaceNormal           Panel background
+  LvimSpaceCursorLine       Selected row
+  LvimSpaceTitle            Panel / section title
+  LvimSpaceInfo             Status / info line
+  LvimSpacePrompt           Input prompt label
+  LvimSpaceInput            Input field text
+  LvimSpaceSign             Sign column glyph
+  LvimSpaceCursor           Hidden-cursor cell
+  LvimSpaceFuzzyPrimary     Primary fuzzy-match accent
+  LvimSpaceFuzzySecondary   Secondary fuzzy-match accent
+
+==============================================================================
+12. HEALTH                                                *lvim-space-health*
+
+`:checkhealth lvim-space` validates the runtime:
+
+  - Neovim >= 0.11.
+  - sqlite.lua present (ERROR if missing — it is the persistence backend).
+  - lvim-utils present with ui.surface / picker / cursor (ERROR if missing).
+  - The save directory (or its parent) is writable.
+  - `ui.mode` is one of area | float | bottom; in "area" mode, whether the
+    msgarea zone is enabled (WARN if off — panels fall back to 'cmdheight').
+  - The `search` command is available on PATH (WARN if not — search disabled).
+
+vim:tw=78:ts=8:noet:ft=help:norl:

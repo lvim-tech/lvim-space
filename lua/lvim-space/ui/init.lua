@@ -1,210 +1,101 @@
--- lua/lvim-space/ui/init.lua
--- Core UI module: window creation, management, input fields, and state
--- persistence for the lvim-space floating panel system.
+-- lvim-space.ui: the UI CORE. Every entity panel (projects / workspaces / tabs / files / search) renders
+-- through here. The list, the action/info bar and the input field are all drawn by the lvim-utils.ui.surface
+-- chassis — the ONE windowed-UI surface shared across every lvim-tech plugin — so lvim-space lives in the
+-- same zone as the pickers and the lsp peek and self-themes from the lvim-utils palette.
+--
+-- A configurable MODE (`config.ui.mode`) chooses where the surface docks:
+--   * "area"   — the Emacs-minibuffer cmdline zone (hosted in the msgarea when it is enabled, else it grows
+--                cmdheight itself); the editor / heirline stay above it. The default.
+--   * "float"  — a centred modal with a native border-title.
+--   * "bottom" — a docked bar over the bottom rows.
+--
+-- The public surface kept STABLE for the panel modules: `open_main(lines, name, selected)` opens the list and
+-- returns the REAL `(buf, win)` of the list block (so the panels keep setting their own a/d/r/Space/CR/K/J
+-- keymaps + CursorMoved tracking + live `nvim_buf_set_lines` refresh on that buffer); `open_actions(line)`
+-- fills the footer info bar; `create_input_field(prompt, default, cb)` opens an in-zone prompt; `close_all()`
+-- tears the surface down (releasing the msgarea host); `submit_input` / `cancel_input` resolve the prompt;
+-- `is_plugin_window(win)` is consulted by the session engine. `state.ui.content = { win, buf }` is the handle
+-- the panels read. Cursor hiding is delegated to `lvim-utils.cursor` (panel_ft), never hand-rolled.
+--
+---@module "lvim-space.ui"
 
 local config = require("lvim-space.config")
 local state = require("lvim-space.api.state")
 local lvim_cursor = require("lvim-utils.cursor")
+local surface = require("lvim-utils.ui.surface")
+local keymaps = require("lvim-space.core.keymaps")
+
+local api = vim.api
 
 local M = {}
 
-local api = vim.api
-local cmd = vim.cmd
-
 local ns_syntax = api.nvim_create_namespace("lvim_space_syntax")
-local ns_cursorline = api.nvim_create_namespace("lvim_space_cursorline")
+
+---@class LvimSpacePanelHandle
+---@field state table  The live lvim-utils.ui.surface state (`.close`, `.set_footer`, `.reposition`, …)
+---@field buf integer  Buffer handle of the list content block
+---@field win integer  Window handle of the list content block
+---@field seg table|nil  The msgarea host segment (area mode, when the zone is enabled) — released on close
+---@field mode "area"|"float"|"bottom"  The resolved dock mode this panel opened in
+---@field title string|nil  The panel's current title text (kept in sync by `M.set_title`)
+---@field count integer|nil  The panel's current item count, shown in the docked header bar's counter
+
+---@class LvimSpaceInputHandle
+---@field state table|nil  The live surface state of the input prompt
+---@field buf integer|nil  Buffer handle of the editable input band
+---@field callback fun(value: string|nil, input_line: integer|nil)|nil  Resolved on submit
+---@field input_line integer|nil  Cursor row of the list when the prompt opened
+
+---The open list panel (nil while closed).
+---@type LvimSpacePanelHandle|nil
+local panel = nil
+
+---The open input prompt (nil while no prompt is active).
+---@type LvimSpaceInputHandle|nil
+local input = nil
 
 ---@class LvimSpaceSavedState
----@field main string[]|nil Lines saved from the main content window
----@field actions string|nil Content saved from the status-line/actions window
----@field input_line integer|nil Cursor row that was active when an input was opened
+---@field input_line integer|nil  Cursor row that was active when an input was opened
 
 ---@type LvimSpaceSavedState
 local saved_state = {
-    main = nil,
-    actions = nil,
     input_line = nil,
 }
 
----@param win integer Window handle to check
+---@param win integer|nil Window handle to check
 ---@return boolean is_valid True when the handle is non-nil and refers to a valid window
 local function is_valid_win(win)
-    return win and api.nvim_win_is_valid(win)
+    return win ~= nil and api.nvim_win_is_valid(win)
 end
 
----@param buf integer Buffer handle to check
+---@param buf integer|nil Buffer handle to check
 ---@return boolean is_valid True when the handle is non-nil and refers to a valid buffer
 local function is_valid_buf(buf)
-    return buf and api.nvim_buf_is_valid(buf)
+    return buf ~= nil and api.nvim_buf_is_valid(buf)
 end
 
----Close a window safely, ignoring errors if the window is already gone.
----@param win integer Window handle
-local function safe_close_win(win)
-    if is_valid_win(win) then
-        pcall(api.nvim_win_close, win, true)
+---Resolve the configured panel mode, defaulting to "area" for any unknown value.
+---@return "area"|"float"|"bottom" mode
+local function panel_mode()
+    local mode = config.ui.mode
+    if mode == "float" or mode == "bottom" then
+        return mode
     end
+    return "area"
 end
 
----Delete a buffer safely, ignoring errors if the buffer is already gone.
----@param buf integer Buffer handle
-local function safe_delete_buf(buf)
-    if is_valid_buf(buf) then
-        pcall(api.nvim_buf_delete, buf, { force = true })
+---Return the lvim-utils msgarea module when the zone is enabled, else nil.
+---@return table|nil msgarea
+local function active_msgarea()
+    local ok, m = pcall(require, "lvim-utils.msgarea")
+    if ok and m.is_enabled and m.is_enabled() then
+        return m
     end
-end
-
----Determine which line in a project list should be selected on open.
----Prefers the previously-saved input line, then falls back to the currently
----active project, and finally defaults to line 1.
----@param projects table[] List of project records (each must have an `id` field)
----@return integer line 1-based line index to position the cursor on
-local function get_target_line(projects)
-    if saved_state.input_line and projects[saved_state.input_line] then
-        return saved_state.input_line
-    end
-
-    if state.project_id then
-        for idx, project in ipairs(projects) do
-            if tostring(project.id) == tostring(state.project_id) then
-                return idx
-            end
-        end
-    end
-
-    return 1
-end
-
----Move Neovim focus back to the main content window and position the cursor
----on the previously selected project line.
-local function restore_main_window_focus()
-    if not (state.ui and state.ui.content and is_valid_win(state.ui.content.win)) then
-        return
-    end
-
-    local ok, data = pcall(require, "lvim-space.api.data")
-    local projects = ok and data.find_projects and data.find_projects() or {}
-
-    local target_line = get_target_line(projects)
-    if is_valid_win(state.ui.content.win) then
-        pcall(api.nvim_win_set_cursor, state.ui.content.win, { target_line, 0 })
-        api.nvim_set_current_win(state.ui.content.win)
-    end
-end
-
----Build the 8-element border character table expected by `nvim_open_win`.
----The resulting array follows the Neovim convention:
----  { top, top-right, right, bottom-right, bottom, bottom-left, left, top-left }
----@param border_config table Border configuration with optional `left` and `right` boolean fields
----@param border_type string One of `"main"`, `"info"`, or any other value for the default style
----@return string[] border Eight-element array of border characters
-local function build_border(border_config, border_type)
-    local border_sign = config.ui.border.sign or ""
-    local border
-
-    if border_type == "main" then
-        border = { " ", " ", " ", "", "", "", "", "" }
-        if border_config.left then
-            border[8] = border_sign
-        end
-        if border_config.right then
-            border[4] = border_sign
-        end
-    elseif border_type == "info" then
-        border = { "", "", "", "", "", "", "", "" }
-        if border_config.left then
-            border[8] = border_sign
-        end
-        if border_config.right then
-            border[4] = border_sign
-        end
-    else
-        border = {
-            "",
-            "",
-            "",
-            border_config.right and border_sign or "",
-            "",
-            "",
-            "",
-            border_config.left and border_sign or "",
-        }
-    end
-
-    return border
-end
-
----Validate that a floating-window configuration has sensible geometry values.
----@param win_config table The window config table (must contain `width`, `height`, `row`, `col`)
----@return boolean valid True when all required geometry fields are present and in range
-local function validate_window_config(win_config)
-    if not win_config.width or win_config.width < 1 then
-        return false
-    end
-    if not win_config.height or win_config.height < 1 then
-        return false
-    end
-    if win_config.row < 0 or win_config.col < 0 then
-        return false
-    end
-    return true
-end
-
----Attach a lightweight cursorline highlight to `buf` / `win` using extmarks.
----Neovim's built-in `cursorline` option is disabled for plugin windows; this
----function re-implements the visual effect via the `LvimSpaceCursorLine` hl
----group so that the appearance can be controlled precisely.
----@param buf integer Buffer handle
----@param win integer Window handle
-local function setup_custom_cursorline(buf, win)
-    if not is_valid_buf(buf) or not is_valid_win(win) then
-        return
-    end
-
-    local ns = ns_cursorline
-
-    local function update_cursor_highlight()
-        if not is_valid_buf(buf) or not is_valid_win(win) then
-            return
-        end
-
-        api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-
-        local cursor_pos = api.nvim_win_get_cursor(win)
-        local line = cursor_pos[1] - 1
-        local total_lines = api.nvim_buf_line_count(buf)
-
-        if line >= 0 and line < total_lines then
-            api.nvim_buf_set_extmark(buf, ns, line, 0, {
-                end_line = line + 1,
-                hl_group = "LvimSpaceCursorLine",
-                hl_eol = true,
-                priority = 50,
-            })
-        end
-    end
-
-    local cursor_group = api.nvim_create_augroup("LvimSpaceCursorLine_" .. buf, { clear = true })
-
-    api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
-        group = cursor_group,
-        buffer = buf,
-        callback = update_cursor_highlight,
-    })
-
-    api.nvim_create_autocmd("BufDelete", {
-        group = cursor_group,
-        buffer = buf,
-        callback = function()
-            pcall(api.nvim_del_augroup_by_id, cursor_group)
-        end,
-        once = true,
-    })
-
-    vim.schedule(update_cursor_highlight)
+    return nil
 end
 
 ---Apply a highlight group to a byte range on a single buffer line via extmarks.
+---Kept for the search/fuzzy panels (which paint match ranges); the entity lists use winhighlight instead.
 ---@param buf integer Buffer handle
 ---@param line integer 0-based line index
 ---@param start_col integer 0-based start byte column (inclusive)
@@ -214,7 +105,6 @@ M.add_highlight = function(buf, line, start_col, end_col, hl_group)
     if not is_valid_buf(buf) then
         return
     end
-
     api.nvim_buf_set_extmark(buf, ns_syntax, line, start_col, {
         end_col = end_col,
         hl_group = hl_group,
@@ -228,527 +118,503 @@ M.clear_highlights = function(buf)
     if not is_valid_buf(buf) then
         return
     end
-
     api.nvim_buf_clear_namespace(buf, ns_syntax, 0, -1)
 end
 
----@class LvimSpaceWindowOptions
----@field content string|string[]|nil Initial buffer content (string or list of lines)
----@field filetype string|nil Filetype to set on the new buffer
----@field row integer|nil Top edge of the floating window (editor-relative)
----@field col integer|nil Left edge of the floating window (editor-relative)
----@field width integer|nil Window width in columns
----@field height integer|nil Window height in lines
----@field focus boolean|nil Whether to focus the window immediately
----@field focusable boolean|nil Whether the window can receive focus (default true)
----@field zindex integer|nil Stacking z-index for the floating window
----@field border string[]|nil 8-element border character array
----@field title string|nil Title shown in the window border
----@field title_position string|nil Horizontal alignment of the title (`"left"`, `"center"`, `"right"`)
----@field winhighlight string|nil Comma-separated `WinhighlightOption` string
----@field cursorline boolean|nil When non-nil, forces `cursorline` off for this window
----@field store_in string|nil When set, stores `{ win, buf }` under `state.ui[store_in]`
----@field on_create fun(win: integer, buf: integer)|nil Callback invoked after the window is created
+---@class LvimSpacePanelSpec
+---@field title string|nil  Panel title (float border-title / docked header bar)
+---@field count integer|nil  Item count shown beside the title in the docked header bar (the picker's counter)
+---@field lines string[]  Initial content lines
+---@field hls table[]|nil  Provider highlight ops `{ row, col0, col_end, group, priority }`
+---@field selected integer|nil  1-based row to place the cursor on
+---@field footer string|nil  Initial footer info text
+---@field on_keys (fun(map: fun(lhs: string|string[], fn: function), pan: table, st: table))|nil  Extra panel keys
+---@field on_close fun()|nil  Extra teardown run after the surface closes
 
----Create a new floating window backed by a scratch buffer.
----@param options LvimSpaceWindowOptions Configuration for the new window
----@return integer|nil buf Buffer handle, or nil on failure
----@return integer|nil win Window handle, or nil on failure
-M.create_window = function(options)
-    local buf = api.nvim_create_buf(false, true)
-    if not is_valid_buf(buf) then
-        return nil, nil
-    end
-
-    vim.bo[buf].filetype = options.filetype or config.filetype or "lvim-space-panel"
-
-    if options.content then
-        local content = type(options.content) == "table" and options.content or { tostring(options.content) }
-        api.nvim_buf_set_lines(buf, 0, -1, false, content)
-    end
-
-    local win_config = {
-        relative = "editor",
-        row = options.row or 0,
-        col = options.col or 0,
-        width = options.width or vim.o.columns,
-        height = options.height or 1,
-        style = "minimal",
-        border = options.border or { "", "", "", "", "", "", "", "" },
-        zindex = options.zindex,
-        focusable = options.focusable ~= false,
-    }
-
-    if options.title then
-        win_config.title = " " .. options.title .. " "
-        win_config.title_pos = options.title_position or "center"
-    end
-
-    if not validate_window_config(win_config) then
-        safe_delete_buf(buf)
-        return nil, nil
-    end
-
-    local ok, win = pcall(api.nvim_open_win, buf, options.focus or false, win_config)
-    if not ok or not is_valid_win(win) then
-        safe_delete_buf(buf)
-        return nil, nil
-    end
-
-    if options.winhighlight and is_valid_win(win) then
-        vim.wo[win].winhighlight = options.winhighlight
-    end
-
-    if options.cursorline ~= nil and is_valid_win(win) then
-        vim.wo[win].cursorline = false
-    end
-
-    if options.store_in then
-        state.ui = state.ui or {}
-        state.ui[options.store_in] = { win = win, buf = buf }
-    end
-
-    if options.on_create and is_valid_win(win) and is_valid_buf(buf) then
-        options.on_create(win, buf)
-    end
-
-    return buf, win
-end
-
----Close a managed plugin window and release its buffer.
----Removes the entry from `state.ui` when done.
----@param window_type string Key used in `state.ui` (e.g. `"content"`, `"status_line"`)
-M.close_window = function(window_type)
-    if not state.ui or not state.ui[window_type] then
+---Close the open list panel (if any). The surface `on_close` releases the msgarea host + clears state.
+local function close_panel()
+    local p = panel
+    if not p then
         return
     end
-
-    local win_info = state.ui[window_type]
-    safe_close_win(win_info.win)
-    safe_delete_buf(win_info.buf)
-    state.ui[window_type] = nil
+    panel = nil
+    if p.state and p.state.close then
+        pcall(p.state.close)
+    end
+    if state.ui then
+        state.ui.content = nil
+    end
 end
 
----Check whether a window handle belongs to one of the plugin's managed windows.
----Used by the auto-close autocmd to decide when to tear down the UI.
----@param win integer Window handle to test
----@return boolean is_plugin_window True when `win` is owned by lvim-space
-M.is_plugin_window = function(win)
-    -- A lvim-utils managed frame (the installer prompt, control-center, colorscheme/qf-loc popups, …) marks its
-    -- windows with `w:lvim_frame`. Treat those as plugin-owned too, so the auto-close `WinEnter` hook does NOT
-    -- fire `close_all()` when one grabs focus, and `switch_tab` / `close_all_file_windows_and_buffers` never
-    -- close them — that synchronous teardown during the popup's own `enter=true` open is what raised
-    -- "Window was closed immediately".
-    if win and api.nvim_win_is_valid(win) and vim.w[win].lvim_frame then
-        return true
+---Close the active input prompt (if any).
+local function close_input()
+    local inp = input
+    if not inp then
+        return
     end
-    if not state.ui then
-        return false
+    input = nil
+    if api.nvim_get_mode().mode:match("i") then
+        pcall(vim.cmd, "stopinsert")
     end
-
-    for _, win_type in ipairs({ "content", "status_line", "prompt_window", "input_window" }) do
-        local win_info = state.ui[win_type]
-        if win_info and win_info.win == win then
-            return true
-        end
+    if inp.state and inp.state.close then
+        pcall(inp.state.close)
     end
-
-    return false
 end
 
----Initialise the UI subsystem.
----Sets up cursor management and registers the auto-close `WinEnter` autocmd
----that tears down the panel whenever focus moves to a non-plugin window.
-M.init = function()
-    state.disable_auto_close = false
-    lvim_cursor.setup({
-        ft = {
-            config.filetype or "lvim-space",
-            "lvim-space-panel",
-            "lvim-space-prompt",
-        },
-    })
-    local auto_close_group = api.nvim_create_augroup("LvimSpaceAutoClose", { clear = true })
-    api.nvim_create_autocmd("WinEnter", {
-        group = auto_close_group,
-        callback = function()
-            if state.disable_auto_close then
-                return
+---Build the single list content block + mode wiring and open the surface. Returns the real list block
+---`(buf, win)` so the panel modules can keep operating directly on them.
+---@param spec LvimSpacePanelSpec
+---@return integer|nil buf
+---@return integer|nil win
+local function open_panel(spec)
+    close_panel()
+
+    local mode = panel_mode()
+    local msgarea = mode == "area" and active_msgarea() or nil
+    local opener = api.nvim_get_current_win()
+    local max_h = config.ui.max_height or 10
+
+    -- The live list store: the provider renders from it on first paint, then reads the panel buffer directly
+    -- (the panels rewrite it on refresh) so a relayout / host reflow never clobbers their content.
+    local list = { lines = spec.lines or {}, hls = spec.hls or {}, initialized = false }
+    ---@type table  the content-block provider
+    local provider = {
+        render = function()
+            if list.initialized and is_valid_buf(list.buf) then
+                return api.nvim_buf_get_lines(list.buf, 0, -1, false), list.hls
             end
-            local current_win = api.nvim_get_current_win()
-            if not M.is_plugin_window(current_win) then
-                M.close_all()
+            return list.lines, list.hls
+        end,
+        size = function()
+            local n = (list.initialized and is_valid_buf(list.buf)) and api.nvim_buf_line_count(list.buf) or #list.lines
+            return nil, math.max(1, math.min(n, max_h))
+        end,
+        keys = function(map, pan, st)
+            list.buf = pan.buf
+            list.win = pan.win
+            if spec.on_keys then
+                spec.on_keys(map, pan, st)
             end
         end,
-    })
+    }
+
+    -- The msgarea host: reserve our rows ABOVE the messages instead of growing cmdheight ourselves, and follow
+    -- the zone as it reflows. A descend from the editor enters the list directly.
+    local seg
+    local host = msgarea
+            and function(h)
+                seg = msgarea.segment("lvim-space-host", { priority = 5 })
+                seg:configure({
+                    on_descend = function()
+                        if panel and panel.win and is_valid_win(panel.win) then
+                            api.nvim_set_current_win(panel.win)
+                            lvim_cursor.update()
+                        end
+                        return true
+                    end,
+                })
+                return seg:reserve(h, function(rect)
+                    if panel and panel.state and panel.state.reposition then
+                        panel.state.reposition(rect)
+                    end
+                end)
+            end
+        or nil
+
+    local docked = mode ~= "float"
+    local cfg = {
+        mode = "float",
+        position = (mode == "area" and "cmdline") or (mode == "bottom" and "bottom") or nil,
+        host = host,
+        zindex = (host and 210) or (mode == "area" and 200) or nil,
+        -- Unified border model: ONE shared ring for every mode — the `surface.FRAME_BORDER` marker, which
+        -- the chassis resolves live to `config.ui.border` (in lvim-utils) at open time, so a single config
+        -- key re-borders lvim-space alongside every other lvim-tech panel. No per-mode / per-block border.
+        border = surface.FRAME_BORDER,
+        -- Title in the BORDER (the single title path): the chassis renders the native border-title — TITLE
+        -- left + COUNT right on the top border row (default `counter="title"`) — and, for an AREA dock with
+        -- `config.ui.title_line="statusline"`, publishes it to the chrome overlay instead (minibuffer style,
+        -- so the heirline file segments give way to the panel title). The list block stays borderless.
+        title = spec.title,
+        title_line = config.ui.title_line or "border",
+        count = spec.count,
+        -- Canon: +1 blank "air" row under the border-title (and the footer auto-adds one above its content).
+        -- Keeps the list visually detached from the title row instead of butting up against the top border.
+        header_air = true,
+        size = {
+            height = { auto = true, max = max_h, min = 1 },
+            width = (not docked) and { auto = true, max = 0.8, min = 30 } or nil,
+        },
+        -- The list is a CONTENT data panel, so it carries the single-source content ring — `surface.CONTENT_BORDER`,
+        -- resolved live to `config.ui.content_border` in lvim-utils at open time — independent of the container
+        -- ring. The footer button bar below is a nav band (not a block) and stays borderless.
+        content = { blocks = { { id = "list", provider = provider, border = surface.CONTENT_BORDER } } },
+        footer = { bars = { { text = spec.footer or "", hl = "LvimSpaceInfo" } } },
+        -- Sector navigation is the surface chassis default: <C-j> descends (list → footer bar → … messages),
+        -- <C-k> ascends (footer → list → editor), exactly like the lvim-utils picker. The list keeps these for
+        -- the chassis — entity REORDER lives on `K`/`J` (config.keymappings.action), NOT on <C-j>/<C-k> — so the
+        -- navigable footer is reachable without a bespoke seam, while the list's j/k/a/d/r/Space/CR stay intact.
+        -- From the footer, the menu keys (h/l) move along the buttons and <CR>/<Space> fire the focused button.
+        close_keys = {}, -- <Esc> is bound by keymaps.enable_base_maps → close_all
+        on_escape_above = function()
+            if is_valid_win(opener) then
+                api.nvim_set_current_win(opener)
+            end
+        end,
+        on_escape_below = msgarea and function()
+            return msgarea.focus_messages()
+        end or nil,
+        on_close = function()
+            if seg then
+                pcall(function()
+                    seg:release()
+                end)
+                seg = nil
+            end
+            if spec.on_close then
+                pcall(spec.on_close)
+            end
+        end,
+    }
+
+    local st = surface.open(cfg)
+    local pan = st and st.panels and st.panels[1]
+    if not (pan and is_valid_buf(pan.buf) and is_valid_win(pan.win)) then
+        return nil, nil
+    end
+    list.initialized = true
+
+    local buf, win = pan.buf, pan.win
+    -- Self-theme the list window: the panel background + a full-row active-line tint, the lvim-space way.
+    vim.wo[win].winhighlight = "Normal:LvimSpaceNormal,NormalNC:LvimSpaceNormal,CursorLine:LvimSpaceCursorLine"
+    vim.wo[win].cursorline = true
+    vim.wo[win].signcolumn = "no"
+    vim.wo[win].wrap = false
+    -- The lvim-space filetype drives cursor hiding (registered as a current-only panel_ft in M.init) and lets
+    -- other tooling recognise the panel.
+    vim.bo[buf].filetype = config.ui.filetype or "lvim-space"
+
+    state.ui = state.ui or {}
+    state.ui.content = { win = win, buf = buf }
+
+    panel = { state = st, buf = buf, win = win, seg = seg, mode = mode, title = spec.title, count = spec.count }
+
+    -- Suppress stray typing keys and bind <Esc> → close, exactly as the legacy panel did. The panel modules
+    -- bind their own action keys AFTER open_main returns, overriding both these and the chassis defaults.
+    keymaps.disable_all_maps(buf)
+    keymaps.enable_base_maps(buf)
+
+    local selected = spec.selected or 1
+    selected = math.max(1, math.min(selected, math.max(1, #list.lines)))
+    vim.schedule(function()
+        if is_valid_win(win) then
+            pcall(api.nvim_win_set_cursor, win, { selected, 0 })
+            lvim_cursor.update()
+        end
+    end)
+
+    return buf, win
 end
 
 ---Open (or reopen) the primary content panel showing a list of items.
----Saves the previous main-window state, closes the existing content window,
----then creates a new floating window at the bottom of the editor.
 ---@param lines string[] Lines to display in the panel
----@param name string|nil Title shown in the window border (defaults to config value)
+---@param name string|nil Title shown in the panel (defaults to the configured title)
 ---@param selected_line integer|nil 1-based line to position the cursor on initially
----@return integer|nil buf Buffer handle of the new window
----@return integer|nil win Window handle of the new window
-M.open_main = function(lines, name, selected_line)
-    M.save_state("main")
-    M.close_window("content")
-
-    local status_space = config.ui.spacing or 2
-    local content_height = #lines
-    local win_height = math.min(math.max(content_height, 1), config.max_height or 10)
-    local main_border = build_border(config.ui.border.main or {}, "main")
-
+---@param count integer|nil Item count shown beside the title in the docked header bar (e.g. the entity total)
+---@return integer|nil buf Buffer handle of the list block
+---@return integer|nil win Window handle of the list block
+M.open_main = function(lines, name, selected_line, count)
+    lines = lines or {}
     if not selected_line then
         selected_line = (saved_state.input_line and saved_state.input_line <= #lines) and saved_state.input_line or 1
     end
-    selected_line = math.max(1, math.min(selected_line, #lines))
-
-    local buf, win = M.create_window({
-        content = lines,
-        title = name or config.title or "LVIM SPACE",
-        title_position = config.title_position or "center",
-        row = vim.o.lines - win_height - status_space,
-        col = 0,
-        width = vim.o.columns,
-        height = win_height,
-        focus = true,
-        store_in = "content",
-        cursorline = true,
-        winhighlight = table.concat({
-            "Normal:LvimSpaceNormal",
-            "NormalNC:LvimSpaceNormal",
-            "CursorLine:LvimSpaceCursorLine",
-            "FloatTitle:LvimSpaceTitle",
-            "FloatBorder:LvimSpaceNormal",
-        }, ","),
-        border = main_border,
-        on_create = function(win, buf)
-            if not is_valid_win(win) or not is_valid_buf(buf) then
-                return
-            end
-
-            setup_custom_cursorline(buf, win)
-
-            api.nvim_create_autocmd("BufWipeout", {
-                buffer = buf,
-                once = true,
-                callback = function()
-                    if not state.disable_auto_close then
-                        M.close_actions()
-                    end
-                end,
-            })
-
-            local keymaps = require("lvim-space.core.keymaps")
-            keymaps.disable_all_maps(buf)
-            keymaps.enable_base_maps(buf)
-
-            local function handle_resize()
-                if not is_valid_win(win) or not is_valid_buf(buf) then
-                    return
-                end
-
-                local new_content = api.nvim_buf_get_lines(buf, 0, -1, false)
-                local new_height = math.min(math.max(#new_content, 1), config.max_height or 10)
-                local current_config = api.nvim_win_get_config(win)
-
-                local new_config = vim.tbl_extend("force", current_config, {
-                    row = vim.o.lines - new_height - status_space,
-                    col = 0,
-                    height = new_height,
-                    width = vim.o.columns,
-                })
-
-                pcall(api.nvim_win_set_config, win, new_config)
-            end
-
-            api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "VimResized" }, {
-                buffer = buf,
-                callback = handle_resize,
-            })
-
-            vim.schedule(function()
-                if is_valid_win(win) then
-                    pcall(api.nvim_win_set_cursor, win, { selected_line, 0 })
-                end
-            end)
-        end,
-    })
-
-    return buf, win
-end
-
----Open the status-line / actions bar at the very bottom of the editor.
----This is a non-focusable, single-line floating window.
----@param line string|string[] Text content to display in the actions bar
----@return integer|nil buf Buffer handle
----@return integer|nil win Window handle
-M.open_actions = function(line)
-    M.save_state("actions")
-    M.close_window("status_line")
-
-    local info_border = build_border(config.ui.border.info or {}, "info")
-
-    return M.create_window({
-        content = line,
-        row = vim.o.lines - 1,
-        col = 0,
-        width = vim.o.columns,
-        height = 1,
-        zindex = 50,
-        focusable = false,
-        store_in = "status_line",
-        winhighlight = "Normal:LvimSpaceInfo,NormalNC:LvimSpaceInfo,FloatBorder:LvimSpaceInfo",
-        border = info_border,
+    return open_panel({
+        title = name or config.ui.title or "LVIM SPACE",
+        count = count,
+        lines = lines,
+        selected = selected_line,
     })
 end
 
----@class LvimSpaceInputDimensions
----@field prompt_text string The full prompt string including the configured separator
----@field prompt_width integer Display width of `prompt_text` in columns
----@field prompt_total_width integer `prompt_width` plus any border columns for the prompt window
----@field input_col integer Column at which the input window should start
----@field input_width integer Width available for the input field content
----@field prompt_border string[] 8-element border array for the prompt window
----@field input_border string[] 8-element border array for the input window
+-- Footer button style: lvim-space's OWN, user-overridable groups (defined in config/highlights.lua),
+-- NOT the internal LvimUiFooter* of lvim-utils — so the user can recolour the footer from lvim-space's
+-- config exactly like the other LvimSpace* groups. The KEY box uses the blue tint, the LABEL box the
+-- yellow tint, and the hover variants the stronger tints.
+local FOOTER_STYLE = {
+    icon = {
+        padding = { 1, 1 },
+        normal = "LvimSpaceFooterKey",
+        active = "LvimSpaceFooterKey",
+        hover = "LvimSpaceFooterKeyHover",
+        hover_active = "LvimSpaceFooterKeyHover",
+    },
+    text = {
+        padding = { 1, 1 },
+        normal = "LvimSpaceFooterLabel",
+        active = "LvimSpaceFooterLabel",
+        hover = "LvimSpaceFooterLabelHover",
+        hover_active = "LvimSpaceFooterLabelHover",
+    },
+}
 
----Calculate geometry for the prompt label and the adjacent input field.
----@param prompt string The label text shown to the left of the input field
----@return LvimSpaceInputDimensions dims Computed layout information
-local function calculate_input_dimensions(prompt)
-    local total_width = vim.o.columns
-    local prompt_separator = config.ui.border.prompt.separate or ": "
-    local prompt_text = prompt .. prompt_separator
-    local prompt_width = vim.fn.strdisplaywidth(prompt_text)
+-- The group separator (our defined RED DOT) and the ❮/❯ overflow chevrons, all on the overridable
+-- LvimSpaceFooterSep group.
+local FOOTER_SEP = "LvimSpaceFooterSep"
 
-    local prompt_border_config = config.ui.border.prompt or {}
-    local input_border_config = config.ui.border.input or {}
-
-    local prompt_border_width = (prompt_border_config.left and 1 or 0) + (prompt_border_config.right and 1 or 0)
-    local input_border_width = (input_border_config.left and 1 or 0) + (input_border_config.right and 1 or 0)
-
-    local prompt_total_width = prompt_width + prompt_border_width
-    local input_col = prompt_total_width
-    local min_input_width = 20
-    local input_content_width = math.max(min_input_width, total_width - input_col - input_border_width)
-
+---Assemble a navigable `lvim-utils.ui.bar` footer spec from a list of button GROUPS — modelled on the
+---lvim-utils `ui.tabs` / picker footer: each group is a list of footer button shorthands
+---`{ key, name, run, no_hotkey? }`; consecutive (non-empty) groups are joined by a `●` red-dot separator,
+---the bar is centred, and `❮`/`❯` chevrons appear on overflow. Every button carries the lvim-space
+---FOOTER_STYLE so it paints from the overridable LvimSpaceFooter* groups.
+---@param groups table[][]  List of button groups (each a list of `{ key, name, run, no_hotkey? }`)
+---@return table footer  A `{ bars = { { items, align, chevrons } } }` footer spec
+local function footer_bar(groups)
+    local items = {}
+    for _, group in ipairs(groups) do
+        if #group > 0 then
+            if #items > 0 then
+                items[#items + 1] =
+                    { type = "separator", text = "●", style = { padding = { 1, 1 }, hl = FOOTER_SEP } }
+            end
+            for _, it in ipairs(group) do
+                items[#items + 1] = {
+                    key = it.key,
+                    name = it.name,
+                    run = it.run,
+                    no_hotkey = it.no_hotkey,
+                    style = FOOTER_STYLE,
+                }
+            end
+        end
+    end
     return {
-        prompt_text = prompt_text,
-        prompt_width = prompt_width,
-        prompt_total_width = prompt_total_width,
-        input_col = input_col,
-        input_width = input_content_width,
-        prompt_border = build_border(prompt_border_config, "prompt"),
-        input_border = build_border(input_border_config, "input"),
+        bars = {
+            {
+                items = items,
+                align = "center",
+                chevrons = {
+                    left = { text = "❮", style = { hl = FOOTER_SEP } },
+                    right = { text = "❯", style = { hl = FOOTER_SEP } },
+                },
+            },
+        },
     }
 end
 
----Open an inline input field composed of a read-only prompt window and an
----editable input window positioned side-by-side at the bottom of the editor.
----Pressing `<CR>` calls `callback` with the entered value; `<Esc>` cancels.
----@param prompt string Label displayed to the left of the input field
+---Update the open panel's footer. Accepts either a navigable button model `{ groups = { … } }` (the entity
+---panels' action bar, built by `common.set_action_footer`) — rendered as a centred `ui.bar` of buttons with
+---red-dot separators + chevrons — or a plain string / `{ string }` (the error / guidance info lines), which
+---renders as a simple text band. No-op when no panel is open.
+---@param footer string|string[]|table  A `{ groups = … }` button model, or a text info line
+M.open_actions = function(footer)
+    if not (panel and panel.state and panel.state.set_footer) then
+        return
+    end
+    local spec
+    if type(footer) == "table" and footer.groups then
+        spec = footer_bar(footer.groups)
+    elseif type(footer) == "table" and footer.bars then
+        spec = footer
+    else
+        local text = type(footer) == "table" and (footer[1] or "") or tostring(footer or "")
+        spec = { bars = { { text = text, hl = "LvimSpaceInfo" } } }
+    end
+    panel.state.set_footer(spec)
+end
+
+---Update the open panel's title (and optionally its count) in place via the chassis' single title path —
+---`state.set_title` re-renders the native border-title (or re-publishes the chrome overlay when
+---`title_line="statusline"`), and `state.set_counter` updates the right-aligned count on the same border
+---row. Used by `tabs` / `files` (and the other panels) to refresh a live title — e.g. the active workspace
+---/ tab name — without tearing the surface down. The count is preserved unless a new `count` is given.
+---No-op when no panel is open.
+---@param text string New title text
+---@param count integer|nil New item count for the border-title counter (keeps the current count when omitted)
+M.set_title = function(text, count)
+    if not panel then
+        return
+    end
+    panel.title = text
+    if count ~= nil then
+        panel.count = count
+    end
+    if panel.state and panel.state.set_title then
+        panel.state.set_title(text)
+    end
+    if count ~= nil and panel.state and panel.state.set_counter then
+        panel.state.set_counter(count)
+    end
+end
+
+---Open an in-zone input prompt. Pressing `<CR>` resolves it (calls `callback(value, input_line)`); `<Esc>`
+---cancels (the callback is NOT invoked, matching the legacy behaviour). Works in every panel mode.
+---@param prompt string Label displayed in the prompt badge
 ---@param default_value string|nil Pre-filled text for the input field
----@param callback fun(value: string, input_line: integer|nil) Function called on submit with the entered text and saved cursor line
----@param options table|nil Optional overrides (supports `prompt_filetype` and `input_filetype`)
----@return integer|nil buf Buffer handle of the input window
----@return integer|nil win Window handle of the input window
+---@param callback fun(value: string|nil, input_line: integer|nil) Called on submit with the entered text and saved cursor line
+---@param options table|nil Optional overrides (`input_filetype`)
+---@return integer|nil buf Buffer handle of the input field, or nil on failure
 function M.create_input_field(prompt, default_value, callback, options)
     options = options or {}
+    close_input()
 
-    state.disable_auto_close = true
-
-    if state.ui and state.ui.content and is_valid_win(state.ui.content.win) then
-        saved_state.input_line = api.nvim_win_get_cursor(state.ui.content.win)[1]
+    -- Remember the list cursor row so the callback can restore selection after a CRUD op.
+    local input_line
+    if panel and is_valid_win(panel.win) then
+        input_line = api.nvim_win_get_cursor(panel.win)[1]
     end
+    saved_state.input_line = input_line
 
-    M.save_state("actions")
-    M.close_window("status_line")
+    local mode = panel_mode()
+    local msgarea = mode == "area" and active_msgarea() or nil
+    -- The prompt label reads "<prompt>: " — a literal colon, the lvim-space prompt convention.
+    local separator = ":"
+    local docked = mode ~= "float"
 
-    local dims = calculate_input_dimensions(prompt)
-
-    local prompt_buf, prompt_win = M.create_window({
-        content = dims.prompt_text,
-        row = vim.o.lines - 1,
-        col = 0,
-        width = dims.prompt_width,
-        height = 1,
-        zindex = 50,
-        focusable = false,
-        winhighlight = "Normal:LvimSpacePrompt,NormalNC:LvimSpacePrompt,FloatBorder:LvimSpacePrompt",
-        border = dims.prompt_border,
-        filetype = options.prompt_filetype or "lvim-space-prompt",
-    })
-
-    local input_buf, input_win = M.create_window({
-        content = default_value or "",
-        row = vim.o.lines - 1,
-        col = dims.input_col,
-        width = dims.input_width,
-        height = 1,
-        zindex = 50,
-        focusable = true,
-        focus = true,
-        store_in = "input_window",
-        winhighlight = "Normal:LvimSpaceInput,NormalNC:LvimSpaceInput,FloatBorder:LvimSpaceInput",
-        border = dims.input_border,
-        filetype = options.input_filetype or "lvim-space-input",
-        on_create = function(win, buf)
-            if not is_valid_win(win) or not is_valid_buf(buf) then
-                return
-            end
-
-            -- Exempt this buffer from cursor hiding (user types here).
-            lvim_cursor.mark_input_buffer(buf, true)
-
-            api.nvim_buf_set_var(buf, "input_callback", callback)
-            api.nvim_buf_set_var(buf, "input_default", default_value or "")
-
-            local function map(mode, lhs, rhs)
-                vim.keymap.set(mode, lhs, rhs, { buffer = buf, noremap = true, silent = true, nowait = true })
-            end
-
-            map("i", "<Esc>", M.cancel_input)
-            map("i", "<CR>", M.submit_input)
-
-            local input_group = api.nvim_create_augroup("LvimSpaceInputHandling", { clear = true })
-
-            api.nvim_create_autocmd("FocusLost", {
-                buffer = buf,
-                group = input_group,
-                callback = function()
-                    vim.schedule(function()
-                        if not is_valid_buf(buf) then
-                            return
-                        end
-                        local current_win = api.nvim_get_current_win()
-                        if current_win == prompt_win and is_valid_win(win) then
-                            api.nvim_set_current_win(win)
-                            cmd("startinsert!")
-                        elseif current_win ~= win then
-                            M.cancel_input()
-                        end
-                    end)
-                end,
-            })
-
-            api.nvim_create_autocmd("WinEnter", {
-                group = input_group,
-                callback = function()
-                    local current_win = api.nvim_get_current_win()
-                    if current_win == prompt_win and is_valid_win(win) then
-                        api.nvim_set_current_win(win)
-                        cmd("startinsert!")
+    local seg
+    local host = msgarea
+            and function(h)
+                seg = msgarea.segment("lvim-space-input-host", { priority = 6 })
+                return seg:reserve(h, function(rect)
+                    if input and input.state and input.state.reposition then
+                        input.state.reposition(rect)
                     end
-                end,
-            })
+                end)
+            end
+        or nil
 
-            vim.defer_fn(function()
-                if is_valid_win(win) then
-                    pcall(api.nvim_win_set_cursor, win, { 1, #(default_value or "") })
-                    api.nvim_set_current_win(win)
-                    cmd("startinsert!")
-                end
-            end, 10)
+    ---@type LvimSpaceInputHandle
+    local inp = { callback = callback, input_line = input_line }
+
+    local cfg = {
+        mode = "float",
+        position = (mode == "area" and "cmdline") or (mode == "bottom" and "bottom") or nil,
+        host = host,
+        zindex = (host and 215) or (mode == "area" and 205) or nil,
+        -- Same unified ring as the list panel — the shared `config.ui.border` via the chassis marker.
+        border = surface.FRAME_BORDER,
+        header_air = false,
+        size = {
+            height = { auto = true, max = 3, min = 1 },
+            width = (not docked) and { auto = true, max = 0.8, min = 30 } or nil,
+        },
+        content = { blocks = {} },
+        header = {
+            bars = {
+                {
+                    input = true,
+                    prompt = " " .. prompt .. separator .. " ",
+                    prompt_hl = "LvimSpacePrompt",
+                    input_hl = "LvimSpaceInput",
+                    filetype = options.input_filetype or "lvim-space-input",
+                    keys = function(buf, st)
+                        inp.buf = buf
+                        inp.state = st
+                        -- Keep the hardware cursor VISIBLE here (the user types) even though the panel ft hides it.
+                        lvim_cursor.mark_input_buffer(buf, true)
+                        if default_value and default_value ~= "" then
+                            api.nvim_buf_set_lines(buf, 0, 1, false, { default_value })
+                        end
+                        local function imap(lhs, fn)
+                            vim.keymap.set("i", lhs, fn, { buffer = buf, nowait = true, silent = true })
+                        end
+                        imap("<CR>", function()
+                            M.submit_input()
+                        end)
+                        imap("<Esc>", function()
+                            M.cancel_input()
+                        end)
+                        imap("<C-c>", function()
+                            M.cancel_input()
+                        end)
+                    end,
+                },
+            },
+        },
+        close_keys = {},
+        on_close = function()
+            if seg then
+                pcall(function()
+                    seg:release()
+                end)
+                seg = nil
+            end
         end,
-    })
+    }
 
-    if not input_buf or not input_win then
-        M.close_window("prompt_window")
-        if prompt_win then
-            safe_close_win(prompt_win)
-        end
-        return nil, nil
-    end
-
-    state.ui.prompt_window = { win = prompt_win, buf = prompt_buf }
-    return input_buf, input_win
+    inp.state = surface.open(cfg)
+    input = inp
+    return inp.buf
 end
 
----Cancel an active input field without invoking the submit callback.
----Closes both the prompt and input windows, restores the actions bar state,
----and returns focus to the main content window.
-function M.cancel_input()
-    local mode = api.nvim_get_mode().mode
-    if mode:match("i") then
-        cmd("stopinsert")
-    end
-
-    M.close_window("prompt_window")
-    M.close_window("input_window")
-    state.disable_auto_close = false
-    M.close_window("status_line")
-    M.restore_state("actions")
-    restore_main_window_focus()
-end
-
----Submit the currently active input field.
----Reads the first line of the input buffer, closes the input UI, and
----schedules the stored callback with the entered value.
+---Submit the active input prompt: read the field, close it, and schedule the stored callback.
 function M.submit_input()
-    local buf = api.nvim_get_current_buf()
-    cmd("stopinsert")
-
-    local input_value, callback
-    if is_valid_buf(buf) then
-        input_value = api.nvim_buf_get_lines(buf, 0, 1, false)[1]
-        local success, cb = pcall(api.nvim_buf_get_var, buf, "input_callback")
-        callback = success and cb or nil
+    local inp = input
+    if not inp then
+        return
     end
-
-    M.close_window("prompt_window")
-    M.close_window("input_window")
-    state.disable_auto_close = false
-    M.close_window("status_line")
-    M.restore_state("actions")
-    restore_main_window_focus()
-
+    local value = ""
+    if is_valid_buf(inp.buf) then
+        value = api.nvim_buf_get_lines(inp.buf, 0, 1, false)[1] or ""
+    end
+    local callback, input_line = inp.callback, inp.input_line
+    close_input()
+    if panel and is_valid_win(panel.win) then
+        api.nvim_set_current_win(panel.win)
+        lvim_cursor.update()
+    end
     if type(callback) == "function" then
         vim.schedule(function()
-            callback(input_value, saved_state.input_line)
+            callback(value, input_line)
         end)
     end
 end
 
----Snapshot the current content of a managed window into `saved_state`.
----@param type string Which window to snapshot: `"main"` or `"actions"`
-M.save_state = function(type)
-    if type == "main" and state.ui and state.ui.content and is_valid_buf(state.ui.content.buf) then
-        saved_state.main = api.nvim_buf_get_lines(state.ui.content.buf, 0, -1, false)
-    elseif type == "actions" and state.ui and state.ui.status_line and is_valid_buf(state.ui.status_line.buf) then
-        saved_state.actions = api.nvim_buf_get_lines(state.ui.status_line.buf, 0, -1, false)
+---Cancel the active input prompt without invoking the callback; return focus to the list.
+function M.cancel_input()
+    close_input()
+    if panel and is_valid_win(panel.win) then
+        api.nvim_set_current_win(panel.win)
+        lvim_cursor.update()
     end
 end
 
----Restore a previously snapshotted window from `saved_state`.
----@param type string Which window to restore: `"main"` or `"actions"`
-M.restore_state = function(type)
-    if type == "main" and saved_state.main and #saved_state.main > 0 then
-        M.close_window("content")
-        M.open_main(saved_state.main)
-    elseif type == "actions" and saved_state.actions and #saved_state.actions > 0 then
-        M.close_window("status_line")
-        M.open_actions(saved_state.actions[1])
+---Check whether a window belongs to one of the plugin's managed windows. The session engine consults this
+---to skip plugin UI when scanning / restoring editor windows. Every lvim-utils surface window carries the
+---`w:lvim_frame` mark, so the panel + input + header/footer band windows are all recognised.
+---@param win integer Window handle to test
+---@return boolean is_plugin_window True when `win` is owned by lvim-space (or any lvim-utils frame)
+M.is_plugin_window = function(win)
+    if win and api.nvim_win_is_valid(win) and vim.w[win].lvim_frame then
+        return true
     end
+    if state.ui and state.ui.content and state.ui.content.win == win then
+        return true
+    end
+    return false
 end
 
----Close the main content window and the actions/status-line bar.
-M.close_content = function()
-    M.close_window("content")
-    M.close_actions()
+---Initialise the UI subsystem. Registers the lvim-space filetype as a current-only panel for cursor hiding
+---(the canonical lvim-utils.cursor mechanism — no hand-rolled guicursor). No auto-close autocmd: a docked
+---surface stays put until an explicit `close_all` (every flow that leaves the panel calls it directly).
+M.init = function()
+    state.disable_auto_close = false
+    lvim_cursor.setup({
+        panel_ft = {
+            config.ui.filetype or "lvim-space",
+        },
+    })
 end
 
----Close the status-line / actions bar window.
-M.close_actions = function()
-    M.close_window("status_line")
-end
-
----Close every window managed by the plugin (input, prompt, actions, content).
+---Close every window managed by the plugin (the input prompt and the list panel), releasing the msgarea
+---host and clearing the `state.ui` handles.
 M.close_all = function()
-    for _, win_type in ipairs({ "prompt_window", "input_window", "status_line", "content" }) do
-        M.close_window(win_type)
-    end
+    close_input()
+    close_panel()
+    state.ui = state.ui or {}
+    state.ui.content = nil
+    state.ui.status_line = nil
+    state.ui.prompt_window = nil
+    state.ui.input_window = nil
 end
 
 return M

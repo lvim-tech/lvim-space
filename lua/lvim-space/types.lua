@@ -216,37 +216,9 @@
 --- @field already_at_top              string   Lang key when entity is already first
 --- @field already_at_bottom           string   Lang key when entity is already last
 
---- Options table accepted by ui.create_window().
---- @class LvimSpace.WindowConfig
---- @field relative   string    Always "editor" for plugin windows
---- @field row        integer   Top-left row (screen coordinates)
---- @field col        integer   Top-left column (screen coordinates)
---- @field width      integer   Window width in columns
---- @field height     integer   Window height in rows
---- @field style      string    Usually "minimal"
---- @field border     string|string[]  Border definition passed to nvim_open_win
---- @field zindex     integer?  Z-stack order
---- @field focusable  boolean?  Whether the window can receive focus
---- @field title      string?   Window title string
---- @field title_pos  string?   "left" | "center" | "right"
-
 --------------------------------------------------------------------------------
 -- CONFIGURATION
 --------------------------------------------------------------------------------
-
---- @class LvimSpace.BorderSideConfig
---- @field left  boolean  Show left border segment
---- @field right boolean  Show right border segment
-
---- @class LvimSpace.BorderPromptConfig : LvimSpace.BorderSideConfig
---- @field separate string  Separator character between prompt label and input
-
---- @class LvimSpace.BorderConfig
---- @field sign   string                         Character used as padding/sign
---- @field main   LvimSpace.BorderSideConfig     Main content panel borders
---- @field info   LvimSpace.BorderSideConfig     Info/status bar borders
---- @field prompt LvimSpace.BorderPromptConfig   Prompt label borders
---- @field input  LvimSpace.BorderSideConfig     Input field borders
 
 --- @class LvimSpace.IconsConfig
 --- @field error            string  Icon for error messages
@@ -273,9 +245,10 @@
 --- @field fg_fuzzy_secondary string  Foreground hex colour for secondary fuzzy matches
 
 --- @class LvimSpace.UIConfig
---- @field border    LvimSpace.BorderConfig     Border configuration
---- @field icons     LvimSpace.IconsConfig      Icon strings
---- @field highlight LvimSpace.HighlightConfig  Highlight colours
+--- @field mode       "area"|"float"|"bottom"   Where the panel docks (lvim-utils.ui.surface)
+--- @field title_line "border"|"statusline"     In area mode, where the panel title goes
+--- @field icons      LvimSpace.IconsConfig      Icon strings
+--- @field highlight  LvimSpace.HighlightConfig  Highlight colours
 
 --- @class LvimSpace.GlobalKeymappings
 --- @field projects   string  Key to open the projects panel

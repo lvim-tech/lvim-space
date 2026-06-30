@@ -13,15 +13,15 @@ https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
 ### Lazy
 
 ```lua
-{
-  "lvim-tech/lvim-space",
-  dependencies = {
-    "kkharji/sqlite.lua",
-    "lvim-tech/lvim-utils",
-  },
-  config = function()
-    require("lvim-space").setup({ ... })
-  end
+return {
+    "lvim-tech/lvim-space",
+    dependencies = {
+        "kkharji/sqlite.lua",
+        "lvim-tech/lvim-utils",
+    },
+    config = function()
+        require("lvim-space").setup({})
+    end,
 }
 ```
 
@@ -47,7 +47,7 @@ use({
         "lvim-tech/lvim-utils",
     },
     config = function()
-        require("lvim-space").setup({ ... })
+        require("lvim-space").setup({})
     end,
 })
 ```
@@ -61,9 +61,9 @@ use({
 - **Tabs**: Each workspace supports multiple tabs, each with its own window/buffer layout.
 - **Files**: Tabs remember their files, window layout, and cursor positions.
 - **Reordering**: Move projects, workspaces, and tabs up/down to organize them exactly how you want.
-- **File Search**: Powerful fuzzy search functionality for quickly finding and opening files in your project with intelligent matching and highlighting.
+- **Picker Search**: File search is the shared lvim-utils picker — fuzzy filter as you type, coloured filetype devicons, `<CR>` to open + add to the tab, `<C-v>`/`<C-x>` to open in a split. Every entity panel also gets a `/` key that opens the picker over its current list.
 - **Session Management**: Automatically or manually save and restore the state of your workspaces, tabs, and files.
-- **Visual UI Panels**: Navigate and manage projects, workspaces, tabs, and files with a floating panel UI and icons.
+- **Dockable UI**: The panels, prompts and search render on the lvim-utils surface in one of three modes — `area` (the Emacs-style cmdline zone, default), `float` (a centred modal), or `bottom` (a bottom dock).
 - **NerdFont Icons**: Visual indicators for all entities (project, workspace, tab, file, empty, etc).
 - **Autosave**: Choose between automatic or manual session saving.
 - **User Commands**: Full suite of commands for tab management, session control, and diagnostics.
@@ -92,13 +92,13 @@ local pub = require("lvim-space.pub")
 `get_tab_info()` returns:
 
 ```lua
-{
-  project_name   = "my-project",
-  workspace_name = "Workspace 1",
-  tabs = {
-    { id = 7, name = "Tab 1", active = true  },
-    { id = 8, name = "Tab 2", active = false },
-  }
+local info = {
+    project_name = "my-project",
+    workspace_name = "Workspace 1",
+    tabs = {
+        { id = 7, name = "Tab 1", active = true },
+        { id = 8, name = "Tab 2", active = false },
+    },
 }
 ```
 
@@ -157,12 +157,30 @@ Below are the default keybindings. You can customize these in the `keymappings` 
 | Action  | Rename           | `r`         | Rename selected entity                         |
 | Action  | Switch           | `<Space>`   | Load entity (keep panel open)                  |
 | Action  | Enter/Select     | `<CR>`      | Enter entity (close panels, open deepest view) |
-| Action  | Split Vertical   | `v`         | Open file in vertical split                    |
-| Action  | Split Horizontal | `h`         | Open file in horizontal split                  |
-| Action  | Move Up          | `<C-k>`     | Move selected entity up in order               |
-| Action  | Move Down        | `<C-j>`     | Move selected entity down in order             |
+| Action  | Split Vertical   | `v`         | Open file in vertical split (files panel)      |
+| Action  | Split Horizontal | `h`         | Open file in horizontal split (files panel)    |
+| Action  | Move Up          | `K`         | Move selected entity up in order               |
+| Action  | Move Down        | `J`         | Move selected entity down in order             |
+| Action  | Filter           | `/`         | Open the picker over the current list to filter and jump |
+| Nav     | Sector Down      | `<C-j>`     | Descend the focus sector (list → footer bar → messages) |
+| Nav     | Sector Up        | `<C-k>`     | Ascend the focus sector (footer bar → list → editor)    |
 
-> **Note**: Keybindings are context-sensitive and apply only inside the plugin's floating panels.
+> **Note**: Keybindings are context-sensitive and apply only inside the plugin's panels.
+> `<C-j>`/`<C-k>` navigate the focus sectors (the same convention as the lvim-utils picker):
+> `<C-j>` drops focus into the navigable footer bar, where `h`/`l` move along the buttons and
+> `<CR>`/`<Space>` fire the focused one; `<C-k>` returns focus to the list.
+
+### Search picker keys
+
+Inside the file-search picker (`s` / `:LvimSpace open search`):
+
+| Key      | Description                                                  |
+| -------- | ------------------------------------------------------------ |
+| _typing_ | Fuzzy-filter the file list as you type                       |
+| `<CR>`   | Open the file in the editor and add it to the active tab     |
+| `<C-v>`  | Open the selection in a vertical split (no tab change)       |
+| `<C-x>`  | Open the selection in a horizontal split (no tab change)     |
+| `<Esc>`  | Cancel                                                        |
 
 ---
 
@@ -228,7 +246,8 @@ require("lvim-space").setup({
     -- Open the files panel automatically after adding a file.
     open_panel_on_add_file = false,
 
-    -- fd command used for file search (requires fd and fzf on PATH).
+    -- Shell command listing project files for the picker search (run in the
+    -- project root). Requires its first token (fd by default) on PATH.
     search = "fd --type f --hidden --follow"
         .. " --exclude .git"
         .. " --exclude node_modules"
@@ -243,16 +262,30 @@ require("lvim-space").setup({
         filetype = "lvim-space",
         title = "LVIM SPACE",
         title_position = "center", -- "left" | "center" | "right"
+
+        -- Where every panel, prompt and the search picker docks. Rendered
+        -- through lvim-utils.ui.surface:
+        --   "area"   (default) the Emacs-style cmdline/minibuffer zone —
+        --            hosted above the messages when the lvim-utils msgarea
+        --            zone is enabled, otherwise it grows 'cmdheight'; the
+        --            editor and statusline stay above it.
+        --   "float"  a centred modal with a border-title.
+        --   "bottom" a bar docked over the bottom rows.
+        mode = "area",
+
+        -- In "area" mode, where the panel title is drawn:
+        --   "border"     the native border-title (title left, count right on
+        --                the top border) — the default.
+        --   "statusline" published to the lvim-utils chrome overlay
+        --                (minibuffer style — the heirline file segments give
+        --                way to the panel title while a panel is open).
+        -- "float"/"bottom" always use the border-title. The frame border
+        -- itself is the single shared lvim-utils `config.ui.border` — change
+        -- that one key to re-border every lvim-tech panel.
+        title_line = "border",
+
         max_height = 10,
         spacing = 2, -- padding spaces in the status/info line
-
-        border = {
-            sign = " ",
-            main = { left = true, right = true },
-            info = { left = true, right = true },
-            prompt = { left = true, right = true, separate = ":" },
-            input = { left = true, right = true },
-        },
 
         icons = {
             error = " ",
@@ -330,14 +363,16 @@ require("lvim-space").setup({
             enter = "<CR>",
             split_v = "v",
             split_h = "h",
-            move_down = "<C-j>",
-            move_up = "<C-k>",
+            move_down = "J",
+            move_up = "K",
         },
     },
 
-    -- Keys permitted inside plugin panels; all others are blocked.
+    -- Keys permitted inside plugin panels; all others are blocked. `<C-j>`/`<C-k>` are intentionally NOT
+    -- listed: they belong to the surface's sector navigation, not the panel, so they fall through to the
+    -- chassis. `K`/`J` are listed so the `uppercase_letters` blanket-disable does not no-op the reorder keys.
     key_control = {
-        allowed = { "j", "k", "<C-j>", "<C-k>" },
+        allowed = { "j", "k", "K", "J" },
         explicitly_disabled = {
             "$",
             "gg",
@@ -364,11 +399,20 @@ require("lvim-space").setup({
 
 ## UI & Appearance
 
-- The UI uses floating windows with customizable borders and highlights.
+- The UI renders on the shared **lvim-utils surface**. `ui.mode` selects where it docks:
+  - **`area`** (default) — the Emacs-style cmdline/minibuffer zone. When the lvim-utils
+    msgarea zone is enabled the panel is hosted **above** the messages (the editor and
+    statusline stay in place); otherwise it falls back to growing `cmdheight`.
+  - **`float`** — a centred modal with a border-title.
+  - **`bottom`** — a bar docked over the bottom rows.
+- Every mode draws the one shared lvim-utils frame border (`config.ui.border`) with the title
+  in the border — title left, item count right on the top border. `ui.title_line = "statusline"`
+  instead publishes an `area` panel's title to the chrome overlay (minibuffer style).
 - NerdFont icons are used everywhere for clarity.
+- The hardware cursor is hidden in panels via the lvim-utils cursor module.
 - Empty panels display an icon and message from your language configuration.
 - State is stored in a SQLite database for reliability and speed.
-- Highlight groups are re-applied automatically when the colorscheme changes.
+- Highlight groups self-theme from the lvim-utils palette and are re-applied automatically when the colorscheme changes (they also follow a transparent theme).
 
 ---
 
@@ -384,22 +428,23 @@ If `autosave = false`, persist the full state manually:
 
 ## Requirements
 
-- **Neovim 0.10+**
+- **Neovim 0.11+**
+- **[sqlite.lua](https://github.com/kkharji/sqlite.lua)** — the session persistence backend (**required**; no state can be stored without it)
+- **[lvim-utils](https://github.com/lvim-tech/lvim-utils)** — the UI renders through its `ui.surface`, `picker` and `cursor` modules and self-themes from its colour palette (**required**)
 - **NerdFont** enabled terminal (for icons)
-- **[fd](https://github.com/sharkdp/fd)** — used by the file search feature
-- **[fzf](https://github.com/junegunn/fzf)** — used by the file search feature
-- **[sqlite.lua](https://github.com/kkharji/sqlite.lua)** — Neovim SQLite wrapper
-- **[lvim-utils](https://github.com/lvim-tech/lvim-utils)** — color palette, highlight group management, and cursor handling
+- **[fd](https://github.com/sharkdp/fd)** — the default file-search command (only needed for search; everything else works without it)
 
-> The search feature requires both `fd` and `fzf` on your `PATH`. All other features work without them.
+> Run `:checkhealth lvim-space` to verify the runtime. The search feature needs the first token of `search` (fd by default) on your `PATH`; all other features work without it.
 
 ---
 
 ## Troubleshooting
 
+- Run `:checkhealth lvim-space` first — it reports a missing sqlite.lua / lvim-utils, an unwritable save dir, an invalid `ui.mode`, an `area` mode without the msgarea zone, or a missing search command.
 - If icons do not display, ensure your terminal uses a NerdFont.
-- If state is not saved/restored, check your `autosave` / `autorestore` setting or run `:LvimSpaceSave`.
-- If search returns no results, verify that `fd` and `fzf` are installed and on your `PATH`.
+- If state is not saved/restored, check your `autosave` / `autorestore` setting or run `:LvimSpace save`.
+- If the area panel grows `cmdheight` instead of floating above the messages, enable the lvim-utils msgarea zone, or set `ui.mode = "float"` / `"bottom"`.
+- If search returns no results, verify the `search` command (fd by default) is installed and on your `PATH`.
 - For debug logging, set `debug.enabled = true` in your config — logs are written to `debug.file`.
 - For bugs or feature requests, please open an issue on the GitHub repository.
 

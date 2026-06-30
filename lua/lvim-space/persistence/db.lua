@@ -4,8 +4,6 @@ local state = require("lvim-space.api.state")
 local sqlite = require("sqlite.db")
 local tbl = require("sqlite.tbl")
 
-local uri = config.save .. "/lvimspace.db"
-
 local M = {}
 
 M.db = nil
@@ -83,6 +81,9 @@ M.init = function()
             return false
         end
     end
+    -- Resolve the DB path from the LIVE config at init time (not a module-load
+    -- snapshot) so a `setup({ save = … })` override actually redirects the DB.
+    local uri = config.save .. "/lvimspace.db"
     local db_init_ok, _ = pcall(function()
         M.db = sqlite({
             uri = uri,

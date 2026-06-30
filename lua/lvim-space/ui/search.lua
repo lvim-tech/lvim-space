@@ -1,1052 +1,106 @@
--- search.lua
--- Fuzzy file-search panel for the lvim-space plugin.
--- Uses fzf (via io.popen) for file discovery and applies an internal
--- multi-tier scoring algorithm (exact > sequential > fuzzy-char) for ranking.
--- Supports live incremental search with debounced updates.
+-- lvim-space.ui.search: file search, now a THIN ADAPTER over the shared lvim-utils PICKER (a fuzzy finder on
+-- the same surface chassis as the panels). It docks in the configured zone (`config.ui.mode` → area | float |
+-- bottom), honours the user's configured search command (`config.search`, an `fd …` invocation run in the
+-- project root) as the candidate set, and shows the coloured ft devicon per row. ON SELECT it reuses the
+-- existing data/session flow to open the file in the editor AND add it to the active tab (persisted) — the
+-- exact behaviour of the old custom search panel. The split keys (`v` / `h`) open the selection in a
+-- vertical / horizontal split. All the former 3-tier fuzzy-scoring + custom-window code is gone: the picker
+-- owns matching (fzf in --filter mode, Lua fallback) and rendering.
+--
+---@module "lvim-space.ui.search"
 
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
-local session = require("lvim-space.core.session")
 local data = require("lvim-space.api.data")
+local session = require("lvim-space.core.session")
 local ui = require("lvim-space.ui")
-local common = require("lvim-space.ui.common")
+local picker = require("lvim-utils.picker")
 
 local M = {}
 
----@class SearchResultItem
----@field id string Absolute file path used as a unique identifier.
----@field path string Absolute file path.
----@field relative_path string Path relative to the project root.
----@field relative_path_display string|nil Display-ready relative path (may include query decoration).
----@field name string Filename component (`:t` of path).
----@field score number Fuzzy relevance score (higher = better match).
-
----@class SearchCache
----@field search_results SearchResultItem[] Currently displayed (possibly filtered) results.
----@field file_ids_map table<number, string> Maps panel line number to absolute file path.
----@field ctx table|nil Current panel window/buffer context.
----@field current_query string The last search query string.
----@field all_files SearchResultItem[] Full file list for the project (populated on init).
----@field last_cursor_position number Last known cursor row in the panel.
-
----@type SearchCache
-local cache = {
-    search_results = {},
-    file_ids_map = {},
-    ctx = nil,
-    current_query = "",
-    all_files = {},
-    last_cursor_position = 1,
-}
-
----@type integer|nil Last non-plugin editor window handle.
-local last_real_win = nil
-local is_plugin_panel_win = ui.is_plugin_window
-
---- Saves the current non-plugin window as `last_real_win`.
-local function save_window_context()
-    local current_win = vim.api.nvim_get_current_win()
-    if current_win and vim.api.nvim_win_is_valid(current_win) and not is_plugin_panel_win(current_win) then
-        last_real_win = current_win
-    end
-end
-
---- Returns the best non-plugin normal window handle for opening files.
---- Prefers `last_real_win`, then the focused window, then any floating-free window.
----@return integer win_handle A valid window handle.
-local function get_last_normal_win()
-    if last_real_win and vim.api.nvim_win_is_valid(last_real_win) and not is_plugin_panel_win(last_real_win) then
-        return last_real_win
-    end
-    local current_win = vim.api.nvim_get_current_win()
-    local wins = vim.api.nvim_tabpage_list_wins(0)
-    for _, win_id in ipairs(wins) do
-        local cfg = vim.api.nvim_win_get_config(win_id)
-        if cfg.relative == "" and not is_plugin_panel_win(win_id) then
-            if win_id == current_win then
-                return win_id
-            end
-        end
-    end
-    for _, win_id in ipairs(wins) do
-        local cfg = vim.api.nvim_win_get_config(win_id)
-        if cfg.relative == "" and not is_plugin_panel_win(win_id) then
-            return win_id
-        end
-    end
-    return current_win
-end
-
---- Saves the cursor row from the search panel into `cache.last_cursor_position`.
-local function save_cursor_position()
-    if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-        local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
-        cache.last_cursor_position = cursor_pos[1]
-    end
-end
-
---- Registers a CursorMoved autocmd on the panel buffer to keep `cache.last_cursor_position` up to date.
----@param ctx table Panel context with `win` and `buf` fields.
-local function setup_cursor_tracking(ctx)
-    if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
-        return
-    end
-
-    vim.api.nvim_create_autocmd("CursorMoved", {
-        buffer = ctx.buf,
-        callback = function()
-            if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-                local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
-                cache.last_cursor_position = cursor_pos[1]
-            end
-        end,
-        group = vim.api.nvim_create_augroup("LvimSpaceSearchCursor", { clear = true }),
-    })
-end
-
---- Performs a character-level fuzzy match of `query` against `text`.
---- Each query character must appear in order inside `text` (case-insensitive).
---- Returns an empty table when the query cannot be fully matched.
----@param text string The haystack string to search.
----@param query string The query string to fuzzy-match.
----@return {start: number, length: number, exact_match: boolean, priority: number}[] matches List of match position descriptors (0-based start offsets).
-local function find_fuzzy_character_matches(text, query)
-    if not text or not query or #query == 0 then
-        return {}
-    end
-    local text_lower = text:lower()
-    local query_lower = query:lower()
-    local current_matches = {}
-    local text_idx = 1
-    local query_idx = 1
-    while text_idx <= #text_lower and query_idx <= #query_lower do
-        local text_char = text_lower:sub(text_idx, text_idx)
-        local query_char = query_lower:sub(query_idx, query_idx)
-        if text_char == query_char then
-            table.insert(current_matches, {
-                start = text_idx - 1,
-                length = 1,
-                exact_match = text:sub(text_idx, text_idx) == query:sub(query_idx, query_idx),
-                priority = 60,
-            })
-
-            query_idx = query_idx + 1
-        end
-        text_idx = text_idx + 1
-    end
-    if query_idx > #query_lower then
-        return current_matches
-    end
-    return {}
-end
-
---- Splits `query` on dots and searches for each segment in sequence within `text`.
---- All segments must match in order; on any miss the function returns an empty table.
----@param text string The haystack string.
----@param query string The query, potentially containing dot separators.
----@return {start: number, length: number, exact_match: boolean, priority: number}[] matches Ordered match descriptors (0-based start offsets).
-local function find_sequential_matches(text, query)
-    local text_lower = text:lower()
-    local parts = {}
-    local current_part = ""
-    for i = 1, #query do
-        local char = query:sub(i, i)
-        if char == "." then
-            if current_part ~= "" then
-                table.insert(parts, current_part)
-                current_part = ""
-            end
-            table.insert(parts, ".")
-        else
-            current_part = current_part .. char
-        end
-    end
-    if current_part ~= "" then
-        table.insert(parts, current_part)
-    end
-    local start_search_pos = 1
-    local found_sequence = {}
-    for _, part in ipairs(parts) do
-        local part_lower = part:lower()
-        local match_pos = text_lower:find(part_lower, start_search_pos, true)
-        if match_pos then
-            table.insert(found_sequence, {
-                start = match_pos - 1,
-                length = #part,
-                exact_match = text:sub(match_pos, match_pos + #part - 1) == part,
-                priority = 80,
-            })
-            start_search_pos = match_pos + #part
-        else
-            found_sequence = {}
-            break
-        end
-    end
-    return found_sequence
-end
-
---- Returns all highlighted match positions for `query` inside `text`.
---- Tries strategies in priority order: exact substring, sequential (dot-split), fuzzy-char, segment.
----@param text string The haystack string to search for highlights.
----@param query string The query string.
----@return {start: number, length: number, exact_match: boolean, priority: number}[] matches List of match position descriptors (0-based start offsets, priority 30-120).
-local function find_all_match_positions(text, query)
-    if not text or not query or query == "" then
-        return {}
-    end
-    local matches = {}
-    local text_lower = text:lower()
-    local query_lower = query:lower()
-    local start_pos = 1
-    local exact_matches = {}
-    while start_pos <= #text do
-        local match_pos = text_lower:find(query_lower, start_pos, true)
-        if not match_pos then
-            break
-        end
-        table.insert(exact_matches, {
-            start = match_pos - 1,
-            length = #query,
-            exact_match = text:sub(match_pos, match_pos + #query - 1) == query,
-            priority = 100,
-            position = match_pos,
-        })
-        start_pos = match_pos + 1
-    end
-    if #query <= 4 and #exact_matches > 0 then
-        local best_match = nil
-        local filename_start = text:find("[^/\\]*$") or 1
-        for _, match in ipairs(exact_matches) do
-            local is_at_end = (match.position + #query - 1) == #text
-            local is_in_filename = match.position >= filename_start
-            if is_at_end then
-                match.priority = 120
-                best_match = match
-                break
-            elseif is_in_filename and (not best_match or match.position > best_match.position) then
-                match.priority = 110
-                best_match = match
-            end
-        end
-        if best_match then
-            return { best_match }
-        end
-        return { exact_matches[1] }
-    end
-    if #exact_matches > 0 then
-        return exact_matches
-    end
-    if query:find("%.") then
-        matches = find_sequential_matches(text, query)
-        if #matches > 0 then
-            return matches
-        end
-    end
-    local fuzzy_positions = find_fuzzy_character_matches(text, query)
-    if #fuzzy_positions > 0 then
-        return fuzzy_positions
-    end
-    if query:find("%.") then
-        local segments = {}
-        for segment in query:gmatch("[^%.]+") do
-            if segment ~= "" and #segment >= 3 then
-                table.insert(segments, segment)
-            end
-        end
-        for _, segment in ipairs(segments) do
-            local seg_lower = segment:lower()
-            start_pos = 1
-            while start_pos <= #text do
-                local match_pos = text_lower:find(seg_lower, start_pos, true)
-                if not match_pos then
-                    break
-                end
-                table.insert(matches, {
-                    start = match_pos - 1,
-                    length = #segment,
-                    exact_match = text:sub(match_pos, match_pos + #segment - 1) == segment,
-                    priority = 30,
-                })
-                start_pos = match_pos + 1
-            end
-        end
-    end
-    return matches
-end
-
---- Checks whether all dot-delimited segments of `pattern_lower` appear in order within `text_lower`.
---- Returns the total score (8000 per matched segment) or 0 if any segment is missing.
----@param text_lower string Lowercased haystack.
----@param pattern_lower string Lowercased dot-delimited query.
----@return number score Cumulative score (>0 on match, 0 on failure).
-local function check_sequential_match(text_lower, pattern_lower)
-    local parts = {}
-    local current_part = ""
-    for i = 1, #pattern_lower do
-        local char = pattern_lower:sub(i, i)
-        if char == "." then
-            if current_part ~= "" then
-                table.insert(parts, current_part)
-                current_part = ""
-            end
-            table.insert(parts, ".")
-        else
-            current_part = current_part .. char
-        end
-    end
-    if current_part ~= "" then
-        table.insert(parts, current_part)
-    end
-    local search_pos = 1
-    local total_score = 0
-    for _, part in ipairs(parts) do
-        local match_pos = text_lower:find(part, search_pos, true)
-        if match_pos then
-            total_score = total_score + 8000
-            search_pos = match_pos + #part
-        else
-            return 0
-        end
-    end
-    return total_score
-end
-
---- Calculates a fuzzy character-match score for how well `pattern_lower` matches `text_lower`.
---- Rewards consecutive character matches and early first-match positions.
----@param text_lower string Lowercased haystack.
----@param pattern_lower string Lowercased query.
----@return number score Score >= 1000 on full match, 0 when the pattern cannot be matched.
-local function calculate_fuzzy_char_score(text_lower, pattern_lower)
-    local text_idx, pattern_idx, match_count = 1, 1, 0
-    local consecutive_matches = 0
-    local max_consecutive = 0
-    local first_match_pos = nil
-    while text_idx <= #text_lower and pattern_idx <= #pattern_lower do
-        if text_lower:sub(text_idx, text_idx) == pattern_lower:sub(pattern_idx, pattern_idx) then
-            if not first_match_pos then
-                first_match_pos = text_idx
-            end
-            match_count = match_count + 1
-            consecutive_matches = consecutive_matches + 1
-            max_consecutive = math.max(max_consecutive, consecutive_matches)
-            pattern_idx = pattern_idx + 1
-        else
-            consecutive_matches = 0
-        end
-        text_idx = text_idx + 1
-    end
-    if match_count == #pattern_lower then
-        local score = 1000 + (max_consecutive * 200) + match_count
-        if first_match_pos and first_match_pos <= 3 then
-            score = score + 500
-        end
-        score = score + (100 - math.min(#text_lower, 100))
-        return score
-    end
-    return 0
-end
-
---- Returns true when `find_all_match_positions` finds at least one position for `pattern` in `text`.
----@param text string The haystack string.
----@param pattern string The query string.
----@return boolean has_match Whether any match was found.
-local function has_valid_matches(text, pattern)
-    if not text or not pattern or pattern == "" then
-        return false
-    end
-    local match_positions = find_all_match_positions(text, pattern)
-    return #match_positions > 0
-end
-
---- Computes the composite fuzzy relevance score of `pattern` against `text`.
---- Scores are: exact full match (100000) > exact substring (>=50000) > sequential (>=8000) > fuzzy-char (>=1000) > segment partial (>=3000) > no match (0).
----@param text string The haystack string.
----@param pattern string The query string.
----@return number score Relevance score (higher means better match, 0 means no match).
-local function calculate_fuzzy_score(text, pattern)
-    if not text or not pattern then
-        return 0
-    end
-    if #pattern == 0 then
-        return 1.0
-    end
-    if #text == 0 then
-        return 0
-    end
-    local text_lower = text:lower()
-    local pattern_lower = pattern:lower()
-    if text_lower == pattern_lower then
-        return 100000
-    end
-    local exact_pos = text_lower:find(pattern_lower, 1, true)
-    if exact_pos then
-        local score = 50000
-        if exact_pos == 1 then
-            score = score + 20000
-        end
-        score = score + (10000 - math.min(#text, 10000))
-        return score
-    end
-    if pattern:find("%.") then
-        local sequential_score = check_sequential_match(text_lower, pattern_lower)
-        if sequential_score > 0 then
-            return sequential_score
-        end
-    end
-    local fuzzy_score = calculate_fuzzy_char_score(text_lower, pattern_lower)
-    if fuzzy_score > 0 then
-        return fuzzy_score
-    end
-    if pattern:find("%.") then
-        local segment_score = 0
-        local segments_found = 0
-        local total_segments = 0
-        for segment in pattern:gmatch("[^%.]+") do
-            if segment ~= "" and #segment >= 3 then
-                total_segments = total_segments + 1
-                local seg_pos = text_lower:find(segment:lower(), 1, true)
-                if seg_pos then
-                    segments_found = segments_found + 1
-                    segment_score = segment_score + 3000
-                    if seg_pos == 1 then
-                        segment_score = segment_score + 1000
-                    end
-                end
-            end
-        end
-        if segments_found > 0 and segments_found == total_segments then
-            return segment_score
-        end
-    end
-    return 0
-end
-
---- Returns the path of `file_path` relative to `project_root_arg`.
---- Falls back to the filename only when the file is outside the project root or the root is unknown.
----@param file_path string Absolute or relative file path.
----@param project_root_arg string|nil Absolute path of the project root directory.
----@return string relative_path Display-ready relative path.
-local function relpath_to_project(file_path, project_root_arg)
-    if not file_path or file_path == "" then
-        return ""
-    end
-    if not project_root_arg or project_root_arg == "" then
-        return vim.fn.fnamemodify(file_path, ":t")
-    end
-    local abs_file = vim.fn.fnamemodify(file_path, ":p")
-    local project_root_abs = vim.fn.fnamemodify(project_root_arg, ":p")
-    local sep = vim.fn.has("win32") == 1 and "\\" or "/"
-    if vim.fn.isdirectory(project_root_abs) == 1 and not project_root_abs:match("[" .. sep .. "]$") then
-        project_root_abs = project_root_abs .. sep
-    end
-    if vim.startswith(abs_file, project_root_abs) then
-        local rel = abs_file:sub(#project_root_abs + 1)
-        if rel == "" then
-            return vim.fn.fnamemodify(file_path, ":t")
-        end
-        return rel
-    else
-        return vim.fn.fnamemodify(file_path, ":t")
-    end
-end
-
---- Runs the configured `fd` command piped through `fzf --filter` in a shell subprocess
---- and returns the scored, sorted file list.
----@param project_path string Absolute path of the project root (used as the working directory for fd).
----@param query string The fzf filter query string (may be empty to list all files).
----@return {files: SearchResultItem[], count: number}|nil result Parsed result table, or nil on error.
-local function call_fzf_search(project_path, query)
-    if not project_path then
-        return nil
-    end
-    if vim.fn.executable("fzf") ~= 1 then
-        notify.error("lvim-space search requires 'fzf' to be installed and on PATH.")
-        return nil
-    end
-    -- config.search is the fd command string; verify fd (or equivalent) is available
-    local fd_bin = (config.search or ""):match("^%S+") or "fd"
-    if vim.fn.executable(fd_bin) ~= 1 then
-        notify.error("lvim-space search requires '" .. fd_bin .. "' to be installed and on PATH.")
-        return nil
-    end
-    local fd_cmd = config.search
-    local fzf_bin = "fzf"
-    local find_cmd_str = string.format("cd %s && %s", vim.fn.shellescape(project_path), fd_cmd)
-    local fzf_full_cmd = (query and query ~= "")
-            and string.format("%s | %s --filter %s", find_cmd_str, fzf_bin, vim.fn.shellescape(query))
-        or string.format("%s | %s --filter ''", find_cmd_str, fzf_bin)
-    local ok, result = pcall(function()
-        local handle = io.popen(fzf_full_cmd)
-        if not handle then
-            return nil
-        end
-        local result_str = handle:read("*a")
-        handle:close()
-        if not result_str or result_str == "" then
-            return { files = {}, count = 0 }
-        end
-        local files_tbl = {}
-        for line_str in result_str:gmatch("[^\r\n]+") do
-            line_str = vim.trim(line_str)
-            if line_str ~= "" then
-                local current_full_path = line_str
-                if
-                    not vim.startswith(current_full_path, "/")
-                    and not vim.startswith(current_full_path, "~")
-                    and (vim.fn.has("win32") ~= 1 or not current_full_path:match("^[a-zA-Z]:"))
-                then
-                    current_full_path = project_path
-                        .. (project_path:match("[/\\]$") and "" or (vim.fn.has("win32") == 1 and "\\" or "/"))
-                        .. current_full_path
-                end
-                current_full_path = vim.fn.fnamemodify(current_full_path, ":p")
-                local name_str = vim.fn.fnamemodify(current_full_path, ":t")
-                local rel_path_str = relpath_to_project(current_full_path, project_path)
-                local score_val = calculate_fuzzy_score(rel_path_str, query)
-                    + calculate_fuzzy_score(name_str, query) * 0.5
-
-                table.insert(files_tbl, {
-                    path = current_full_path,
-                    relative_path = rel_path_str,
-                    name = name_str,
-                    score = score_val,
-                })
-            end
-        end
-        if query and query ~= "" then
-            table.sort(files_tbl, function(a, b)
-                return a.score > b.score
-            end)
-        end
-        return { files = files_tbl, count = #files_tbl }
-    end)
-    if ok then
-        return result
-    else
-        return nil
-    end
-end
-
---- Returns the absolute path of the currently active project.
----@return string|nil project_path Absolute project root path, or nil when no project is active.
-local function get_project_path_abs()
+---Absolute path of the active project's root directory, or nil when no project is active.
+---@return string|nil
+local function project_path_abs()
     if not state.project_id then
         return nil
     end
-    local proj_data = data.find_project_by_id(state.project_id)
-    return proj_data and proj_data.path and vim.fn.fnamemodify(proj_data.path, ":p") or nil
+    local proj = data.find_project_by_id(state.project_id)
+    return proj and proj.path and vim.fn.fnamemodify(proj.path, ":p") or nil
 end
 
---- Populates `cache.all_files` with every file in the project by running fzf with an empty query.
---- Skips the network call when the cache is already warm and the query is empty.
-local function load_all_files()
-    if #cache.all_files > 0 and cache.current_query == "" then
-        return
+---Resolve a (possibly relative) search-result path against the project root to an absolute path.
+---@param rel string A path as emitted by the search command (relative to `cwd`, or already absolute).
+---@param cwd string Absolute project root.
+---@return string abs Absolute, normalised path.
+local function absolutize(rel, cwd)
+    local win32 = vim.fn.has("win32") == 1
+    if vim.startswith(rel, "/") or vim.startswith(rel, "~") or (win32 and rel:match("^%a:[/\\]")) then
+        return vim.fn.fnamemodify(rel, ":p")
     end
-    local current_project_path = get_project_path_abs()
-    if not current_project_path then
-        cache.all_files = {}
-        return
-    end
-    cache.all_files = {}
-    local search_results_data = call_fzf_search(current_project_path, "")
-    if search_results_data and search_results_data.files then
-        for _, file_item in ipairs(search_results_data.files) do
-            local abs_p = vim.fn.fnamemodify(file_item.path, ":p")
-            table.insert(cache.all_files, {
-                id = abs_p,
-                path = abs_p,
-                relative_path = file_item.relative_path or relpath_to_project(abs_p, current_project_path),
-                name = file_item.name or vim.fn.fnamemodify(abs_p, ":t"),
-                score = file_item.score or 1.0,
-            })
-        end
-    end
+    local sep = win32 and "\\" or "/"
+    return vim.fn.fnamemodify(cwd .. (cwd:match("[/\\]$") and "" or sep) .. rel, ":p")
 end
 
---- Filters `cache.all_files` against `query_str` using the internal scoring engine
---- and stores the results in `cache.search_results`.
---- An empty query copies all files sorted alphabetically.
----@param query_str string The search query to filter by (empty string shows all files).
-local function filter_files(query_str)
-    query_str = query_str or ""
-    cache.current_query = query_str
-    cache.search_results = {}
-    if query_str == "" then
-        for _, file_data in ipairs(cache.all_files) do
-            local result_item = vim.deepcopy(file_data)
-            result_item.relative_path_display = result_item.relative_path
-            table.insert(cache.search_results, result_item)
-        end
-        table.sort(cache.search_results, function(a, b)
-            return (a.relative_path_display or "") < (b.relative_path_display or "")
-        end)
-    else
-        for _, file_data in ipairs(cache.all_files) do
-            local rel_path_disp_str = file_data.relative_path or ""
-            local name_str = file_data.name or ""
-            local has_path_match = has_valid_matches(rel_path_disp_str, query_str)
-            local has_name_match = has_valid_matches(name_str, query_str)
-
-            if has_path_match or has_name_match then
-                local path_score = calculate_fuzzy_score(rel_path_disp_str, query_str)
-                local name_score = calculate_fuzzy_score(name_str, query_str)
-                local total_score = path_score + (name_score * 2)
-
-                if total_score > 0 then
-                    local result_item = vim.deepcopy(file_data)
-                    result_item.score = total_score
-                    result_item.relative_path_display = rel_path_disp_str
-                    table.insert(cache.search_results, result_item)
-                end
-            end
-        end
-        table.sort(cache.search_results, function(a, b)
-            return a.score > b.score
-        end)
-    end
-end
-
---- Runs a live search: calls fzf for the given query and falls back to the internal filter
---- when fzf returns no results.
---- Updates `cache.search_results` with the final ranked list.
----@param query_term string The current search query (empty string shows all files).
-local function live_fzf_search(query_term)
-    if not query_term or query_term == "" then
-        filter_files("")
-        return
-    end
-    local proj_path_val = get_project_path_abs()
-    if not proj_path_val then
-        filter_files(query_term)
-        return
-    end
-    local fzf_output = call_fzf_search(proj_path_val, query_term)
-    if fzf_output and fzf_output.files and #fzf_output.files > 0 then
-        cache.search_results = {}
-        cache.current_query = query_term
-        for _, item_info in ipairs(fzf_output.files) do
-            local abs_p = vim.fn.fnamemodify(item_info.path, ":p")
-            local rel_path = item_info.relative_path
-
-            if has_valid_matches(rel_path, query_term) or has_valid_matches(item_info.name, query_term) then
-                table.insert(cache.search_results, {
-                    id = abs_p,
-                    path = abs_p,
-                    relative_path_display = rel_path,
-                    name = item_info.name,
-                    score = item_info.score,
-                })
-            end
-        end
-    else
-        filter_files(query_term)
-    end
-end
-
---- Schedules the panel cursor to be moved to line 1 on the next event loop tick.
-local function set_cursor_to_first_line()
-    if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-        vim.schedule(function()
-            if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-                pcall(vim.api.nvim_win_set_cursor, cache.ctx.win, { 1, 0 })
-            end
-        end)
-    end
-end
-
---- Refreshes the search panel in-place: re-runs the search, rewrites panel lines,
---- updates fuzzy-match highlights, and resizes the floating window as needed.
---- Falls back to `M.init` when the panel window or buffer is no longer valid.
-M.refresh = function()
-    if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
-        return M.init()
-    end
-
-    if not cache.ctx.buf or not vim.api.nvim_buf_is_valid(cache.ctx.buf) then
-        return M.init()
-    end
-
-    save_cursor_position()
-
-    -- Reload search results based on current query
-    live_fzf_search(cache.current_query)
-    cache.file_ids_map = {}
-
-    local lines_to_display = {}
-    local function is_buffer_active(file_path_to_check)
-        local current_b = vim.api.nvim_get_current_buf()
-        if not vim.api.nvim_buf_is_valid(current_b) then
-            return false
-        end
-        local buffer_name = vim.api.nvim_buf_get_name(current_b)
-        return buffer_name ~= ""
-            and vim.fn.fnamemodify(buffer_name, ":p") == vim.fn.fnamemodify(file_path_to_check, ":p")
-    end
-
-    local is_results_empty = (#cache.search_results == 0)
-    if is_results_empty then
-        table.insert(
-            lines_to_display,
-            (common.get_entity_icon("search", false, true))
-                .. (state.lang.SEARCH_EMPTY or "No files found matching your search criteria.")
-        )
-    else
-        for i, entity_item in ipairs(cache.search_results) do
-            local is_item_active = is_buffer_active(entity_item.path)
-            local item_icon = common.get_entity_icon("file", is_item_active, false)
-            local display_path_text = entity_item.relative_path_display
-                or relpath_to_project(entity_item.path, get_project_path_abs())
-            table.insert(lines_to_display, item_icon .. display_path_text)
-            cache.file_ids_map[i] = entity_item.id
-        end
-    end
-
-    local success = pcall(function()
-        local was_modifiable = vim.bo[cache.ctx.buf].modifiable
-        if not was_modifiable then
-            vim.bo[cache.ctx.buf].modifiable = true
-        end
-
-        vim.api.nvim_buf_set_lines(cache.ctx.buf, 0, -1, false, lines_to_display)
-
-        if not was_modifiable then
-            vim.bo[cache.ctx.buf].modifiable = false
-        end
-    end)
-
-    if not success then
-        return M.init()
-    end
-
-    -- Update highlights
-    local ns_id = vim.api.nvim_create_namespace("lvim_search_highlights")
-    vim.api.nvim_buf_clear_namespace(cache.ctx.buf, ns_id, 0, -1)
-    if cache.current_query and cache.current_query ~= "" and not is_results_empty then
-        for line_idx, entity_item in ipairs(cache.search_results) do
-            local display_text = entity_item.relative_path_display or ""
-            local icon_len = #common.get_entity_icon("file", is_buffer_active(entity_item.path), false)
-            local match_positions = find_all_match_positions(display_text, cache.current_query)
-            for _, pos in ipairs(match_positions) do
-                local start_col = pos.start + icon_len
-                local end_col = start_col + pos.length
-                local hl_group
-                if pos.priority and pos.priority >= 100 then
-                    hl_group = "LvimSpaceFuzzyPrimary"
-                elseif pos.priority and pos.priority >= 80 then
-                    hl_group = "LvimSpaceFuzzySecondary"
-                else
-                    hl_group = "LvimSpaceFuzzySecondary"
-                end
-                pcall(vim.api.nvim_buf_set_extmark, cache.ctx.buf, ns_id, line_idx - 1, start_col, {
-                    end_col = end_col,
-                    hl_group = hl_group,
-                })
+---Run the configured `config.search` command in the project root and build the picker candidate items.
+---Each item carries the relative path as its match/display `text` and the absolute `path` (the picker
+---auto-renders the coloured ft devicon from `path`).
+---@param cwd string Absolute project root.
+---@return table[] items List of `{ text = relative_path, path = absolute_path }`.
+local function collect_files(cwd)
+    local shell_cmd = string.format("cd %s && %s", vim.fn.shellescape(cwd), config.search)
+    local out = vim.fn.systemlist({ "sh", "-c", shell_cmd })
+    local items = {}
+    if vim.v.shell_error == 0 and type(out) == "table" then
+        for _, rel in ipairs(out) do
+            rel = vim.trim(rel)
+            if rel ~= "" then
+                items[#items + 1] = { text = rel, path = absolutize(rel, cwd) }
             end
         end
     end
-
-    -- Update window config
-    if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-        local win_current_config = vim.api.nvim_win_get_config(cache.ctx.win)
-        local config_changes = {}
-        local num_display_lines = #lines_to_display == 0 and 1 or #lines_to_display
-        local search_panel_config = (config.ui and config.ui.panels and config.ui.panels.search) or {}
-        local panel_max_height = search_panel_config.max_height or config.max_height or 10
-        local calculated_new_height = math.min(math.max(num_display_lines, 1), panel_max_height)
-        if win_current_config.height ~= calculated_new_height then
-            config_changes.height = calculated_new_height
-            local bottom_elements_total_height = 2
-            config_changes.row = vim.o.lines - calculated_new_height - bottom_elements_total_height
-        end
-        local query_display_str = cache.current_query == "" and (state.lang.SEARCH_ALL_FILES_LABEL or "all")
-            or "'" .. cache.current_query .. "'"
-        local new_title_str =
-            string.format("%s (%d - %s)", state.lang.SEARCH or "Search", #cache.search_results, query_display_str)
-        local formatted_win_title = " " .. new_title_str .. " "
-        if win_current_config.title ~= formatted_win_title then
-            config_changes.title = formatted_win_title
-        end
-        if not vim.tbl_isempty(config_changes) then
-            local final_win_config = vim.tbl_extend("force", win_current_config, config_changes)
-            pcall(vim.api.nvim_win_set_config, cache.ctx.win, final_win_config)
-        end
-    end
-
-    cache.ctx.entities = cache.search_results
-
-    -- Restore cursor position
-    if #lines_to_display > 0 and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-        local max_line = #lines_to_display
-        local target_line = math.min(cache.last_cursor_position, max_line)
-        target_line = math.max(target_line, 1)
-        pcall(vim.api.nvim_win_set_cursor, cache.ctx.win, { target_line, 0 })
-    end
+    return items
 end
 
---- Rewrites the panel buffer with the current search results, applies fuzzy-match highlights,
---- resizes the floating window, and updates the action bar.
---- Intended as the lightweight refresh after a query change during live input.
-local function update_search_display()
-    if not cache.ctx or not cache.ctx.buf or not vim.api.nvim_buf_is_valid(cache.ctx.buf) then
-        return
-    end
-    local lines_to_display = {}
-    cache.file_ids_map = {}
-    local function is_buffer_active(file_path_to_check)
-        local current_b = vim.api.nvim_get_current_buf()
-        if not vim.api.nvim_buf_is_valid(current_b) then
-            return false
-        end
-        local buffer_name = vim.api.nvim_buf_get_name(current_b)
-        return buffer_name ~= ""
-            and vim.fn.fnamemodify(buffer_name, ":p") == vim.fn.fnamemodify(file_path_to_check, ":p")
-    end
-    local is_results_empty = (#cache.search_results == 0)
-    if is_results_empty then
-        table.insert(
-            lines_to_display,
-            (common.get_entity_icon("search", false, true))
-                .. (state.lang.SEARCH_EMPTY or "No files found matching your search criteria.")
-        )
-    else
-        for i, entity_item in ipairs(cache.search_results) do
-            local is_item_active = is_buffer_active(entity_item.path)
-            local item_icon = common.get_entity_icon("file", is_item_active, false)
-            local display_path_text = entity_item.relative_path_display
-                or relpath_to_project(entity_item.path, get_project_path_abs())
-            table.insert(lines_to_display, item_icon .. display_path_text)
-            cache.file_ids_map[i] = entity_item.id
-        end
-    end
-    vim.bo[cache.ctx.buf].modifiable = true
-    vim.api.nvim_buf_set_lines(cache.ctx.buf, 0, -1, false, lines_to_display)
-    vim.bo[cache.ctx.buf].modifiable = false
-    set_cursor_to_first_line()
-    local ns_id = vim.api.nvim_create_namespace("lvim_search_highlights")
-    vim.api.nvim_buf_clear_namespace(cache.ctx.buf, ns_id, 0, -1)
-    if cache.current_query and cache.current_query ~= "" and not is_results_empty then
-        for line_idx, entity_item in ipairs(cache.search_results) do
-            local display_text = entity_item.relative_path_display or ""
-            local icon_len = #common.get_entity_icon("file", is_buffer_active(entity_item.path), false)
-            local match_positions = find_all_match_positions(display_text, cache.current_query)
-            for _, pos in ipairs(match_positions) do
-                local start_col = pos.start + icon_len
-                local end_col = start_col + pos.length
-                local hl_group
-                if pos.priority and pos.priority >= 100 then
-                    hl_group = "LvimSpaceFuzzyPrimary"
-                elseif pos.priority and pos.priority >= 80 then
-                    hl_group = "LvimSpaceFuzzySecondary"
-                else
-                    hl_group = "LvimSpaceFuzzySecondary"
-                end
-                pcall(vim.api.nvim_buf_set_extmark, cache.ctx.buf, ns_id, line_idx - 1, start_col, {
-                    end_col = end_col,
-                    hl_group = hl_group,
-                })
-            end
-        end
-    end
-    if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-        local win_current_config = vim.api.nvim_win_get_config(cache.ctx.win)
-        local config_changes = {}
-        local num_display_lines = #lines_to_display == 0 and 1 or #lines_to_display
-        local search_panel_config = (config.ui and config.ui.panels and config.ui.panels.search) or {}
-        local panel_max_height = search_panel_config.max_height or config.max_height or 10
-        local calculated_new_height = math.min(math.max(num_display_lines, 1), panel_max_height)
-        if win_current_config.height ~= calculated_new_height then
-            config_changes.height = calculated_new_height
-            local bottom_elements_total_height = 2
-            config_changes.row = vim.o.lines - calculated_new_height - bottom_elements_total_height
-        end
-        local query_display_str = cache.current_query == "" and (state.lang.SEARCH_ALL_FILES_LABEL or "all")
-            or "'" .. cache.current_query .. "'"
-        local new_title_str =
-            string.format("%s (%d - %s)", state.lang.SEARCH or "Search", #cache.search_results, query_display_str)
-        local formatted_win_title = " " .. new_title_str .. " "
-        if win_current_config.title ~= formatted_win_title then
-            config_changes.title = formatted_win_title
-        end
-        if not vim.tbl_isempty(config_changes) then
-            local final_win_config = vim.tbl_extend("force", win_current_config, config_changes)
-            pcall(vim.api.nvim_win_set_config, cache.ctx.win, final_win_config)
-        end
-    end
-    local action_bar_info = string.format(
-        (
-            state.lang.INFO_LINE_SEARCH
-            or "➤ [j] [k] | [/] or [s] search | 󱁐 file load 󰌑 file enter | [v]split [h]split | [p]rojects [w]orkspaces [t]abs [f]iles"
-        ),
-        cache.current_query == "" and (state.lang.SEARCH_ALL_FILES_LABEL or "all") or cache.current_query,
-        #cache.search_results
-    )
-    ui.open_actions(action_bar_info)
-end
-
---- Opens the search input floating window and wires up live-update autocmds
---- so that the results panel updates as the user types (debounced at 80 ms).
-local function show_search_input()
-    local input_prompt = (state.lang.SEARCH_PROMPT or "Search files:") .. " "
-    local search_input_buf, search_input_win = ui.create_input_field(
-        input_prompt,
-        cache.current_query,
-        function(query_final_val)
-            if query_final_val == nil then
-                if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-                    vim.api.nvim_set_current_win(cache.ctx.win)
-                else
-                    local target_focus_win = get_last_normal_win()
-                    if target_focus_win and vim.api.nvim_win_is_valid(target_focus_win) then
-                        vim.api.nvim_set_current_win(target_focus_win)
-                    end
-                end
-            else
-                cache.current_query = query_final_val or ""
-                live_fzf_search(cache.current_query)
-                M.refresh()
-                if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-                    vim.api.nvim_set_current_win(cache.ctx.win)
-                end
-            end
-        end,
-        { input_filetype = "lvim-space-search-input" }
-    )
-    if not search_input_buf or not search_input_win then
-        return
-    end
-    local function update_search_display_without_actions()
-        M.refresh()
-    end
-    local live_update_timer, live_augroup =
-        nil, vim.api.nvim_create_augroup("LvimSpaceSearchInputLiveUpdate", { clear = true })
-    local function cleanup_live_timer()
-        if live_update_timer then
-            pcall(function()
-                if live_update_timer.close then
-                    live_update_timer:close()
-                end
-            end)
-            live_update_timer = nil
-        end
-    end
-    vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
-        buffer = search_input_buf,
-        group = live_augroup,
-        callback = vim.schedule_wrap(function()
-            if not vim.api.nvim_buf_is_valid(search_input_buf) then
-                cleanup_live_timer()
-                return
-            end
-            local current_input_text = vim.api.nvim_buf_get_lines(search_input_buf, 0, 1, false)[1] or ""
-            cleanup_live_timer()
-            live_update_timer = vim.defer_fn(function()
-                if current_input_text ~= cache.current_query then
-                    cache.current_query = current_input_text
-                    live_fzf_search(current_input_text)
-                    update_search_display_without_actions()
-                end
-            end, 80)
-        end),
-    })
-    vim.api.nvim_create_autocmd("BufWipeout", {
-        buffer = search_input_buf,
-        group = live_augroup,
-        callback = function()
-            cleanup_live_timer()
-            vim.api.nvim_del_augroup_by_id(live_augroup)
-        end,
-        once = true,
-    })
-end
-
---- Checks whether the current session state allows a file operation
---- (requires an active project, workspace, and tab).
----@return boolean ok true when all prerequisites are met, false (with notification) otherwise.
-local function _can_perform_file_operation()
-    if not state.project_id then
-        notify.error(state.lang.PROJECT_NOT_ACTIVE or "No active project")
-        return false
-    end
-    if not state.workspace_id then
-        notify.error(state.lang.WORKSPACE_NOT_ACTIVE or "No active workspace")
-        return false
-    end
-    if not state.tab_active then
-        notify.error(state.lang.TAB_NOT_ACTIVE or "No active tab")
-        return false
-    end
-    return true
-end
-
---- Loads `file_path_to_open` into the last non-plugin editor window (or edits it in-place).
---- Saves the window context for the active tab and shows a success notification.
----@param file_path_to_open string Absolute path of the file to open.
----@return boolean success true when the file was opened, false on any error.
-local function _open_file_in_editor_window(file_path_to_open)
-    if not _can_perform_file_operation() then
-        return false
-    end
-    if not file_path_to_open or vim.trim(file_path_to_open) == "" then
+---Open the selected file in the best non-plugin editor window AND add it to the active tab's buffer list,
+---persisting the change — preserving the legacy search on-select behaviour 1:1 (open + record + save), via
+---the existing data / session functions. No panel is opened.
+---@param path string|nil Absolute path of the chosen file.
+local function select_file(path)
+    if not path or vim.trim(path) == "" then
         notify.error(state.lang.FILE_PATH_NOT_FOUND or "Cannot find path for selected file")
-        return false
+        return
     end
-    if vim.fn.filereadable(file_path_to_open) ~= 1 then
+    if vim.fn.filereadable(path) ~= 1 then
         notify.error(state.lang.FILE_NOT_READABLE or "File is not readable")
-        return false
+        return
     end
-    local buffer_num = vim.fn.bufadd(file_path_to_open)
-    vim.fn.bufload(buffer_num)
-    local target_editor_window = last_real_win
-    if
-        not target_editor_window
-        or not vim.api.nvim_win_is_valid(target_editor_window)
-        or is_plugin_panel_win(target_editor_window)
-    then
-        target_editor_window = get_last_normal_win()
-        last_real_win = target_editor_window
-    end
-    if target_editor_window and vim.api.nvim_win_is_valid(target_editor_window) then
-        vim.api.nvim_win_set_buf(target_editor_window, buffer_num)
 
-        if session.save_window_context then
-            session.save_window_context(state.tab_active)
+    local bufnr = vim.fn.bufadd(path)
+    vim.fn.bufload(bufnr)
+
+    -- Pick a real (non-plugin, non-floating) editor window to load the file into; fall back to `:edit`.
+    local target = vim.api.nvim_get_current_win()
+    if ui.is_plugin_window(target) or vim.api.nvim_win_get_config(target).relative ~= "" then
+        target = nil
+        for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+            if vim.api.nvim_win_get_config(w).relative == "" and not ui.is_plugin_window(w) then
+                target = w
+                break
+            end
         end
+    end
+    if target and vim.api.nvim_win_is_valid(target) then
+        vim.api.nvim_win_set_buf(target, bufnr)
+        vim.api.nvim_set_current_win(target)
     else
-        vim.cmd("edit " .. vim.fn.fnameescape(file_path_to_open))
-        last_real_win = vim.api.nvim_get_current_win()
+        vim.cmd("edit " .. vim.fn.fnameescape(path))
     end
-    notify.info(state.lang.SEARCH_FILE_OPENED or "File opened successfully.")
-    return true
-end
+    if session.save_window_context then
+        session.save_window_context(state.tab_active)
+    end
 
---- Opens the search result under the cursor and, optionally, adds it to the active tab.
----@param opts? {close_panel?: boolean} When `close_panel` is true, all panels are closed after opening.
-function M.handle_file_switch(opts)
-    opts = opts or {}
-    if not _can_perform_file_operation() then
-        return
-    end
-    local win = cache.ctx and cache.ctx.win
-    if not (win and vim.api.nvim_win_is_valid(win)) then
-        notify.error(state.lang.FILE_SWITCH_FAILED or "Cannot switch file: invalid search window")
-        return
-    end
-    local row = vim.api.nvim_win_get_cursor(win)[1]
-    local file_path = cache.file_ids_map[row]
-    if not file_path then
-        return
-    end
-    if vim.fn.filereadable(file_path) ~= 1 then
-        notify.error(state.lang.FILE_NOT_READABLE or "File is not readable")
-        return
-    end
-    local opened = _open_file_in_editor_window(file_path)
-    if not opened then
-        notify.error(state.lang.SEARCH_FILE_OPEN_FAILED or "Failed to open file")
-        return
-    end
+    -- Record the file in the active tab (persisted) when it is not already there.
     local tab = data.find_tab_by_id(state.tab_active, state.workspace_id)
     if tab then
         local ok, tdata = pcall(vim.fn.json_decode, tab.data or "{}")
@@ -1056,276 +110,110 @@ function M.handle_file_switch(opts)
         tdata.buffers = tdata.buffers or {}
         local exists = false
         for _, buf in ipairs(tdata.buffers) do
-            if buf.filePath == file_path then
+            if buf.filePath == path then
                 exists = true
                 break
             end
         end
         if not exists then
-            table.insert(tdata.buffers, {
-                filePath = file_path,
-                bufnr = vim.api.nvim_get_current_buf(),
-            })
+            table.insert(tdata.buffers, { filePath = path, bufnr = bufnr })
             data.update_tab_data(state.tab_active, vim.fn.json_encode(tdata), state.workspace_id)
             session.save_current_state(state.tab_active, true)
         end
     end
-    if opts.close_panel then
-        local target = last_real_win
-        ui.close_all()
-        if target and vim.api.nvim_win_is_valid(target) then
-            pcall(vim.api.nvim_set_current_win, target)
-        end
-        return
-    end
-    M.refresh()
-    vim.schedule(function()
-        if win and vim.api.nvim_win_is_valid(win) then
-            local buf = cache.ctx.buf
-            local line_count = vim.api.nvim_buf_line_count(buf)
-            local new_row = math.min(row, line_count)
-            pcall(vim.api.nvim_win_set_cursor, win, { new_row, 0 })
-        end
-    end)
+    notify.info(state.lang.SEARCH_FILE_OPENED or "File opened successfully.")
 end
 
---- Internal helper: opens the file under the cursor using the given Vim split command.
---- Closes all panels before splitting and updates `last_real_win`.
----@param split_cmd "vsplit"|"split" The Vim split command to use.
-local function _split_file_common(split_cmd)
-    if not _can_perform_file_operation() then
-        return
-    end
-    local file_id_to_split = common.get_id_at_cursor(cache.file_ids_map)
-    if not file_id_to_split or vim.trim(file_id_to_split) == "" then
+---Open the selected file in a split (no tab mutation — matching the legacy split-open keys).
+---@param split_cmd "vsplit"|"split" The Vim split command.
+---@param path string|nil Absolute path of the chosen file.
+local function open_in_split(split_cmd, path)
+    if not path or vim.trim(path) == "" then
         notify.error(state.lang.FILE_PATH_NOT_FOUND or "Cannot find path for selected file")
         return
     end
-    if vim.fn.filereadable(file_id_to_split) ~= 1 then
+    if vim.fn.filereadable(path) ~= 1 then
         notify.error(state.lang.FILE_NOT_READABLE or "File is not readable")
         return
     end
-    local previous_editor_win = last_real_win
-    ui.close_all()
-    local success_split, _ = pcall(function()
-        if previous_editor_win and vim.api.nvim_win_is_valid(previous_editor_win) then
-            vim.api.nvim_set_current_win(previous_editor_win)
-        end
-        vim.cmd(split_cmd .. " " .. vim.fn.fnameescape(file_id_to_split))
-        last_real_win = vim.api.nvim_get_current_win()
-    end)
-    local notify_success, notify_fail
+    local ok = pcall(vim.cmd, split_cmd .. " " .. vim.fn.fnameescape(path))
     if split_cmd == "vsplit" then
-        notify_success = state.lang.FILE_OPENED_VERTICAL or "File opened in vertical split"
-        notify_fail = state.lang.FILE_OPEN_VERTICAL_FAILED or "Failed to open file in vertical split"
+        if ok then
+            notify.info(state.lang.FILE_OPENED_VERTICAL or "File opened in vertical split")
+        else
+            notify.error(state.lang.FILE_OPEN_VERTICAL_FAILED or "Failed to open file in vertical split")
+        end
     else
-        notify_success = state.lang.FILE_OPENED_HORIZONTAL or "File opened in horizontal split"
-        notify_fail = state.lang.FILE_OPEN_HORIZONTAL_FAILED or "Failed to open file in horizontal split"
-    end
-    if success_split then
-        notify.info(notify_success)
-    else
-        notify.error(notify_fail)
+        if ok then
+            notify.info(state.lang.FILE_OPENED_HORIZONTAL or "File opened in horizontal split")
+        else
+            notify.error(state.lang.FILE_OPEN_HORIZONTAL_FAILED or "Failed to open file in horizontal split")
+        end
     end
 end
 
---- Opens the search result under the cursor in a new vertical split.
-function M.handle_split_vertical()
-    _split_file_common("vsplit")
-end
-
---- Opens the search result under the cursor in a new horizontal split.
-function M.handle_split_horizontal()
-    _split_file_common("split")
-end
-
---- Closes all plugin panels and opens the projects panel.
-function M.navigate_to_projects()
-    ui.close_all()
-    require("lvim-space.ui.projects").init()
-end
-
---- Closes all plugin panels and opens the workspaces panel.
---- Shows a notification when no project is active.
-function M.navigate_to_workspaces()
-    if not state.project_id then
-        notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project")
-        return
-    end
-    ui.close_all()
-    require("lvim-space.ui.workspaces").init()
-end
-
---- Closes all plugin panels and opens the tabs panel.
---- Shows a notification when no project or workspace is active.
-function M.navigate_to_tabs()
-    if not state.project_id then
-        notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project")
-        return
-    end
-    if not state.workspace_id then
-        notify.info(state.lang.WORKSPACE_NOT_ACTIVE or "No active workspace")
-        return
-    end
-    ui.close_all()
-    require("lvim-space.ui.tabs").init()
-end
-
---- Closes all plugin panels and opens the files panel.
---- Shows a notification when no project, workspace, or active tab is available.
-function M.navigate_to_files()
-    if not state.project_id then
-        notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project")
-        return
-    end
-    if not state.workspace_id then
-        notify.info(state.lang.WORKSPACE_NOT_ACTIVE or "No active workspace")
-        return
-    end
-    if not state.tab_active then
-        notify.info(state.lang.TAB_NOT_ACTIVE or "No active tab")
-        return
-    end
-    ui.close_all()
-    require("lvim-space.ui.files").init()
-end
-
---- Registers all buffer-local keymaps for the search panel.
----@param context_arg table Panel context with `buf` field.
-local function setup_keymaps(context_arg)
-    local keymap_options = { buffer = context_arg.buf, noremap = true, silent = true, nowait = true }
-    vim.keymap.set("n", config.keymappings.action.switch, function()
-        M.handle_file_switch({ close_panel = false })
-    end, keymap_options)
-    vim.keymap.set("n", config.keymappings.action.enter, function()
-        M.handle_file_switch({ close_panel = true })
-    end, keymap_options)
-    vim.keymap.set("n", config.keymappings.action.split_v, function()
-        M.handle_split_vertical()
-    end, keymap_options)
-    vim.keymap.set("n", config.keymappings.action.split_h, function()
-        M.handle_split_horizontal()
-    end, keymap_options)
-    vim.keymap.set("n", config.keymappings.global.search, function()
-        show_search_input()
-    end, keymap_options)
-    vim.keymap.set("n", config.keymappings.global.projects, function()
-        M.navigate_to_projects()
-    end, keymap_options)
-    vim.keymap.set("n", config.keymappings.global.workspaces, function()
-        M.navigate_to_workspaces()
-    end, keymap_options)
-    vim.keymap.set("n", config.keymappings.global.tabs, function()
-        M.navigate_to_tabs()
-    end, keymap_options)
-    vim.keymap.set("n", config.keymappings.global.files, function()
-        M.navigate_to_files()
-    end, keymap_options)
-end
-
---- Initialises or re-initialises the search panel from scratch.
---- Loads all project files, applies the current query, and creates the panel window.
---- Requires an active project, workspace, and tab.
----@param initial_selected_line_num? number Panel line to place the cursor on after opening.
-M.init = function(initial_selected_line_num)
-    save_window_context()
-
+---Open the file-search picker. Requires an active project, workspace and tab (the same preconditions as the
+---legacy panel). Releases any open lvim-space panel first so the picker takes the shared area zone cleanly.
+M.init = function()
     if not state.project_id then
         notify.error(state.lang.PROJECT_NOT_ACTIVE or "No active project")
-        common.open_entity_error("search", "PROJECT_NOT_ACTIVE")
-        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win)
         return
     end
     if not state.workspace_id then
         notify.error(state.lang.WORKSPACE_NOT_ACTIVE or "No active workspace")
-        common.open_entity_error("search", "WORKSPACE_NOT_ACTIVE")
-        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win)
         return
     end
     if not state.tab_active then
         notify.error(state.lang.TAB_NOT_ACTIVE or "No active tab")
-        common.open_entity_error("search", "TAB_NOT_ACTIVE")
-        common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win)
+        return
+    end
+    local cwd = project_path_abs()
+    if not cwd then
+        notify.error(state.lang.PROJECT_NOT_ACTIVE or "No active project")
         return
     end
 
-    local restored_win = session.restore_window_context and session.restore_window_context(state.tab_active)
-    if restored_win then
-        last_real_win = restored_win
+    local fd_bin = (config.search or ""):match("^%S+") or "fd"
+    if vim.fn.executable(fd_bin) ~= 1 then
+        notify.error("lvim-space search requires '" .. fd_bin .. "' to be installed and on PATH.")
+        return
     end
 
-    if not last_real_win or not vim.api.nvim_win_is_valid(last_real_win) or is_plugin_panel_win(last_real_win) then
-        last_real_win = get_last_normal_win()
-    end
+    -- Release any open panel so the picker docks in the (shared) area zone without stacking over it.
+    ui.close_all()
 
-    if session.save_window_context then
-        session.save_window_context(state.tab_active)
-    end
-
-    load_all_files()
-    filter_files(cache.current_query)
-    cache.file_ids_map = {}
-
-    local function search_results_formatter(search_entry_item)
-        if not search_entry_item or not search_entry_item.path then
-            return "Error: Invalid search entry"
-        end
-        return search_entry_item.relative_path_display
-            or relpath_to_project(search_entry_item.path, get_project_path_abs())
-    end
-
-    local function is_search_item_active_custom_fn(entity_item_to_check)
-        if not entity_item_to_check or not entity_item_to_check.path then
-            return false
-        end
-        local current_buf_handle = vim.api.nvim_get_current_buf()
-        if not vim.api.nvim_buf_is_valid(current_buf_handle) then
-            return false
-        end
-        local current_buf_name = vim.api.nvim_buf_get_name(current_buf_handle)
-        return current_buf_name ~= ""
-            and vim.fn.fnamemodify(current_buf_name, ":p") == vim.fn.fnamemodify(entity_item_to_check.path, ":p")
-    end
-
-    local initial_line = initial_selected_line_num
-
-    if not initial_line and cache.last_cursor_position > 1 then
-        initial_line = cache.last_cursor_position
-    end
-
-    if not initial_line then
-        for i, search_entry in ipairs(cache.search_results) do
-            if is_search_item_active_custom_fn(search_entry) then
-                initial_line = i
-                break
+    picker.open({
+        title = state.lang.SEARCH or "Search",
+        icon = config.ui.icons and config.ui.icons.file or nil,
+        layout = config.ui.mode,
+        items = collect_files(cwd),
+        on_confirm = function(item)
+            if item and item.path then
+                select_file(item.path)
             end
-        end
-    end
-
-    local panel_context = common.init_entity_list(
-        "search",
-        cache.search_results,
-        cache.file_ids_map,
-        M.init,
-        nil,
-        "id",
-        initial_line or 1,
-        search_results_formatter,
-        is_search_item_active_custom_fn
-    )
-    if not panel_context then
-        return
-    end
-    cache.ctx = panel_context
-
-    if panel_context.win and vim.api.nvim_win_is_valid(panel_context.win) then
-        local cursor_pos = vim.api.nvim_win_get_cursor(panel_context.win)
-        cache.last_cursor_position = cursor_pos[1]
-    end
-
-    update_search_display()
-    setup_keymaps(panel_context)
-    setup_cursor_tracking(panel_context)
+        end,
+        -- Split-open row actions. The picker binds these in the INSERT query prompt too, so they MUST be
+        -- chord keys (a plain "v"/"h" would be swallowed while typing a query containing those letters) — the
+        -- picker-idiomatic <C-v> / <C-x>. The panels keep their plain v/h (normal-mode, not a picker).
+        keys = {
+            {
+                key = "<C-v>",
+                name = "vsplit",
+                run = function(item, close)
+                    close()
+                    open_in_split("vsplit", item and item.path)
+                end,
+            },
+            {
+                key = "<C-x>",
+                name = "hsplit",
+                run = function(item, close)
+                    close()
+                    open_in_split("split", item and item.path)
+                end,
+            },
+        },
+    })
 end
 
 return M

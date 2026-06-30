@@ -12,7 +12,6 @@ local highlights = require("lvim-space.config.highlights")
 local M = vim.tbl_deep_extend("force", base, ui, keys, messages)
 M.ui = ui
 M.build = highlights.build
-M.force = highlights.force
 
 -- Expand the save path once at load time so callers always get an absolute path.
 if M.save then

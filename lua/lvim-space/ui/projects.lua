@@ -146,11 +146,7 @@ M.refresh = function()
     cache.ctx.is_empty = #new_lines == 0
     cache.ctx.entities = cache.projects_from_db
 
-    if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-        local win_config = vim.api.nvim_win_get_config(cache.ctx.win)
-        win_config.title = " " .. (state.lang.PROJECTS or "Projects") .. " "
-        pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
-    end
+    ui.set_title(state.lang.PROJECTS or "Projects")
 end
 
 --- Returns the entity-type definition table for "project" from the common module.
@@ -453,69 +449,27 @@ local function enter_navigate_next(project_id)
     end)
 end
 
---- Moves the project under the cursor one position up or down in the sort order,
---- swapping sort_order values with the adjacent project and refreshing the panel.
+--- Moves the project under the cursor one position up or down in the sort order via the shared
+--- in-place reorder helper: the held project is swapped with its visual neighbour, committed to the
+--- DB synchronously, and re-rendered into the same panel buffer with the cursor following it — no
+--- `M.init` rebuild, so a rapid `K`/`J` burst always carries the same project (see common.reorder_entity).
 ---@param ctx table Panel context with `win` field pointing to the projects window
 ---@param direction "up"|"down" Direction to move the project
 local function handle_move_operation(ctx, direction)
-    if not ctx or not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
-        return
-    end
-    local current_visual_line = vim.api.nvim_win_get_cursor(ctx.win)[1]
-    local project_id_to_move = cache.project_ids_map[current_visual_line]
-    if not project_id_to_move then
-        return
-    end
-    local project_to_move_data = cache.projects_from_db[current_visual_line]
-    local project_type_def = get_entity_def()
-    if not project_type_def then
-        notify.error(state.lang.PROJECT_REORDER_FAILED)
-        return
-    end
-    if not project_to_move_data or tostring(project_to_move_data.id) ~= tostring(project_id_to_move) then
-        notify.error(state.lang[project_type_def.ui_cache_error])
-        return
-    end
-    local current_sort_order = tonumber(project_to_move_data.sort_order)
-    if not current_sort_order then
-        notify.error(state.lang[project_type_def.reorder_failed_error])
-        return
-    end
-    if direction == "up" and current_visual_line <= 1 then
-        notify.info(state.lang.PROJECT_ALREADY_AT_TOP)
-        return
-    elseif direction == "down" and current_visual_line >= #cache.projects_from_db then
-        notify.info(state.lang.PROJECT_ALREADY_AT_BOTTOM)
-        return
-    end
-    local target_sort_order = direction == "up" and (current_sort_order - 1) or (current_sort_order + 1)
-    local new_order_table = {}
-    for _, proj_entry in ipairs(cache.projects_from_db) do
-        local entry_sort_order = tonumber(proj_entry.sort_order)
-        if not entry_sort_order then
-            goto continue
-        end
-        local new_order_for_this_item = entry_sort_order
-        if proj_entry.id == project_id_to_move then
-            new_order_for_this_item = target_sort_order
-        elseif entry_sort_order == target_sort_order then
-            new_order_for_this_item = current_sort_order
-        end
-        table.insert(new_order_table, { id = proj_entry.id, order = new_order_for_this_item })
-        ::continue::
-    end
-    local success, err_msg_code = data.reorder_projects(new_order_table)
-    if success then
-        local new_line = direction == "up" and (current_visual_line - 1) or (current_visual_line + 1)
-        M.init(new_line)
-    else
-        local err_key_to_use = project_type_def.reorder_failed_error
-        if err_msg_code == "PROJECT_REORDER_MISSING_PARAMS" then
-            err_key_to_use = project_type_def.reorder_missing_params_error
-        end
-        notify.error(state.lang[err_key_to_use])
-        M.init(current_visual_line)
-    end
+    common.reorder_entity({
+        ctx = ctx,
+        type_name = "project",
+        entities = cache.projects_from_db,
+        id_map = cache.project_ids_map,
+        direction = direction,
+        active_id = state.project_id,
+        persist = function(order_table)
+            return data.reorder_projects(order_table)
+        end,
+        formatter = function(project_entry)
+            return string.format("%s [%s]", project_entry.name or "???", project_entry.path or "???")
+        end,
+    })
 end
 
 --- Public entry point that delegates to `M.add_project` to start the add-project flow.
@@ -750,6 +704,56 @@ local function setup_keymaps(ctx)
             M.navigate_to_search()
         end
     end, keymap_opts)
+
+    -- The navigable footer bar: each button reuses the same action functions the keymaps above fire.
+    common.set_action_footer(ctx, {
+        reorder = true,
+        load = function()
+            M.handle_project_go({ space_mode = true })
+        end,
+        enter = function()
+            M.handle_project_go({ enter_mode = true })
+        end,
+        add = function()
+            M.handle_project_add()
+        end,
+        rename = function()
+            M.handle_project_rename(ctx)
+        end,
+        delete = function()
+            M.handle_project_delete(ctx)
+        end,
+        panels = {
+            {
+                key = config.keymappings.global.workspaces,
+                name = "workspaces",
+                run = function()
+                    M.navigate_to_workspaces()
+                end,
+            },
+            {
+                key = config.keymappings.global.tabs,
+                name = "tabs",
+                run = function()
+                    M.navigate_to_tabs()
+                end,
+            },
+            {
+                key = config.keymappings.global.files,
+                name = "files",
+                run = function()
+                    M.navigate_to_files()
+                end,
+            },
+            {
+                key = config.keymappings.global.search,
+                name = "search",
+                run = function()
+                    M.navigate_to_search()
+                end,
+            },
+        },
+    })
 end
 
 --- Initialises (or re-initialises) the projects panel window.
@@ -803,11 +807,8 @@ M.init = function(selected_line_num)
     if ctx.win and vim.api.nvim_win_is_valid(ctx.win) then
         local cursor_pos = vim.api.nvim_win_get_cursor(ctx.win)
         cache.last_cursor_position = cursor_pos[1]
-
-        local win_config = vim.api.nvim_win_get_config(ctx.win)
-        win_config.title = " " .. (state.lang.PROJECTS or "Projects") .. " "
-        pcall(vim.api.nvim_win_set_config, ctx.win, win_config)
     end
+    ui.set_title(state.lang.PROJECTS or "Projects")
 
     setup_keymaps(ctx)
     setup_cursor_tracking(ctx)

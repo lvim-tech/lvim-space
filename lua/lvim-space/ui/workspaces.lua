@@ -203,11 +203,7 @@ M.refresh = function()
     cache.ctx.is_empty = #new_lines == 0
     cache.ctx.entities = cache.workspaces_from_db
 
-    if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-        local win_config = vim.api.nvim_win_get_config(cache.ctx.win)
-        win_config.title = " " .. final_panel_title .. " "
-        pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
-    end
+    ui.set_title(final_panel_title)
 end
 
 --- Validates a workspace name for an add or rename operation.
@@ -415,75 +411,29 @@ local function enter_navigate_to_last_panel(workspace_id)
     end
 end
 
---- Moves the workspace under the cursor one position up or down in the sort order,
---- swapping sort_order values with the adjacent workspace and refreshing the panel.
+--- Moves the workspace under the cursor one position up or down in the sort order via the shared
+--- in-place reorder helper: the held workspace is swapped with its visual neighbour, committed to the
+--- DB synchronously, and re-rendered into the same panel buffer with the cursor following it — no
+--- `M.init` rebuild, so a rapid `K`/`J` burst always carries the same workspace (see common.reorder_entity).
 ---@param ctx table Panel context with `win` field pointing to the workspaces window
 ---@param direction "up"|"down" Direction to move the workspace
 local function handle_move_operation(ctx, direction)
-    if not ctx or not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
-        return
-    end
-    local current_visual_line = vim.api.nvim_win_get_cursor(ctx.win)[1]
-    local workspace_id_to_move = cache.workspace_ids_map[current_visual_line]
-    if not workspace_id_to_move then
-        return
-    end
-    local workspace_to_move_data = nil
-    for _, ws_entry in ipairs(cache.workspaces_from_db) do
-        if tostring(ws_entry.id) == tostring(workspace_id_to_move) then
-            workspace_to_move_data = ws_entry
-            break
-        end
-    end
-    local ws_def = get_entity_def()
-    if not ws_def then
-        notify.error(state.lang.WORKSPACE_REORDER_FAILED or "Failed to reorder workspace.")
-        return
-    end
-    if not workspace_to_move_data then
-        notify.error(state.lang[ws_def.ui_cache_error] or "UI data inconsistency.")
-        return
-    end
-    local current_sort_order = tonumber(workspace_to_move_data.sort_order)
-    if not current_sort_order then
-        notify.error(state.lang[ws_def.reorder_failed_error] or "Failed to reorder workspace.")
-        return
-    end
-    if direction == "up" and current_sort_order <= 1 then
-        notify.info(state.lang[ws_def.already_at_top] or "Workspace is already at the top.")
-        return
-    elseif direction == "down" and current_sort_order >= #cache.workspaces_from_db then
-        notify.info(state.lang[ws_def.already_at_bottom] or "Workspace is already at the bottom.")
-        return
-    end
-    local target_sort_order = direction == "up" and (current_sort_order - 1) or (current_sort_order + 1)
-    local new_order_table = {}
-    for _, ws_entry in ipairs(cache.workspaces_from_db) do
-        local entry_sort_order = tonumber(ws_entry.sort_order)
-        if not entry_sort_order then
-            goto continue_ws_loop
-        end
-        local new_order_for_this_item = entry_sort_order
-        if ws_entry.id == workspace_id_to_move then
-            new_order_for_this_item = target_sort_order
-        elseif entry_sort_order == target_sort_order then
-            new_order_for_this_item = current_sort_order
-        end
-        table.insert(new_order_table, { id = ws_entry.id, order = new_order_for_this_item })
-        ::continue_ws_loop::
-    end
-    local success, err_msg_code = data.reorder_workspaces(state.project_id, new_order_table)
-    if success then
-        local new_line = direction == "up" and (current_visual_line - 1) or (current_visual_line + 1)
-        M.init(new_line)
-    else
-        local err_key_to_use = (ws_def and ws_def.reorder_failed_error) or "WORKSPACE_REORDER_FAILED"
-        if err_msg_code == "WORKSPACE_REORDER_MISSING_PARAMS" then
-            err_key_to_use = (ws_def and ws_def.reorder_missing_params_error) or "WORKSPACE_REORDER_MISSING_PARAMS"
-        end
-        notify.error(state.lang[err_key_to_use] or "Failed to reorder workspace.")
-        M.init(current_visual_line)
-    end
+    common.reorder_entity({
+        ctx = ctx,
+        type_name = "workspace",
+        entities = cache.workspaces_from_db,
+        id_map = cache.workspace_ids_map,
+        direction = direction,
+        active_id = state.workspace_id,
+        persist = function(order_table)
+            return data.reorder_workspaces(state.project_id, order_table)
+        end,
+        formatter = function(workspace_entry)
+            local tabs_obj = safe_json_decode(workspace_entry.tabs, {})
+            local tab_count = tabs_obj.tab_ids and #tabs_obj.tab_ids or 0
+            return (workspace_entry.name or "???") .. utils.string.to_superscript(tab_count)
+        end,
+    })
 end
 
 --- Opens an input prompt to create a new workspace under the active project.
@@ -778,6 +728,56 @@ local function setup_keymaps(ctx)
             M.navigate_to_search()
         end
     end, keymap_opts)
+
+    -- The navigable footer bar: each button reuses the same action functions the keymaps above fire.
+    common.set_action_footer(ctx, {
+        reorder = true,
+        load = function()
+            M.handle_workspace_go({ space_mode = true })
+        end,
+        enter = function()
+            M.handle_workspace_go({ enter_mode = true })
+        end,
+        add = function()
+            M.handle_workspace_add()
+        end,
+        rename = function()
+            M.handle_workspace_rename(ctx)
+        end,
+        delete = function()
+            M.handle_workspace_delete(ctx)
+        end,
+        panels = {
+            {
+                key = config.keymappings.global.projects,
+                name = "projects",
+                run = function()
+                    M.navigate_to_projects()
+                end,
+            },
+            {
+                key = config.keymappings.global.tabs,
+                name = "tabs",
+                run = function()
+                    M.navigate_to_tabs()
+                end,
+            },
+            {
+                key = config.keymappings.global.files,
+                name = "files",
+                run = function()
+                    M.navigate_to_files()
+                end,
+            },
+            {
+                key = config.keymappings.global.search,
+                name = "search",
+                run = function()
+                    M.navigate_to_search()
+                end,
+            },
+        },
+    })
 end
 
 --- Initialises (or re-initialises) the workspaces panel window for the active project.
@@ -878,7 +878,6 @@ M.init = function(selected_line_num, opts)
         local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
         cache.last_cursor_position = cursor_pos[1]
 
-        local win_config = vim.api.nvim_win_get_config(cache.ctx.win)
         local ws_def = get_entity_def()
         local base_ws_title = state.lang[(ws_def and ws_def.title) or "WORKSPACES"] or "Workspaces"
         local final_panel_title
@@ -891,8 +890,7 @@ M.init = function(selected_line_num, opts)
         else
             final_panel_title = base_ws_title
         end
-        win_config.title = " " .. final_panel_title .. " "
-        pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
+        ui.set_title(final_panel_title)
     end
 
     setup_keymaps(cache.ctx)

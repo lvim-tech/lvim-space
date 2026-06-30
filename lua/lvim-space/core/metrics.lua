@@ -23,6 +23,7 @@ local events = require("lvim-space.core.events")
 local levels = require("lvim-space.utils.levels")
 local notify = require("lvim-space.utils.notify")
 local config = require("lvim-space.config")
+local surface = require("lvim-utils.ui.surface")
 
 -- ============================================================================
 -- Configuration helpers
@@ -647,77 +648,46 @@ end
 -- Floating window display
 -- ============================================================================
 
---- Open a centred floating window displaying `content`.
---- Returns buf and win handles.
+--- Open a centred metrics float on the shared lvim-utils.ui.surface chassis: a single markdown content
+--- block inside the ONE unified frame border (`surface.FRAME_BORDER` → `config.ui.border`) with a native
+--- centered-left border-title. Returns the block's `(buf, win)` plus the live surface `state` so the caller
+--- closes it cleanly via `state.close` (the chassis tears down the container + every band window). `q`/`<Esc>`
+--- close via the chassis `close_keys`.
 ---@param title   string
 ---@param content string
----@return integer buf
----@return integer win
+---@return integer|nil buf
+---@return integer|nil win
+---@return table|nil state  The live surface state (`.close`), or nil on failure
 local function open_float(title, content)
-    local api = vim.api
-    local buf = api.nvim_create_buf(false, true)
-    vim.bo[buf].buftype = "nofile"
-    vim.bo[buf].filetype = "markdown"
-    vim.bo[buf].bufhidden = "wipe" -- closing the window wipes the buffer (and its resize autocmd)
-
     local raw_lines = vim.split(content, "\n")
-    -- Centred geometry from the live screen size; recomputed on resize below.
-    local function geometry()
-        local width = math_min(90, math_max(60, vim.o.columns - 10))
-        local height = math_min(40, math_max(10, #raw_lines + 2))
-        return {
-            width = width,
-            height = height,
-            row = math_floor((vim.o.lines - height) / 2),
-            col = math_floor((vim.o.columns - width) / 2),
-        }
-    end
-    local g = geometry()
-
-    local win = api.nvim_open_win(buf, true, {
-        relative = "editor",
-        width = g.width,
-        height = g.height,
-        row = g.row,
-        col = g.col,
-        style = "minimal",
-        border = "rounded",
-        title = " " .. title .. " ",
-        title_pos = "center",
-    })
-
-    -- Re-centre on terminal/window resize (buffer-scoped, so it clears when the buffer is wiped).
-    api.nvim_create_autocmd("VimResized", {
-        buffer = buf,
-        callback = function()
-            if not api.nvim_win_is_valid(win) then
-                return
-            end
-            local ng = geometry()
-            pcall(api.nvim_win_set_config, win, {
-                relative = "editor",
-                width = ng.width,
-                height = ng.height,
-                row = ng.row,
-                col = ng.col,
-            })
+    local provider = {
+        render = function()
+            return raw_lines, {}
         end,
+        size = function()
+            return nil, #raw_lines
+        end,
+    }
+    local st = surface.open({
+        mode = "float", -- a centred float (no `position` ⇒ editor-centered)
+        border = surface.FRAME_BORDER,
+        title = title,
+        size = {
+            width = { fixed = 0.7, min = 60, max = 0.9 },
+            height = { auto = true, min = 10, max = 0.85 },
+        },
+        -- Borderless block: the container owns the (space) FRAME_BORDER + native border-title. Without an
+        -- explicit border a block defaults to a rounded ring (util.resolve_border(nil)), which would draw a
+        -- redundant inner box inside the frame.
+        content = { blocks = { { id = "metrics", provider = provider, border = "none" } } },
+        close_keys = { "q", "<Esc>" },
     })
-
-    vim.bo[buf].modifiable = true
-    api.nvim_buf_set_lines(buf, 0, -1, false, raw_lines)
-    vim.bo[buf].modifiable = false
-
-    -- Universal close keymaps
-    local opts = { buffer = buf, silent = true, nowait = true }
-    vim.keymap.set("n", "q", function()
-        api.nvim_win_close(win, true)
-    end, opts)
-    vim.keymap.set("n", "<ESC>", function()
-        api.nvim_win_close(win, true)
-    end, opts)
-
-    return buf, win
+    local pan = st and st.panels and st.panels[1]
+    if not (pan and vim.api.nvim_buf_is_valid(pan.buf)) then
+        return nil, nil, nil
+    end
+    vim.bo[pan.buf].filetype = "markdown"
+    return pan.buf, pan.win, st
 end
 
 --- Replace buffer content without moving the cursor unnecessarily.
@@ -748,17 +718,22 @@ end
 ---@return integer|nil buf
 ---@return integer|nil win
 function M.show()
-    local buf, win = open_float("LvimSpace Metrics", M.report())
+    local buf, win, st = open_float("LvimSpace Metrics", M.report())
     if not buf then
         return nil, nil
     end
 
+    -- Refresh = tear down the chassis surface (container + bands) and reopen with the current report.
+    local function reopen()
+        if st and st.close then
+            pcall(st.close)
+        end
+        M.show()
+    end
+
     local opts = { buffer = buf, silent = true, nowait = true }
 
-    vim.keymap.set("n", "r", function()
-        vim.api.nvim_win_close(win, true)
-        M.show()
-    end, opts)
+    vim.keymap.set("n", "r", reopen, opts)
 
     vim.keymap.set("n", "y", function()
         vim.fn.setreg("+", M.report())
@@ -767,8 +742,7 @@ function M.show()
 
     vim.keymap.set("n", "R", function()
         M.reset()
-        vim.api.nvim_win_close(win, true)
-        M.show()
+        reopen()
     end, opts)
 
     vim.keymap.set("n", "s", function()
@@ -777,8 +751,7 @@ function M.show()
 
     vim.keymap.set("n", "l", function()
         M.load()
-        vim.api.nvim_win_close(win, true)
-        M.show()
+        reopen()
     end, opts)
 
     return buf, win
@@ -792,12 +765,12 @@ end
 ---   q / <ESC> – stop timer and close
 ---
 ---@param refresh_interval? integer  Seconds between auto-refreshes (default: config value)
----@return integer buf
----@return integer win
+---@return integer|nil buf
+---@return integer|nil win
 function M.show_live(refresh_interval)
     refresh_interval = refresh_interval or mcfg("default_refresh_interval", 2)
 
-    local buf, win = open_float("LvimSpace Metrics (live)", M.report())
+    local buf, win, st = open_float("LvimSpace Metrics (live)", M.report())
     if not buf or not vim.api.nvim_win_is_valid(win) then
         return buf, win
     end
@@ -828,8 +801,8 @@ function M.show_live(refresh_interval)
             timer:stop()
             timer:close()
         end)
-        if vim.api.nvim_win_is_valid(win) then
-            vim.api.nvim_win_close(win, true)
+        if st and st.close then
+            pcall(st.close)
         end
     end
 

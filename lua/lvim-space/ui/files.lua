@@ -645,6 +645,59 @@ local function setup_keymaps(ctx)
     vim.keymap.set("n", config.keymappings.global.search, function()
         M.navigate_to_search()
     end, keymap_opts)
+
+    -- The navigable footer bar: each button reuses the same action functions the keymaps above fire. Files
+    -- have no rename, but add the v/h split actions instead.
+    common.set_action_footer(ctx, {
+        load = function()
+            M.handle_file_switch({ close_panel = false })
+        end,
+        enter = function()
+            M.handle_file_switch({ close_panel = true })
+        end,
+        add = function()
+            M.add_file()
+        end,
+        delete = function()
+            M.handle_file_delete()
+        end,
+        split_v = function()
+            M.handle_split_vertical()
+        end,
+        split_h = function()
+            M.handle_split_horizontal()
+        end,
+        panels = {
+            {
+                key = config.keymappings.global.projects,
+                name = "projects",
+                run = function()
+                    M.navigate_to_projects()
+                end,
+            },
+            {
+                key = config.keymappings.global.workspaces,
+                name = "workspaces",
+                run = function()
+                    M.navigate_to_workspaces()
+                end,
+            },
+            {
+                key = config.keymappings.global.tabs,
+                name = "tabs",
+                run = function()
+                    M.navigate_to_tabs()
+                end,
+            },
+            {
+                key = config.keymappings.global.search,
+                name = "search",
+                run = function()
+                    M.navigate_to_search()
+                end,
+            },
+        },
+    })
 end
 
 --- Initialises or re-initialises the files panel from scratch.
@@ -760,11 +813,8 @@ M.init = function(selected_line_num)
     if ctx.win and vim.api.nvim_win_is_valid(ctx.win) then
         local cursor_pos = vim.api.nvim_win_get_cursor(ctx.win)
         cache.last_cursor_position = cursor_pos[1]
-
-        local win_config = vim.api.nvim_win_get_config(ctx.win)
-        win_config.title = " " .. panel_title .. " "
-        pcall(vim.api.nvim_win_set_config, ctx.win, win_config)
     end
+    ui.set_title(panel_title)
     setup_keymaps(ctx)
 
     setup_cursor_tracking(ctx)

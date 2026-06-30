@@ -196,11 +196,7 @@ M.refresh = function()
     cache.ctx.is_empty = #new_lines == 0
     cache.ctx.entities = cache.tabs_from_db
 
-    if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-        local win_config = vim.api.nvim_win_get_config(cache.ctx.win)
-        win_config.title = " " .. final_panel_title .. " "
-        pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
-    end
+    ui.set_title(final_panel_title)
 end
 
 --- Validates a tab name for add or rename operations.
@@ -347,74 +343,29 @@ local function delete_tab_db(tab_id_to_delete, workspace_id, selected_line_num)
     return true
 end
 
---- Moves the tab under the cursor one position up or down in the sort order.
+--- Moves the tab under the cursor one position up or down in the sort order via the shared in-place
+--- reorder helper: the held tab is swapped with its visual neighbour, committed to the DB synchronously,
+--- and re-rendered into the same panel buffer with the cursor following it — no `M.init` rebuild, so a
+--- rapid `K`/`J` burst always carries the same tab (see common.reorder_entity).
 ---@param ctx table Panel context with `win` field.
 ---@param direction "up"|"down" Direction of movement.
 local function handle_move_operation(ctx, direction)
-    if not ctx or not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
-        return
-    end
-    local current_visual_line = vim.api.nvim_win_get_cursor(ctx.win)[1]
-    local tab_id_to_move = cache.tab_ids_map[current_visual_line]
-    if not tab_id_to_move then
-        return
-    end
-    local tab_to_move_data
-    for _, t_entry in ipairs(cache.tabs_from_db) do
-        if tostring(t_entry.id) == tostring(tab_id_to_move) then
-            tab_to_move_data = t_entry
-            break
-        end
-    end
-    local tab_def = get_entity_def()
-    if not tab_def then
-        notify.error(state.lang.TAB_REORDER_FAILED or "Failed to reorder tab.")
-        return
-    end
-    if not tab_to_move_data then
-        notify.error(state.lang[tab_def.ui_cache_error] or "UI data inconsistency.")
-        return
-    end
-    local current_sort_order = tonumber(tab_to_move_data.sort_order)
-    if not current_sort_order then
-        notify.error(state.lang[tab_def.reorder_failed_error] or "Failed to reorder tab.")
-        return
-    end
-    if direction == "up" and current_sort_order <= 1 then
-        notify.info(state.lang[tab_def.already_at_top] or "Tab is already at the top.")
-        return
-    elseif direction == "down" and current_sort_order >= #cache.tabs_from_db then
-        notify.info(state.lang[tab_def.already_at_bottom] or "Tab is already at the bottom.")
-        return
-    end
-    local target_sort_order = direction == "up" and (current_sort_order - 1) or (current_sort_order + 1)
-    local new_order_table = {}
-    for _, t_entry in ipairs(cache.tabs_from_db) do
-        local entry_sort_order = tonumber(t_entry.sort_order)
-        if not entry_sort_order then
-            goto continue
-        end
-        local new_order_for_this_item = entry_sort_order
-        if t_entry.id == tab_id_to_move then
-            new_order_for_this_item = target_sort_order
-        elseif entry_sort_order == target_sort_order then
-            new_order_for_this_item = current_sort_order
-        end
-        table.insert(new_order_table, { id = t_entry.id, order = new_order_for_this_item })
-        ::continue::
-    end
-    local success, err_msg_code = data.reorder_tabs(state.workspace_id, new_order_table)
-    if success then
-        local new_line = direction == "up" and (current_visual_line - 1) or (current_visual_line + 1)
-        M.init(new_line)
-    else
-        local err_key_to_use = tab_def.reorder_failed_error
-        if err_msg_code == "TAB_REORDER_MISSING_PARAMS" then
-            err_key_to_use = tab_def.reorder_missing_params_error
-        end
-        notify.error(state.lang[err_key_to_use] or "Failed to reorder tab.")
-        M.init(current_visual_line)
-    end
+    common.reorder_entity({
+        ctx = ctx,
+        type_name = "tab",
+        entities = cache.tabs_from_db,
+        id_map = cache.tab_ids_map,
+        direction = direction,
+        active_id = state.tab_active,
+        persist = function(order_table)
+            return data.reorder_tabs(state.workspace_id, order_table)
+        end,
+        formatter = function(tab_entry)
+            local data_obj = safe_json_decode(tab_entry.data, {})
+            local buffer_count = data_obj.buffers and #data_obj.buffers or 0
+            return (tab_entry.name or "???") .. utils.string.to_superscript(buffer_count)
+        end,
+    })
 end
 
 --- Opens an input prompt and adds a new tab to the active workspace.
@@ -697,6 +648,56 @@ local function setup_keymaps(ctx)
     vim.keymap.set("n", config.keymappings.global.search, function()
         M.navigate_to_search()
     end, keymap_opts)
+
+    -- The navigable footer bar: each button reuses the same action functions the keymaps above fire.
+    common.set_action_footer(ctx, {
+        reorder = true,
+        load = function()
+            M.handle_tab_go({ close_panel = false })
+        end,
+        enter = function()
+            M.handle_tab_go({ close_panel = true })
+        end,
+        add = function()
+            M.handle_tab_add()
+        end,
+        rename = function()
+            M.handle_tab_rename(ctx)
+        end,
+        delete = function()
+            M.handle_tab_delete(ctx)
+        end,
+        panels = {
+            {
+                key = config.keymappings.global.projects,
+                name = "projects",
+                run = function()
+                    M.navigate_to_projects()
+                end,
+            },
+            {
+                key = config.keymappings.global.workspaces,
+                name = "workspaces",
+                run = function()
+                    M.navigate_to_workspaces()
+                end,
+            },
+            {
+                key = config.keymappings.global.files,
+                name = "files",
+                run = function()
+                    M.navigate_to_files()
+                end,
+            },
+            {
+                key = config.keymappings.global.search,
+                name = "search",
+                run = function()
+                    M.navigate_to_search()
+                end,
+            },
+        },
+    })
 end
 
 --- Initialises or re-initialises the tabs panel from scratch.
@@ -784,7 +785,6 @@ M.init = function(selected_line_num)
         local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
         cache.last_cursor_position = cursor_pos[1]
 
-        local win_config = vim.api.nvim_win_get_config(cache.ctx.win)
         local base_tabs_title = state.lang.TABS or "Tabs"
         local final_panel_title
         if
@@ -796,8 +796,7 @@ M.init = function(selected_line_num)
         else
             final_panel_title = base_tabs_title
         end
-        win_config.title = " " .. final_panel_title .. " "
-        pcall(vim.api.nvim_win_set_config, cache.ctx.win, win_config)
+        ui.set_title(final_panel_title)
     end
 
     setup_keymaps(cache.ctx)

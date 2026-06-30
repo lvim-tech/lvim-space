@@ -19,13 +19,17 @@ return {
             enter = "<CR>",
             split_v = "v",
             split_h = "h",
-            move_down = "<C-j>",
-            move_up = "<C-k>",
+            move_down = "J",
+            move_up = "K",
         },
     },
 
     key_control = {
-        allowed = { "j", "k", "<C-j>", "<C-k>" },
+        -- `j`/`k` move the list cursor; `K`/`J` reorder the selected entity (uppercase, mirroring the cursor
+        -- keys). `<C-j>`/`<C-k>` are deliberately ABSENT here: they belong to the surface's SECTOR navigation
+        -- (list ⇄ footer bar ⇄ messages), so the panel must NOT claim them — they fall through to the chassis.
+        -- `K`/`J` are listed so the `uppercase_letters` blanket-disable below does not no-op the reorder keys.
+        allowed = { "j", "k", "K", "J" },
         explicitly_disabled = {
             "$",
             "gg",

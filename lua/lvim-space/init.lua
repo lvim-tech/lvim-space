@@ -43,12 +43,12 @@ function M.setup(user_config)
 
     local ok, hl = pcall(require, "lvim-utils.highlight")
     if ok then
-        hl.register(config.build(), config.force)
+        hl.register(config.build(), config.highlights_force)
         hl.setup()
         local colors_ok, colors = pcall(require, "lvim-utils.colors")
         if colors_ok then
             colors.on_change(function()
-                hl.register(config.build(), config.force)
+                hl.register(config.build(), config.highlights_force)
             end)
         end
     end

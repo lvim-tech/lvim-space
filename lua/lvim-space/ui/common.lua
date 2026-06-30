@@ -5,6 +5,7 @@ local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
 local ui = require("lvim-space.ui")
+local picker = require("lvim-utils.picker")
 
 local M = {}
 
@@ -21,6 +22,7 @@ local M = {}
 ---@field name_exist_error string  Lang key for the name-already-exists error
 ---@field add_failed string  Lang key for an insert failure
 ---@field added_success string  Lang key shown after a successful insert
+---@field rename_prompt string|nil  Lang key for the rename input prompt (pre-filled with the current name)
 ---@field rename_failed string|nil  Lang key for a rename failure
 ---@field renamed_success string|nil  Lang key shown after a successful rename
 ---@field delete_confirm string|nil  Lang key for the deletion confirmation prompt
@@ -54,6 +56,7 @@ M.entity_types = {
         name_exist_error = "PROJECT_NAME_EXIST",
         add_failed = "PROJECT_ADD_FAILED",
         added_success = "PROJECT_ADDED_SUCCESS",
+        rename_prompt = "PROJECT_NEW_NAME",
         rename_failed = "PROJECT_RENAME_FAILED",
         renamed_success = "PROJECT_RENAMED_SUCCESS",
         delete_confirm = "PROJECT_DELETE",
@@ -83,6 +86,7 @@ M.entity_types = {
         name_exist_error = "WORKSPACE_NAME_EXIST",
         add_failed = "WORKSPACE_ADD_FAILED",
         added_success = "WORKSPACE_ADDED_SUCCESS",
+        rename_prompt = "WORKSPACE_NEW_NAME",
         rename_failed = "WORKSPACE_RENAME_FAILED",
         renamed_success = "WORKSPACE_RENAMED_SUCCESS",
         delete_confirm = "WORKSPACE_DELETE",
@@ -112,6 +116,7 @@ M.entity_types = {
         name_exist_error = "TAB_NAME_EXIST",
         add_failed = "TAB_ADD_FAILED",
         added_success = "TAB_ADDED_SUCCESS",
+        rename_prompt = "TAB_NEW_NAME",
         rename_failed = "TAB_RENAME_FAILED",
         renamed_success = "TAB_RENAMED_SUCCESS",
         delete_confirm = "TAB_DELETE",
@@ -141,6 +146,7 @@ M.entity_types = {
         name_exist_error = "FILE_NAME_EXIST",
         add_failed = "FILE_ADD_FAILED",
         added_success = "FILE_ADDED_SUCCESS",
+        rename_prompt = "FILES_NEW_NAME",
         rename_failed = "FILE_RENAME_FAILED",
         renamed_success = "FILE_RENAMED_SUCCESS",
         delete_confirm = "FILE_DELETE",
@@ -358,8 +364,9 @@ M.init_entity_list = function(
 
     actual_cursor_line = math.max(1, math.min(actual_cursor_line, #display_lines))
 
+    -- The header counter shows the REAL entity total (0 on the empty-state placeholder row), not #display_lines.
     local buf_handle, win_handle =
-        ui.open_main(display_lines, state.lang[entity_def.title] or entity_def.name, actual_cursor_line)
+        ui.open_main(display_lines, state.lang[entity_def.title] or entity_def.name, actual_cursor_line, #entities_list)
     if not buf_handle or not win_handle then
         notify.error(state.lang.FAILED_TO_CREATE_UI or "Failed to create UI.")
         return nil
@@ -369,8 +376,54 @@ M.init_entity_list = function(
     vim.bo[buf_handle].modifiable = false
     vim.bo[buf_handle].buftype = "nofile"
 
-    local info_line_key = is_list_empty and entity_def.info_empty or entity_def.info
-    ui.open_actions(state.lang[info_line_key] or "Select an action.")
+    -- The footer is the NAVIGABLE action bar now (built per panel by `M.set_action_footer` right after this
+    -- returns, in each panel's `setup_keymaps`) — not a plain hint string here. The old `entity_def.info` /
+    -- `info_empty` lang lines are kept only for reference / error guidance.
+
+    -- Embedded filter: `/` opens the shared lvim-utils picker over the CURRENT list (same dock zone as the
+    -- panel), so every entity panel gains fuzzy filtering. Confirming a row jumps the panel cursor to that
+    -- entity and fires the panel's own switch action (whatever each panel bound to `action.switch`) — so the
+    -- filter REUSES the existing select flow rather than reimplementing it. `/` is free across the panels
+    -- (not a navigation/action key, not in key_control). No-op for an empty list.
+    if not is_list_empty then
+        local switch_key = (config.keymappings.action and config.keymappings.action.switch) or "<Space>"
+        vim.keymap.set("n", "/", function()
+            local items = {}
+            for _, ent in ipairs(entities_list) do
+                local text = (line_formatter_fn and line_formatter_fn(ent)) or ent.name or ent.path or "???"
+                local item = { text = text, _id = ent[entity_def.id_field] }
+                if entity_def.name == "file" then
+                    item.path = ent.path or ent.filePath or ent.id
+                end
+                items[#items + 1] = item
+            end
+            picker.open({
+                title = "Filter " .. (state.lang[entity_def.title] or entity_def.name),
+                layout = config.ui.mode,
+                items = items,
+                on_confirm = function(it)
+                    if not it or it._id == nil then
+                        return
+                    end
+                    local target_line
+                    for line_no, id in pairs(id_to_line_map) do
+                        if tostring(id) == tostring(it._id) then
+                            target_line = line_no
+                            break
+                        end
+                    end
+                    local win = state.ui and state.ui.content and state.ui.content.win
+                    if win and vim.api.nvim_win_is_valid(win) then
+                        vim.api.nvim_set_current_win(win)
+                        if target_line then
+                            pcall(vim.api.nvim_win_set_cursor, win, { target_line, 0 })
+                        end
+                        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(switch_key, true, false, true), "m", false)
+                    end
+                end,
+            })
+        end, { buffer = buf_handle, noremap = true, silent = true, nowait = true })
+    end
 
     return {
         buf = buf_handle,
@@ -381,6 +434,199 @@ M.init_entity_list = function(
         entity_type_def = entity_def,
         refresh_function = refresh_fn,
     }
+end
+
+---Re-render an entity list into its EXISTING panel buffer (no window teardown): rebuild every display
+---line from `entities` and refill `id_map` (line → id) IN PLACE, toggling `modifiable` around the write.
+---This is the rendering half of the in-place reorder — it keeps the same buffer/window the panel keymaps
+---are bound to, so a rapid `K`/`J` burst never crosses a window rebuild.
+---@param buf integer  Target list buffer handle
+---@param entities table[]  Ordered entity records (already in their new order)
+---@param id_map table<integer, any>  Line → id map; cleared and refilled in place (same table reference)
+---@param type_def EntityTypeDef  Resolved entity type definition (provides `name` / `id_field`)
+---@param active_id any  ID of the entity that should render with its active icon
+---@param formatter (fun(ent: table): string)|nil  Optional custom text formatter (matches the panel's own)
+---@param active_check (fun(ent: table, active_id: any): boolean)|nil  Optional active-state predicate
+---@return boolean ok  True when the buffer lines were written successfully
+local function render_entity_buffer(buf, entities, id_map, type_def, active_id, formatter, active_check)
+    if not buf or not vim.api.nvim_buf_is_valid(buf) then
+        return false
+    end
+    for line_no in pairs(id_map) do
+        id_map[line_no] = nil
+    end
+    local id_field = type_def.id_field or "id"
+    local lines = {}
+    for index, ent in ipairs(entities) do
+        local is_active = determine_active(type_def, ent, active_id, active_check)
+        lines[index] = format_line(ent, type_def.name, is_active, formatter)
+        id_map[index] = ent[id_field]
+    end
+    local was_modifiable = vim.bo[buf].modifiable
+    if not was_modifiable then
+        vim.bo[buf].modifiable = true
+    end
+    local ok = pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, lines)
+    if not was_modifiable then
+        vim.bo[buf].modifiable = false
+    end
+    return ok
+end
+
+---@class ReorderEntityOpts
+---@field ctx EntityListState  The LIVE panel context (its `buf`/`win` stay in place across the move)
+---@field type_name string  Entity type key (must exist in `M.entity_types`)
+---@field entities table[]  The panel's sorted in-memory list; the two swapped rows are reordered in place
+---@field id_map table<integer, any>  The panel's line → id map; rebuilt in place to match the new order
+---@field direction "up"|"down"  Move the held entity one row up or down
+---@field active_id any  ID of the active entity (kept highlighted across the move)
+---@field persist fun(order: OrderItem[]): boolean, string|nil  Synchronous DB reorder call (`data.reorder_*`)
+---@field formatter (fun(ent: table): string)|nil  Optional custom row formatter (the panel's own)
+---@field active_check (fun(ent: table, active_id: any): boolean)|nil  Optional active-state predicate
+
+---Move the entity under the cursor one position up/down, RACE-FREE: the held entity is identified by the
+---cursor line, its `sort_order` is swapped with the visual neighbour and committed synchronously to the DB,
+---then the same swap is reflected in the in-memory list + id-map and the list is re-rendered into the SAME
+---buffer with the cursor placed on the moved entity's NEW line — all synchronously, with no `M.init`
+---rebuild and no deferred cursor set. Because the panel buffer/window and the cache the next keypress reads
+---are never torn down between keystrokes, a rapid `K`/`J` burst always carries the SAME entity. Bounds
+---(top/bottom) no-op with the entity type's "already at top/bottom" notice, leaving the cache untouched.
+---@param opts ReorderEntityOpts  Per-panel reorder description
+M.reorder_entity = function(opts)
+    local ctx = opts.ctx
+    if not ctx or not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
+        return
+    end
+    local type_def = M.entity_types[opts.type_name]
+    if not type_def then
+        notify.error(state.lang.UNKNOWN_ENTITY_TYPE or "Unknown entity type.")
+        return
+    end
+    local entities = opts.entities or {}
+    local count = #entities
+    if count == 0 then
+        return
+    end
+    local line = vim.api.nvim_win_get_cursor(ctx.win)[1]
+    if line < 1 or line > count then
+        return
+    end
+    if opts.direction == "up" and line <= 1 then
+        notify.info(state.lang[type_def.already_at_top] or "Already at the top.")
+        return
+    elseif opts.direction == "down" and line >= count then
+        notify.info(state.lang[type_def.already_at_bottom] or "Already at the bottom.")
+        return
+    end
+    local target = opts.direction == "up" and (line - 1) or (line + 1)
+    local moved, neighbour = entities[line], entities[target]
+    local moved_order = tonumber(moved.sort_order)
+    local neighbour_order = tonumber(neighbour.sort_order)
+    if not moved_order or not neighbour_order then
+        notify.error(state.lang[type_def.reorder_failed_error] or "Failed to reorder.")
+        return
+    end
+    -- Swap the two adjacent rows' sort_order values and commit synchronously BEFORE the cache/cursor reflect
+    -- it, so a re-read mid-burst is never needed (the persisted order already matches the in-memory swap).
+    local ok, err_code = opts.persist({
+        { id = moved.id, order = neighbour_order },
+        { id = neighbour.id, order = moved_order },
+    })
+    if not ok then
+        local err_key = type_def.reorder_failed_error
+        if err_code == type_def.reorder_missing_params_error then
+            err_key = type_def.reorder_missing_params_error
+        end
+        notify.error(state.lang[err_key] or "Failed to reorder.")
+        return
+    end
+    moved.sort_order, neighbour.sort_order = neighbour_order, moved_order
+    entities[line], entities[target] = neighbour, moved
+    render_entity_buffer(ctx.buf, entities, opts.id_map, type_def, opts.active_id, opts.formatter, opts.active_check)
+    pcall(vim.api.nvim_win_set_cursor, ctx.win, { target, 0 })
+end
+
+---Humanise a raw keymap LHS into a compact footer key badge: the Space / Enter actions become their Nerd
+---glyphs (matching the look of the legacy hint line); a chord like `<C-v>` drops its angle brackets; a plain
+---letter passes through unchanged.
+---@param key string|nil  Raw keymap LHS (e.g. "<Space>", "<CR>", "a", "<C-v>")
+---@return string badge  The display string shown in the footer key box
+local function key_badge(key)
+    if not key or key == "" then
+        return ""
+    end
+    if key == "<Space>" then
+        return "󱁐"
+    elseif key == "<CR>" then
+        return "󰌑"
+    end
+    return (key:gsub("^<(.+)>$", "%1"))
+end
+
+---Build and apply the panel's NAVIGABLE footer bar (replacing the old plain hint string). The buttons are
+---grouped by the red-dot (`●`) separator — `move ● load/enter ● add[/rename]/delete[/splits] ● panels` — and
+---fed to the surface footer via `ui.open_actions({ groups = … })`, which renders them as a centred
+---`lvim-utils.ui.bar` with `❮`/`❯` overflow chevrons (modelled on the lvim-utils `ui.tabs` footer).
+---
+---Each button's `run` REUSES the panel's own action function, so a focused footer button does exactly what
+---its hotkey does. Selection-dependent actions (move / load / enter / rename / delete / splits) are omitted on
+---an empty list, mirroring the per-panel keymap guards; `add` and the panel-nav buttons always show.
+---@param ctx EntityListState  The open list context (`is_empty` decides which buttons appear)
+---@param handlers table  `{ load, enter, add, rename, delete, split_v, split_h, reorder, panels }`; any nil entry is skipped, `panels` is a ready list of `{ key, name, run }`
+M.set_action_footer = function(ctx, handlers)
+    handlers = handlers or {}
+    local akeys = (config.keymappings and config.keymappings.action) or {}
+    local has_items = ctx and not ctx.is_empty
+    local groups = {}
+
+    -- Cursor + reorder are DISPLAY chips (`no_hotkey` so they are never mapped — a multi-char "j/k" label
+    -- would otherwise become a `j` mapping prefix). `j`/`k` already move the list cursor; on panels that
+    -- support reordering, `K`/`J` (config `move_up`/`move_down`) move the selected entity — the chip mirrors
+    -- the live config keys so the legend stays accurate if the user rebinds them.
+    if has_items then
+        local nav = { { key = "j/k", name = "move", no_hotkey = true } }
+        if handlers.reorder then
+            local reorder_label = key_badge(akeys.move_up) .. "/" .. key_badge(akeys.move_down)
+            nav[#nav + 1] = { key = reorder_label, name = "reorder", no_hotkey = true }
+        end
+        groups[#groups + 1] = nav
+    end
+
+    local activate = {}
+    if has_items and handlers.load then
+        activate[#activate + 1] = { key = key_badge(akeys.switch), name = "load", run = handlers.load }
+    end
+    if has_items and handlers.enter then
+        activate[#activate + 1] = { key = key_badge(akeys.enter), name = "enter", run = handlers.enter }
+    end
+    groups[#groups + 1] = activate
+
+    local crud = {}
+    if handlers.add then
+        crud[#crud + 1] = { key = key_badge(akeys.add), name = "add", run = handlers.add }
+    end
+    if has_items and handlers.rename then
+        crud[#crud + 1] = { key = key_badge(akeys.rename), name = "rename", run = handlers.rename }
+    end
+    if has_items and handlers.delete then
+        crud[#crud + 1] = { key = key_badge(akeys.delete), name = "delete", run = handlers.delete }
+    end
+    groups[#groups + 1] = crud
+
+    local splits = {}
+    if has_items and handlers.split_v then
+        splits[#splits + 1] = { key = key_badge(akeys.split_v), name = "vsplit", run = handlers.split_v }
+    end
+    if has_items and handlers.split_h then
+        splits[#splits + 1] = { key = key_badge(akeys.split_h), name = "hsplit", run = handlers.split_h }
+    end
+    groups[#groups + 1] = splits
+
+    if handlers.panels then
+        groups[#groups + 1] = handlers.panels
+    end
+
+    ui.open_actions({ groups = groups })
 end
 
 ---Open the main panel displaying a single formatted error message line.
@@ -433,6 +679,76 @@ end
 ---@return EntityTypeDef|nil  The definition table, or nil if the type is not registered
 M.get_entity_type = function(type_name)
     return M.entity_types[type_name]
+end
+
+---Open the in-zone rename prompt for an entity and apply the new name on confirm.
+---`on_rename` does the validation + DB write (and its own panel refresh on success) and
+---returns one of: an error-code string when validation fails ("LEN_NAME"/"EXIST_NAME"/…),
+---a truthy value on success, or nil/false on a DB failure — this helper maps that result
+---to the matching notification. Pressing `<Esc>` cancels (the callback never fires).
+---@param type_name string  Entity type key (must exist in `M.entity_types`)
+---@param id any  ID of the entity to rename
+---@param current_name string|nil  Existing name, pre-filled into the prompt
+---@param parent_context any  Parent scope id forwarded to `on_rename` (e.g. workspace/project id)
+---@param on_rename fun(id: any, new_name: string, parent_context: any): string|boolean|nil
+M.rename_entity = function(type_name, id, current_name, parent_context, on_rename)
+    local entity_def = M.entity_types[type_name]
+    if not entity_def or not id then
+        return
+    end
+    local prompt = (entity_def.rename_prompt and state.lang[entity_def.rename_prompt])
+        or state.lang[type_name:upper() .. "_NEW_NAME"]
+        or "New name"
+    ui.create_input_field(prompt, current_name or "", function(value)
+        if not value or vim.trim(value) == "" then
+            notify.info(state.lang.OPERATION_CANCELLED or "Operation cancelled")
+            return
+        end
+        local result = on_rename(id, vim.trim(value), parent_context)
+        if result == true then
+            notify.info(state.lang[entity_def.renamed_success] or "Renamed successfully.")
+        elseif type(result) == "string" then
+            local err_key = entity_def.rename_failed
+            if result == "LEN_NAME" then
+                err_key = entity_def.name_len_error
+            elseif result == "EXIST_NAME" then
+                err_key = entity_def.name_exist_error
+            end
+            notify.error(state.lang[err_key] or state.lang[result] or "Failed to rename.")
+        else
+            notify.error(state.lang[entity_def.rename_failed] or "Failed to rename.")
+        end
+    end)
+end
+
+---Confirm and delete an entity through the in-zone y/n prompt (`delete_confirm`, interpolated
+---with `name`). On a "y"/"yes" answer `on_delete` performs the DB delete + its own panel refresh
+---and returns truthy on success / nil-false on failure; any other answer (or `<Esc>`) cancels.
+---@param type_name string  Entity type key (must exist in `M.entity_types`)
+---@param id any  ID of the entity to delete
+---@param name string|nil  Entity name, interpolated into the confirmation prompt
+---@param parent_context any  Parent scope id forwarded to `on_delete`
+---@param on_delete fun(id: any, parent_context: any): boolean|nil
+M.delete_entity = function(type_name, id, name, parent_context, on_delete)
+    local entity_def = M.entity_types[type_name]
+    if not entity_def or not id then
+        return
+    end
+    local prompt_tpl = state.lang[entity_def.delete_confirm] or "➤ Delete '%s'? (y/n)"
+    local prompt = string.format(prompt_tpl, name or "")
+    ui.create_input_field(prompt, "", function(value)
+        local answer = value and vim.trim(value):lower() or ""
+        if answer ~= "y" and answer ~= "yes" then
+            notify.info(state.lang.OPERATION_CANCELLED or "Operation cancelled")
+            return
+        end
+        local result = on_delete(id, parent_context)
+        if result then
+            notify.info(state.lang[entity_def.deleted_success] or "Deleted successfully.")
+        else
+            notify.error(state.lang[entity_def.delete_failed] or "Failed to delete.")
+        end
+    end)
 end
 
 ---Call `func_to_call` inside a protected call. On error, emit a formatted error notification
