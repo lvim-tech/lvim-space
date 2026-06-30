@@ -594,8 +594,9 @@ function M.navigate_to_search()
         notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project. Please select or add a project first.")
         return
     end
-    ui.close_all()
-    -- `on_back` re-opens THIS panel when the search picker is dismissed (step back to where we came from).
+    -- Do NOT close here — search.init swaps this panel for the picker inside a single msgarea HANDOFF (one
+    -- zone reflow, no flicker); closing first would collapse the zone before the picker reserves it.
+    -- `on_back` re-opens THIS panel when the picker is dismissed (step back to where we came from).
     require("lvim-space.ui.search").init({ on_back = M.init })
 end
 

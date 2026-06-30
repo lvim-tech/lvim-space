@@ -141,10 +141,7 @@ M.init = function(opts)
         return
     end
 
-    -- Release any open panel so the picker docks in the (shared) area zone without stacking over it.
-    ui.close_all()
-
-    picker.files({
+    local picker_opts = {
         title = state.lang.SEARCH or "Search",
         icon = config.ui.icons and config.ui.icons.file or nil,
         layout = config.ui.mode,
@@ -154,10 +151,11 @@ M.init = function(opts)
                 select_file(abs)
             end
         end,
-        -- Dismissed (Esc/abort, no pick) → step BACK to the panel the search was opened from (the picker closes
-        -- first; schedule the re-open so it runs after the surface teardown settles).
+        -- Dismissed (Esc/abort, no pick) → step BACK to the panel the search was opened from. Run it
+        -- SYNCHRONOUSLY: the picker's `finish` calls this inside a msgarea HANDOFF, so the picker's close and
+        -- this panel re-open coalesce into one zone reflow (no flicker on the way back).
         on_cancel = opts.on_back and function()
-            vim.schedule(opts.on_back)
+            opts.on_back()
         end or nil,
         -- Split-open row actions. The picker binds these in the INSERT query prompt too, so they MUST be
         -- chord keys (a plain "v"/"h" would be swallowed while typing a query containing those letters) — the
@@ -186,14 +184,29 @@ M.init = function(opts)
                 name = "back",
                 mode = "n",
                 run = function(_, close)
+                    -- close + re-open SYNCHRONOUSLY: the picker's `fire` wraps this in a msgarea handoff, so the
+                    -- two coalesce into one zone reflow (no flicker stepping back to the panel).
                     close()
                     if opts.on_back then
-                        vim.schedule(opts.on_back)
+                        opts.on_back()
                     end
                 end,
             },
         },
-    })
+    }
+    -- Swap the panel for the picker in ONE msgarea reflow (a "handoff") so the area zone never collapses
+    -- between the close and the open — without it the editor flickers (the zone shrinks, then grows again).
+    -- Off the area zone (float / bottom) there is nothing to coalesce, so just run it directly.
+    local function open()
+        ui.close_all() -- release any open panel so the picker takes the shared zone without stacking over it
+        picker.files(picker_opts)
+    end
+    local ok_ma, msgarea = pcall(require, "lvim-utils.msgarea")
+    if ok_ma and msgarea.handoff and config.ui.mode == "area" and msgarea.is_enabled() then
+        msgarea.handoff(open)
+    else
+        open()
+    end
 end
 
 return M
