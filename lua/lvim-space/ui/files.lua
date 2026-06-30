@@ -380,7 +380,10 @@ M.refresh = function()
             and vim.fn.fnamemodify(candidate_path, ":p") == vim.fn.fnamemodify(state.file_active, ":p")
 
         local is_file_active = is_current_buffer_match or (not current_buf_info.name and is_state_active_match)
-        display_text = (is_file_active and file_active_icon or file_icon) .. display_text
+        -- 1 space of breathing room at BOTH ends — match common.format_line (this live refresh builds the rows
+        -- itself instead of going through format_line, so it must replicate the padding or the spaces vanish on
+        -- a refresh, e.g. after loading a file with <Space>).
+        display_text = " " .. (is_file_active and file_active_icon or file_icon) .. display_text .. " "
 
         table.insert(new_lines, display_text)
     end
@@ -505,7 +508,8 @@ function M.navigate_to_search()
         return
     end
     ui.close_all()
-    require("lvim-space.ui.search").init()
+    -- `on_back` re-opens THIS panel when the search picker is dismissed (step back to where we came from).
+    require("lvim-space.ui.search").init({ on_back = M.init })
 end
 
 --- Internal helper: opens the file whose path is at the current cursor position

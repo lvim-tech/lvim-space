@@ -158,7 +158,8 @@ M.refresh = function()
         local tab_count = get_tab_count(workspace_entry)
         local tab_count_display = utils.string.to_superscript(tab_count)
         local display_text = (workspace_entry.name or "???") .. tab_count_display
-        display_text = (is_active and workspace_active_icon or workspace_icon) .. display_text
+        -- 1 space at BOTH ends — match common.format_line (this live refresh bypasses it).
+        display_text = " " .. (is_active and workspace_active_icon or workspace_icon) .. display_text .. " "
 
         table.insert(new_lines, display_text)
     end
@@ -670,7 +671,8 @@ function M.navigate_to_search()
         return
     end
     ui.close_all()
-    require("lvim-space.ui.search").init()
+    -- `on_back` re-opens THIS panel when the search picker is dismissed (step back to where we came from).
+    require("lvim-space.ui.search").init({ on_back = M.init })
 end
 
 --- Registers all buffer-local keymaps for the workspaces panel.

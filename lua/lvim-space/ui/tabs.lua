@@ -152,7 +152,8 @@ M.refresh = function()
         local buffer_count = get_buffer_count(tab_entry)
         local buffer_count_display = utils.string.to_superscript(buffer_count)
         local display_text = (tab_entry.name or "???") .. buffer_count_display
-        display_text = (is_active and tab_active_icon or tab_icon) .. display_text
+        -- 1 space at BOTH ends — match common.format_line (this live refresh bypasses it).
+        display_text = " " .. (is_active and tab_active_icon or tab_icon) .. display_text .. " "
 
         table.insert(new_lines, display_text)
     end
@@ -594,7 +595,8 @@ function M.navigate_to_search()
         return
     end
     ui.close_all()
-    require("lvim-space.ui.search").init()
+    -- `on_back` re-opens THIS panel when the search picker is dismissed (step back to where we came from).
+    require("lvim-space.ui.search").init({ on_back = M.init })
 end
 
 --- Registers all buffer-local keymaps for the tabs panel.

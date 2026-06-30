@@ -240,11 +240,17 @@ local function open_panel(spec)
         -- override); set lvim-space's `config.ui.title_line` only to override per-plugin.
         title_line = config.ui.title_line,
         count = spec.count,
+        -- The counter reads "<row>/<total>" (item N of M) — the chassis tracks the list cursor as `current`.
+        count_follows_cursor = true,
         -- Canon: +1 blank "air" row under the border-title (and the footer auto-adds one above its content).
         -- Keeps the list visually detached from the title row instead of butting up against the top border.
         header_air = true,
         size = {
-            height = { auto = true, max = max_h, min = 1 },
+            -- AREA dock (hosted): leave the CONTAINER cap wide open so the panel grows like the pickers do — the
+            -- msgarea zone (`Handle:reserve`) clamps every docked float to its `max_height`, the single height
+            -- authority, so the panels line up instead of this one self-capping lower and squeezing its list.
+            -- FLOAT / BOTTOM (no host): `max_h` stays the real cap.
+            height = { auto = true, max = host and 9999 or max_h, min = 1 },
             width = (not docked) and { auto = true, max = 0.8, min = 30 } or nil,
         },
         -- The list is a CONTENT data panel, so it carries the single-source content ring — `surface.CONTENT_BORDER`,

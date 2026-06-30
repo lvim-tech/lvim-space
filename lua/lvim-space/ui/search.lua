@@ -1,11 +1,12 @@
--- lvim-space.ui.search: file search, now a THIN ADAPTER over the shared lvim-utils PICKER (a fuzzy finder on
--- the same surface chassis as the panels). It docks in the configured zone (`config.ui.mode` → area | float |
--- bottom), honours the user's configured search command (`config.search`, an `fd …` invocation run in the
--- project root) as the candidate set, and shows the coloured ft devicon per row. ON SELECT it reuses the
--- existing data/session flow to open the file in the editor AND add it to the active tab (persisted) — the
--- exact behaviour of the old custom search panel. The split keys (`v` / `h`) open the selection in a
--- vertical / horizontal split. All the former 3-tier fuzzy-scoring + custom-window code is gone: the picker
--- owns matching (fzf in --filter mode, Lua fallback) and rendering.
+-- lvim-space.ui.search: file search, a THIN ADAPTER over the shared lvim-utils FILES picker — the SAME
+-- `:LvimPicker files` finder (fzf TUI backend with a real-Neovim preview + coloured ft devicons, Lua fallback
+-- otherwise), embedded in lvim-space's configured zone (`config.ui.mode` → area | float | bottom) so it docks
+-- exactly where the panels do instead of opening a separate window. The candidate set is the picker's own
+-- file list (`config.picker.source` in lvim-utils) run in the cwd — which lvim-space pins to the active
+-- project root on project load, so the listing is project-scoped. ON SELECT it reuses the existing
+-- data/session flow to open the file in the editor AND add it to the active tab (persisted) — the exact
+-- behaviour of the old custom search panel. The split keys (`<C-v>` / `<C-x>`) open the selection in a
+-- vertical / horizontal split. The picker owns matching, preview and rendering.
 --
 ---@module "lvim-space.ui.search"
 
@@ -18,49 +19,6 @@ local ui = require("lvim-space.ui")
 local picker = require("lvim-utils.picker")
 
 local M = {}
-
----Absolute path of the active project's root directory, or nil when no project is active.
----@return string|nil
-local function project_path_abs()
-    if not state.project_id then
-        return nil
-    end
-    local proj = data.find_project_by_id(state.project_id)
-    return proj and proj.path and vim.fn.fnamemodify(proj.path, ":p") or nil
-end
-
----Resolve a (possibly relative) search-result path against the project root to an absolute path.
----@param rel string A path as emitted by the search command (relative to `cwd`, or already absolute).
----@param cwd string Absolute project root.
----@return string abs Absolute, normalised path.
-local function absolutize(rel, cwd)
-    local win32 = vim.fn.has("win32") == 1
-    if vim.startswith(rel, "/") or vim.startswith(rel, "~") or (win32 and rel:match("^%a:[/\\]")) then
-        return vim.fn.fnamemodify(rel, ":p")
-    end
-    local sep = win32 and "\\" or "/"
-    return vim.fn.fnamemodify(cwd .. (cwd:match("[/\\]$") and "" or sep) .. rel, ":p")
-end
-
----Run the configured `config.search` command in the project root and build the picker candidate items.
----Each item carries the relative path as its match/display `text` and the absolute `path` (the picker
----auto-renders the coloured ft devicon from `path`).
----@param cwd string Absolute project root.
----@return table[] items List of `{ text = relative_path, path = absolute_path }`.
-local function collect_files(cwd)
-    local shell_cmd = string.format("cd %s && %s", vim.fn.shellescape(cwd), config.search)
-    local out = vim.fn.systemlist({ "sh", "-c", shell_cmd })
-    local items = {}
-    if vim.v.shell_error == 0 and type(out) == "table" then
-        for _, rel in ipairs(out) do
-            rel = vim.trim(rel)
-            if rel ~= "" then
-                items[#items + 1] = { text = rel, path = absolutize(rel, cwd) }
-            end
-        end
-    end
-    return items
-end
 
 ---Open the selected file in the best non-plugin editor window AND add it to the active tab's buffer list,
 ---persisting the change — preserving the legacy search on-select behaviour 1:1 (open + record + save), via
@@ -152,9 +110,24 @@ local function open_in_split(split_cmd, path)
     end
 end
 
----Open the file-search picker. Requires an active project, workspace and tab (the same preconditions as the
----legacy panel). Releases any open lvim-space panel first so the picker takes the shared area zone cleanly.
-M.init = function()
+---Resolve a picker item's path to an absolute path. The files picker emits paths relative to the cwd (fd
+---`--strip-cwd-prefix`); lvim-space pins the cwd to the active project root, so `:p` absolutises correctly.
+---@param item table|nil The confirmed/acted picker item (`{ path = <relative path> }`).
+---@return string|nil abs Absolute path, or nil when the item carries none.
+local function item_abs(item)
+    if not (item and item.path and vim.trim(item.path) ~= "") then
+        return nil
+    end
+    return vim.fn.fnamemodify(item.path, ":p")
+end
+
+---Open the file-search picker: the shared `:LvimPicker files` finder, embedded in lvim-space's zone. Requires
+---an active project, workspace and tab (the same preconditions as the legacy panel). Releases any open
+---lvim-space panel first so the picker takes the shared area zone cleanly.
+---@param opts? { on_back?: fun() }  `on_back` re-opens the panel the search was launched from when the picker
+---  is DISMISSED (Esc/abort with no selection), so the search behaves like a sub-panel you can step back out of.
+M.init = function(opts)
+    opts = opts or {}
     if not state.project_id then
         notify.error(state.lang.PROJECT_NOT_ACTIVE or "No active project")
         return
@@ -167,31 +140,25 @@ M.init = function()
         notify.error(state.lang.TAB_NOT_ACTIVE or "No active tab")
         return
     end
-    local cwd = project_path_abs()
-    if not cwd then
-        notify.error(state.lang.PROJECT_NOT_ACTIVE or "No active project")
-        return
-    end
-
-    local fd_bin = (config.search or ""):match("^%S+") or "fd"
-    if vim.fn.executable(fd_bin) ~= 1 then
-        notify.error("lvim-space search requires '" .. fd_bin .. "' to be installed and on PATH.")
-        return
-    end
 
     -- Release any open panel so the picker docks in the (shared) area zone without stacking over it.
     ui.close_all()
 
-    picker.open({
+    picker.files({
         title = state.lang.SEARCH or "Search",
         icon = config.ui.icons and config.ui.icons.file or nil,
         layout = config.ui.mode,
-        items = collect_files(cwd),
         on_confirm = function(item)
-            if item and item.path then
-                select_file(item.path)
+            local abs = item_abs(item)
+            if abs then
+                select_file(abs)
             end
         end,
+        -- Dismissed (Esc/abort, no pick) → step BACK to the panel the search was opened from (the picker closes
+        -- first; schedule the re-open so it runs after the surface teardown settles).
+        on_cancel = opts.on_back and function()
+            vim.schedule(opts.on_back)
+        end or nil,
         -- Split-open row actions. The picker binds these in the INSERT query prompt too, so they MUST be
         -- chord keys (a plain "v"/"h" would be swallowed while typing a query containing those letters) — the
         -- picker-idiomatic <C-v> / <C-x>. The panels keep their plain v/h (normal-mode, not a picker).
@@ -201,7 +168,7 @@ M.init = function()
                 name = "vsplit",
                 run = function(item, close)
                     close()
-                    open_in_split("vsplit", item and item.path)
+                    open_in_split("vsplit", item_abs(item))
                 end,
             },
             {
@@ -209,7 +176,20 @@ M.init = function()
                 name = "hsplit",
                 run = function(item, close)
                     close()
-                    open_in_split("split", item and item.path)
+                    open_in_split("split", item_abs(item))
+                end,
+            },
+            -- <BS> steps BACK to the launching panel — NORMAL mode only (`mode = "n"`), so insert-mode <BS> still
+            -- edits the query. Reuses the same step-back path as a plain dismiss (close the picker, re-open the panel).
+            {
+                key = "<BS>",
+                name = "back",
+                mode = "n",
+                run = function(_, close)
+                    close()
+                    if opts.on_back then
+                        vim.schedule(opts.on_back)
+                    end
                 end,
             },
         },
