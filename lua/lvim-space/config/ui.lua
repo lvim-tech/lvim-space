@@ -9,13 +9,12 @@ return {
     -- enabled, else it grows cmdheight; the editor/heirline stay above it), "float" (a centred modal), or
     -- "bottom" (a bar over the bottom rows). Rendered through lvim-utils.ui.surface.
     mode = "area",
-    -- In AREA mode, where the panel title goes: "border" (the native border-title — TITLE left + count right
-    -- on the top border, the default) or "statusline" (published to the lvim-utils chrome overlay,
-    -- minibuffer style — the heirline file segments give way to the panel title while a panel is open). A
-    -- shared lvim-utils chassis key, consistent across every lvim-tech plugin. float / bottom always use the
-    -- border-title. The frame border itself is the ONE shared `config.ui.border` in lvim-utils — lvim-space
-    -- does not define its own; change that one key to re-border every panel.
-    title_line = "border",
+    -- Where the panel title goes — INHERITED from the central `lvim-utils config.ui.title_line` (default "row":
+    -- a CONTENT row at the top, TITLE flush-left + count flush-right, matching the lvim-utils pickers). lvim-space
+    -- does NOT set its own, so changing the one central key re-titles every lvim-tech plugin at once; SET this
+    -- key here only to override the placement for lvim-space alone ("row" | "border" | "statusline"). Likewise
+    -- the frame border is the ONE shared central `config.ui.border` — lvim-space defines neither.
+    title_line = nil,
     max_height = 10,
     spacing = 2,
 

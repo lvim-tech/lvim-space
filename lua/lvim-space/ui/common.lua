@@ -246,7 +246,9 @@ local function format_line(ent, type_name, active, custom_formatter)
     end
     display_text = display_text:gsub("^[>%s▶󰋜󰉋󰏘󰉌󰓩󰎃󰈙󰈚]*", "")
     display_text = vim.trim(display_text)
-    return M.get_entity_icon(type_name, active, false) .. display_text
+    -- 1 space of breathing room at BOTH ends of every list row: a leading space BEFORE the icon (the icon glyph
+    -- would otherwise hug column 0) and a trailing space after the text.
+    return " " .. M.get_entity_icon(type_name, active, false) .. display_text .. " "
 end
 
 ---Safely read the cursor position of a window, returning (1, 0) when the window is

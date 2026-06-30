@@ -236,7 +236,9 @@ local function open_panel(spec)
         -- `config.ui.title_line="statusline"`, publishes it to the chrome overlay instead (minibuffer style,
         -- so the heirline file segments give way to the panel title). The list block stays borderless.
         title = spec.title,
-        title_line = config.ui.title_line or "border",
+        -- nil → the chassis falls back to the CENTRAL `lvim-utils config.ui.title_line` (no local "border"
+        -- override); set lvim-space's `config.ui.title_line` only to override per-plugin.
+        title_line = config.ui.title_line,
         count = spec.count,
         -- Canon: +1 blank "air" row under the border-title (and the footer auto-adds one above its content).
         -- Keeps the list visually detached from the title row instead of butting up against the top border.
