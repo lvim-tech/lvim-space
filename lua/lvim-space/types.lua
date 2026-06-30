@@ -290,7 +290,7 @@
 --- @field notify                  boolean                    Enable vim.notify messages
 --- @field filetype                string                     Filetype set on plugin buffers
 --- @field title                   string                     Panel window title text
---- @field title_position          string                     Title alignment: "left" | "center" | "right"
+--- @field title_pos               string                     Title alignment: "left" | "center" | "right" (nil = inherit central)
 --- @field spacing                 integer                    Padding spaces in the status line (config.ui.spacing)
 --- @field max_height              integer                    Maximum panel height in rows
 --- @field autosave                boolean                    Automatically save session on buffer events

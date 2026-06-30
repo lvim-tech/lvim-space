@@ -239,6 +239,8 @@ local function open_panel(spec)
         -- nil → the chassis falls back to the CENTRAL `lvim-utils config.ui.title_line` (no local "border"
         -- override); set lvim-space's `config.ui.title_line` only to override per-plugin.
         title_line = config.ui.title_line,
+        title_pos = config.ui.title_pos, -- nil → inherit central `config.ui.title_pos` (like title_line)
+
         count = spec.count,
         -- The counter reads "<row>/<total>" (item N of M) — the chassis tracks the list cursor as `current`.
         count_follows_cursor = true,

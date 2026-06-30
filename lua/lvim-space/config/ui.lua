@@ -4,7 +4,10 @@
 return {
     filetype = "lvim-space",
     title = "LVIM SPACE",
-    title_position = "center",
+    -- Title alignment — INHERITED from the central `lvim-utils config.ui.title_pos` (default "left") when nil,
+    -- exactly like `title_line`. Set "left" | "center" | "right" here to override the panel title placement for
+    -- lvim-space alone. (Was the dead `title_position`, never wired; now the real chassis `title_pos`.)
+    title_pos = nil,
     -- Where the panel docks: "area" (the Emacs-minibuffer cmdline zone — hosted in the msgarea when it is
     -- enabled, else it grows cmdheight; the editor/heirline stay above it), "float" (a centred modal), or
     -- "bottom" (a bar over the bottom rows). Rendered through lvim-utils.ui.surface.
