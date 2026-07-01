@@ -5,6 +5,24 @@
 
 local M = {}
 
+---True when the current working directory has a saved lvim-space project — i.e. a startup WILL auto-load it.
+---Opens the DB first (idempotent), so it is safe to call EARLY, before the plugin's own VimEnter init has run
+---— e.g. from the start dashboard's `should_open` predicate, so the dashboard does not flash before lvim-space
+---takes over the screen.
+---@return boolean
+function M.has_project_for_cwd()
+    local ok_db, db = pcall(require, "lvim-space.persistence.db")
+    local ok_data, data = pcall(require, "lvim-space.api.data")
+    if not (ok_db and ok_data) then
+        return false
+    end
+    if not db.init() then
+        return false
+    end
+    local ok, project = pcall(data.find_project_by_cwd)
+    return ok and project ~= nil
+end
+
 ---Return a summary of the current project / workspace / tab state.
 ---Designed for statusline integrations (lualine, tabby, etc.).
 ---@return { project_name: string, workspace_name: string, tabs: { id: integer, name: string, active: boolean }[] }

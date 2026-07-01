@@ -71,6 +71,9 @@ M.remove = function(table_name, conditions)
 end
 
 M.init = function()
+    if M.db then
+        return true -- already initialised — idempotent, so an early cwd-project probe can safely open it first
+    end
     if vim.fn.isdirectory(config.save) == 0 then
         local mkdir_ok, _ = pcall(vim.fn.mkdir, config.save, "p")
         if not mkdir_ok then

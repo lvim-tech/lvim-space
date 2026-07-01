@@ -50,9 +50,8 @@ local function select_file(path)
     end
     if target and vim.api.nvim_win_is_valid(target) then
         vim.api.nvim_win_set_buf(target, bufnr)
-        vim.api.nvim_set_current_win(target)
     else
-        vim.cmd("edit " .. vim.fn.fnameescape(path))
+        pcall(vim.cmd, "edit " .. vim.fn.fnameescape(path))
     end
     if session.save_window_context then
         session.save_window_context(state.tab_active)
@@ -149,6 +148,9 @@ M.init = function(opts)
             local abs = item_abs(item)
             if abs then
                 select_file(abs)
+            end
+            if opts.on_back then
+                opts.on_back()
             end
         end,
         -- Dismissed (Esc/abort, no pick) → step BACK to the panel the search was opened from. Run it
