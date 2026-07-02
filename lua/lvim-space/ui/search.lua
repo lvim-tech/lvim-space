@@ -142,7 +142,6 @@ M.init = function(opts)
 
     local picker_opts = {
         title = state.lang.SEARCH or "Search",
-        icon = config.ui.icons and config.ui.icons.file or nil,
         layout = config.ui.mode,
         on_confirm = function(item)
             local abs = item_abs(item)
