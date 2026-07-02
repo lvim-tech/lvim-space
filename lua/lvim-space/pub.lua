@@ -1,7 +1,8 @@
--- lua/lvim-space/pub.lua
--- Public API for external integrations (statuslines, other plugins, etc.).
--- Safe to require at any time; returns empty/safe defaults when the plugin
--- has not been set up yet or no session is active.
+-- lvim-space.pub: the STABLE public API for external integrations (statuslines, dashboards, other plugins).
+-- Every function is safe to require and call at any time — before setup(), before a session exists — returning
+-- empty/safe defaults rather than erroring, so consumers never have to guard the plugin's init order.
+--
+---@module "lvim-space.pub"
 
 local M = {}
 

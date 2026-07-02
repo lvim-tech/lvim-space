@@ -1,6 +1,8 @@
--- lua/lvim-space/config/init.lua
--- Merges all configuration submodules into a single flat table.
--- Consumers do: require("lvim-space.config").notify  etc.
+-- lvim-space.config: the live config — merges every configuration submodule (base / ui / keys /
+-- messages / highlights) into one table. setup() merges user opts into it in place, and readers do
+-- require("lvim-space.config").notify etc. to see the effective values.
+--
+---@module "lvim-space.config"
 
 local base = require("lvim-space.config.base")
 local ui = require("lvim-space.config.ui")

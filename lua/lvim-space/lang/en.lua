@@ -1,3 +1,9 @@
+-- lvim-space.lang.en: the English language pack — every user-facing string (notifications, errors, prompts,
+-- panel labels) keyed by a stable UPPER_SNAKE id. Selected by config.lang and loaded into state.lang at setup;
+-- other locales are added as sibling files with the same keys.
+--
+---@module "lvim-space.lang.en"
+
 return {
 
     FAILED_TO_CREATE_SAVE_DIRECTORY = "Failed to create the database file",

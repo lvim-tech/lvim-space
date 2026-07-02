@@ -1,6 +1,11 @@
---- Single :LvimSpace dispatcher with hierarchical subcommands.
---- All former :LvimSpace* commands are routed through :LvimSpace <sub> [args].
+-- lvim-space.hooks.commands: the single :LvimSpace dispatcher with hierarchical subcommands — every former
+-- :LvimSpace* command is routed through `:LvimSpace <sub> [args]`. Panels/session/data are pulled in via lazy
+-- loaders (not top-level requires) on purpose: the command layer registers at setup() time, before those
+-- heavier subsystems are needed, so deferring their load keeps startup cheap and avoids load-order cycles.
+--
+---@module "lvim-space.hooks.commands"
 
+local config = require("lvim-space.config")
 local state = require("lvim-space.api.state")
 local notify = require("lvim-space.api.notify")
 
@@ -424,8 +429,6 @@ end
 
 --- Register the single :LvimSpace dispatcher command and the main keymap.
 function M.init()
-    local config = require("lvim-space.config")
-
     vim.api.nvim_create_user_command("LvimSpace", function(opts)
         local parts = vim.split(vim.trim(opts.args or ""), "%s+", { plain = false })
         local sub = parts[1] or ""

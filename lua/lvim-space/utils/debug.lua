@@ -1,7 +1,7 @@
--- lua/lvim-space/utils/debug.lua
--- Structured file-based debug logger.
--- Controlled independently from notifications via config.debug.
--- Each log line is written asynchronously to avoid blocking the UI.
+-- lvim-space.utils.debug: a structured, file-based debug logger. Gated independently of user notifications by
+-- config.debug, and each line is written asynchronously so heavy logging never blocks the UI thread.
+--
+---@module "lvim-space.utils.debug"
 
 local config = require("lvim-space.config")
 local file_system = require("lvim-space.utils.file_system")

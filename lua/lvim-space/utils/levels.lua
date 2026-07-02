@@ -1,5 +1,7 @@
--- lua/lvim-space/utils/levels.lua
--- Log level utilities for consistent level handling
+-- lvim-space.utils.levels: log-level constants and name<->number resolution, shared by the debug logger and
+-- the notifier so both agree on what TRACE/DEBUG/INFO/WARN/ERROR/OFF mean.
+--
+---@module "lvim-space.utils.levels"
 
 local M = {}
 

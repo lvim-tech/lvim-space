@@ -1,5 +1,8 @@
--- lua/lvim-space/config/ui.lua
--- UI appearance settings
+-- lvim-space.config.ui: UI appearance settings — dock mode, title placement, icons and dimensions.
+-- Title placement keys (title_pos / title_line) default to nil so they INHERIT the central lvim-utils
+-- chassis values; set them here only to override the placement for lvim-space alone.
+--
+---@module "lvim-space.config.ui"
 
 return {
     filetype = "lvim-space",

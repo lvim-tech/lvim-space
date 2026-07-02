@@ -1,5 +1,8 @@
--- Shared UI helpers for lvim-space: entity-type definitions, list rendering, icon caching,
--- and error-navigation flows used by all entity panels.
+-- lvim-space.ui.common: shared UI helpers for every entity panel — the entity-type definitions, list
+-- rendering, icon caching and error-navigation flows. Factored out so projects / workspaces / tabs / files
+-- render their lists and badges identically instead of each panel re-implementing the layout.
+--
+---@module "lvim-space.ui.common"
 
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
@@ -872,7 +875,7 @@ end
 ---@param error_type_key string  Error category key (e.g. "PROJECT_NOT_ACTIVE")
 ---@return string  Localized instruction string for the actions bar
 local function get_error_info_line(error_type_key)
-    local lang_keys = state.lang
+    local lang_keys = state.lang or {}
     if error_type_key == "PROJECT_NOT_ACTIVE" then
         return lang_keys.INFO_LINE_PROJECT_ERROR or "Project not active. Press 'p' for projects."
     elseif error_type_key == "WORKSPACE_NOT_ACTIVE" then

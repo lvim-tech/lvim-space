@@ -1,3 +1,9 @@
+-- lvim-space.persistence.migration: one-off schema migrations for the on-disk lvimspace.db — brings an older
+-- database up to the current table shape so upgrading the plugin never loses a user's projects/workspaces/tabs.
+-- Run before the DB is otherwise used; pcall-guarded so a missing config never aborts startup.
+--
+---@module "lvim-space.persistence.migration"
+
 local M = {}
 
 function M.run()

@@ -1,7 +1,8 @@
--- files.lua
--- UI panel for managing files (buffers) within the active tab.
--- Handles listing, adding, deleting, and switching to files,
--- as well as opening files in vertical/horizontal splits.
+-- lvim-space.ui.files: the files panel — lists, adds, deletes and switches to the files (buffers) of the active
+-- tab, and opens them in vertical / horizontal splits. The leaf panel of the project → workspace → tab → file
+-- hierarchy.
+--
+---@module "lvim-space.ui.files"
 
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")

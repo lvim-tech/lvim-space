@@ -1,5 +1,6 @@
--- lua/lvim-space/config/base.lua
--- Core plugin settings (persistence, behavior, language)
+-- lvim-space.config.base: core plugin settings (persistence, behaviour, language).
+--
+---@module "lvim-space.config.base"
 
 return {
     save = "~/.local/share/nvim/lvim-space",

@@ -1,7 +1,8 @@
--- lua/lvim-space/api/notify.lua
--- Public notification helpers used throughout the plugin UI layer.
--- Wraps utils/notify.lua with convenience methods (info / warn / error)
--- and applies config.notify.min_level filtering independently.
+-- lvim-space.api.notify: public notification helpers used throughout the plugin UI layer. Wraps
+-- utils/notify.lua with convenience methods (info / warn / error) and applies config.notify.min_level
+-- filtering independently.
+--
+---@module "lvim-space.api.notify"
 
 local config = require("lvim-space.config")
 local levels = require("lvim-space.utils.levels")

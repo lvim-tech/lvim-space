@@ -1,5 +1,6 @@
--- lua/lvim-space/config/keys.lua
--- Keymap and key-control configuration
+-- lvim-space.config.keys: keymap and key-control configuration.
+--
+---@module "lvim-space.config.keys"
 
 return {
     keymappings = {

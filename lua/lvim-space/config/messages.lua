@@ -1,6 +1,7 @@
--- lua/lvim-space/config/messages.lua
--- Notification, debug logging, and metrics configuration.
--- Each subsystem can be enabled or disabled independently.
+-- lvim-space.config.messages: notification, debug-logging and metrics configuration. Each subsystem
+-- can be enabled or disabled independently.
+--
+---@module "lvim-space.config.messages"
 
 local file_system = require("lvim-space.utils.file_system")
 

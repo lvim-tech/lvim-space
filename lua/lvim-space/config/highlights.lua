@@ -1,6 +1,7 @@
--- lua/lvim-space/config/highlights.lua
--- Highlight group definitions using the shared lvim-utils color palette.
--- Colors adapt automatically when lvim-colorscheme syncs the palette.
+-- lvim-space.config.highlights: highlight group definitions built from the shared lvim-utils colour
+-- palette, so the groups adapt automatically when lvim-colorscheme syncs the palette.
+--
+---@module "lvim-space.config.highlights"
 
 local c = require("lvim-utils.colors")
 local hl = require("lvim-utils.highlight")

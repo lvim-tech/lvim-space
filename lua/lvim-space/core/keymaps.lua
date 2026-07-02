@@ -1,6 +1,7 @@
---- Keymap utilities for lvim-space UI panels.
---- Provides helpers to disable regular typing keys inside plugin buffers and to
---- set the Escape key for closing all panels.
+-- lvim-space.core.keymaps: keymap utilities for the UI panels — disables regular typing keys inside
+-- plugin buffers and binds the Escape key to close all panels.
+--
+---@module "lvim-space.core.keymaps"
 
 local config = require("lvim-space.config")
 

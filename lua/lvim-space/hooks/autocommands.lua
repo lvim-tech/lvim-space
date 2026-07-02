@@ -1,6 +1,8 @@
---- Global autocommands for lvim-space.
---- Handles VimEnter initialization, VimLeavePre cleanup, periodic session saves,
---- and directory-change context reloading.
+-- lvim-space.hooks.autocommands: the plugin's global autocommands — VimEnter initialisation, VimLeavePre
+-- cleanup, periodic session autosaves and DirChanged context reloading. Kept in one place so the lifecycle
+-- ordering (init before autosave, save before leave) is obvious and the debounced timers share one cache.
+--
+---@module "lvim-space.hooks.autocommands"
 
 local config = require("lvim-space.config")
 local api = vim.api

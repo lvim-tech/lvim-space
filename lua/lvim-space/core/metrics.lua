@@ -1,5 +1,6 @@
--- lua/lvim-space/core/metrics.lua
--- In-memory metrics collection for lvim-space.
+-- lvim-space.core.metrics: in-memory metrics collection for lvim-space.
+--
+---@module "lvim-space.core.metrics"
 --
 -- Architecture
 -- ============

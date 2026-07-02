@@ -1,5 +1,8 @@
--- lua/lvim-space/utils/table.lua
--- Table manipulation utilities
+-- lvim-space.utils.table: general table-manipulation helpers used across the plugin. Note the user-opts merge
+-- in setup() uses the shared lvim-utils.utils.merge (array-replace) — this module's helpers are for other
+-- internal table work, not the config merge.
+--
+---@module "lvim-space.utils.table"
 
 local M = {}
 

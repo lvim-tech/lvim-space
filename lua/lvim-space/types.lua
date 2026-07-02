@@ -1,4 +1,9 @@
---- lvim-space type definitions (LuaLS / EmmyLua)
+-- lvim-space.types: the LuaLS / EmmyLua type definitions for the whole plugin — the DB record classes, the
+-- runtime LvimSpace.State shape (accreted by lvim-space.api.state) and the config option classes. A `@meta`
+-- file: it declares types only, ships no runtime code.
+--
+---@module "lvim-space.types"
+
 --- @meta
 
 --------------------------------------------------------------------------------

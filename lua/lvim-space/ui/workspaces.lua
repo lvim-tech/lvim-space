@@ -1,6 +1,8 @@
---- Workspaces UI panel for lvim-space.
---- Manages the workspace list panel for the active project: rendering, keymaps,
---- CRUD operations, workspace switching/session restore, and navigation to sibling panels.
+-- lvim-space.ui.workspaces: the workspaces panel for the active project — rendering, keymaps and CRUD for the
+-- workspace list, workspace switching with session restore, and navigation to the sibling panels (projects /
+-- tabs / files).
+--
+---@module "lvim-space.ui.workspaces"
 
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")

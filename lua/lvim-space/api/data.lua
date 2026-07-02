@@ -1,6 +1,8 @@
--- Data access layer for lvim-space: CRUD operations for projects, workspaces, tabs, and files.
--- All public functions wrap the persistence layer (db) and apply input validation before
+-- lvim-space.api.data: the data access layer — CRUD operations for projects, workspaces, tabs and
+-- files. All public functions wrap the persistence layer (db) and apply input validation before
 -- performing any database operation.
+--
+---@module "lvim-space.api.data"
 
 local state = require("lvim-space.api.state")
 local db = require("lvim-space.persistence.db")

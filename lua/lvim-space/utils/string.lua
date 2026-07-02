@@ -1,5 +1,7 @@
--- lua/lvim-space/utils/string.lua
--- String utilities
+-- lvim-space.utils.string: string helpers for the UI layer — superscript digit rendering (for the numbered
+-- list badges) and related text formatting used when building panel rows.
+--
+---@module "lvim-space.utils.string"
 
 local M = {}
 

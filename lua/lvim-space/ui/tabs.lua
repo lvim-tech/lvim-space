@@ -1,6 +1,7 @@
--- tabs.lua
--- UI panel for managing tabs within the active workspace.
--- Handles listing, adding, renaming, deleting, reordering, and switching tabs.
+-- lvim-space.ui.tabs: the tabs panel — lists, adds, renames, deletes, reorders and switches the tabs of the
+-- active workspace. Each tab owns a saved session, so switching tabs here drives lvim-space.core.session.
+--
+---@module "lvim-space.ui.tabs"
 
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")

@@ -1,5 +1,7 @@
--- lua/lvim-space/utils/file_system.lua
--- File system utilities
+-- lvim-space.utils.file_system: filesystem helpers — path validation and pcall-wrapped file operations so
+-- callers get a boolean/result pair instead of raising on missing files or permission errors.
+--
+---@module "lvim-space.utils.file_system"
 
 local fn = vim.fn
 

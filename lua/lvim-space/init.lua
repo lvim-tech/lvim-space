@@ -1,7 +1,8 @@
--- lua/lvim-space/init.lua
--- Plugin entry point. Exposes M.setup() which merges user configuration,
--- loads the appropriate language pack, and initialises every subsystem
--- (metrics, UI, autocommands, keymaps, commands, and highlights).
+-- lvim-space.init: the plugin entry point. `setup()` merges the user's options into the live config, selects
+-- the language pack, then boots every subsystem in dependency order (metrics → UI → autocommands → commands →
+-- highlights). Idempotent: repeated calls are no-ops.
+--
+---@module "lvim-space"
 
 local config = require("lvim-space.config")
 local autocommands = require("lvim-space.hooks.autocommands")
@@ -9,7 +10,7 @@ local commands = require("lvim-space.hooks.commands")
 local metrics = require("lvim-space.core.metrics")
 local state = require("lvim-space.api.state")
 local ui = require("lvim-space.ui")
-local utils = require("lvim-space.utils")
+local lvim_utils = require("lvim-utils.utils")
 
 local M = {}
 
@@ -28,7 +29,7 @@ function M.setup(user_config)
     end
     _initialized = true
     if user_config ~= nil then
-        utils.table.merge(config, user_config)
+        lvim_utils.merge(config, user_config)
     end
     local success, lang_data = pcall(require, "lvim-space.lang." .. config.lang)
     if success then

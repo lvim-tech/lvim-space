@@ -1,7 +1,8 @@
--- lua/lvim-space/utils/notify.lua
--- Low-level notification sender used internally by the plugin.
--- Respects config.notify.enabled and config.notify.min_level independently.
--- For UI-level notifications (info / warn / error helpers) see api/notify.lua.
+-- lvim-space.utils.notify: the low-level notification sender used internally by the plugin. Honours
+-- config.notify.enabled and config.notify.min_level and always runs inside vim.schedule so it is safe from any
+-- context (fast events included). The UI-facing info/warn/error helpers live in lvim-space.api.notify.
+--
+---@module "lvim-space.utils.notify"
 
 local config = require("lvim-space.config")
 local levels = require("lvim-space.utils.levels")

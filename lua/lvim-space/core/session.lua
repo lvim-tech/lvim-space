@@ -1,6 +1,7 @@
---- Session management for lvim-space.
---- Handles saving, restoring, and switching tab sessions, including buffer/window
---- layout persistence and debounced auto-save logic.
+-- lvim-space.core.session: session management — saves, restores and switches tab sessions, including
+-- buffer/window layout persistence and the debounced auto-save logic.
+--
+---@module "lvim-space.core.session"
 
 local config = require("lvim-space.config")
 local data = require("lvim-space.api.data")

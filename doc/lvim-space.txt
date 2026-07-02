@@ -88,17 +88,22 @@ UI ~
                                                          *lvim-space-config-ui*
   ui.mode         (string)  Where the panel docks — "area" (default), "float"
                             or "bottom". See |lvim-space-modes|.
-  ui.title_line   (string)  In "area" mode, where the panel title is drawn —
-                            "border" (the native border-title: title left,
-                            count right on the top border, default) or
-                            "statusline" (published to the lvim-utils chrome
-                            overlay, minibuffer style). "float"/"bottom" always
-                            use the border-title. The frame border itself is the
-                            single shared lvim-utils `config.ui.border` — change
-                            that one key to re-border every lvim-tech panel.
+  ui.title_line   (string)  Where the panel title is drawn. Default: nil,
+                            which INHERITS the central lvim-utils
+                            `config.ui.title_line` (default "row": a content
+                            row at the top — title flush-left, count
+                            flush-right, matching the pickers). Set "border"
+                            to move it onto the top border, or "statusline" to
+                            publish an "area" panel's title to the lvim-utils
+                            chrome overlay (minibuffer style). The frame border
+                            itself is the single shared lvim-utils
+                            `config.ui.border`.
   ui.filetype     (string)  Panel buffer 'filetype'. Default: "lvim-space".
   ui.title        (string)  Panel title text. Default: "LVIM SPACE".
-  ui.title_position (string) "left" | "center" | "right". Default: "center".
+  ui.title_pos    (string)  Title alignment. Default: nil, which INHERITS the
+                            central lvim-utils `config.ui.title_pos` (default
+                            "left"). Set "left" | "center" | "right" to
+                            override the placement for lvim-space alone.
   ui.max_height   (number)  Maximum visible rows before the list scrolls.
                             Default: 10.
   ui.spacing      (number)  Padding in the status/info line. Default: 2.
@@ -170,8 +175,9 @@ All three render through lvim-utils.ui.surface.
   "area"    (default) The Emacs-minibuffer cmdline zone. When the lvim-utils
             msgarea zone is enabled the panel is hosted ABOVE the messages
             (the editor and statusline stay in place); when the zone is off it
-            falls back to growing 'cmdheight'. The title is published to the
-            statusline overlay.
+            falls back to growing 'cmdheight'. By default the title is a
+            content row at the top of the panel (see `ui.title_line`); set
+            "statusline" to publish it to the chrome overlay instead.
 
   "float"   A centred rounded modal with a native border-title.
 
@@ -274,10 +280,13 @@ subcommands and tab-completion.
 A public API for status lines and other plugins: >lua
     local pub = require("lvim-space.pub")
 <
-  pub.get_tab_info()        { project_name, workspace_name, tabs[] }
-  pub.get_active_tab()      { id, name } or nil
-  pub.get_workspace_name()  string or nil
-  pub.get_project_name()    string or nil
+  pub.get_tab_info()          { project_name, workspace_name, tabs[] }
+  pub.get_active_tab()        { id, name } or nil
+  pub.get_workspace_name()    string or nil
+  pub.get_project_name()      string or nil
+  pub.has_project_for_cwd()   boolean — true when the cwd has a saved project
+                              (opens the DB first; safe to call early, e.g.
+                              from a dashboard `should_open` probe)
 
 All return safe defaults (empty tables / nil) when the plugin is not set up or
 no session is active — safe to call at any time.

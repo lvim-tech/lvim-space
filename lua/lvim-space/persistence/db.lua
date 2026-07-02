@@ -1,3 +1,9 @@
+-- lvim-space.persistence.db: the SQLite data store — opens/initialises the lvimspace.db, defines the tables
+-- (projects / workspaces / tabs) via sqlite.lua and exposes the low-level find/insert/update/delete used by
+-- lvim-space.api.data. The only module that talks to sqlite directly.
+--
+---@module "lvim-space.persistence.db"
+
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")

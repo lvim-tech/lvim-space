@@ -1,5 +1,7 @@
--- lua/lvim-space/utils/init.lua
--- Main utils module that aggregates all utility submodules
+-- lvim-space.utils: the utilities aggregate — a single require that exposes every utility submodule
+-- (debug / file_system / levels / notify / string / table) as one namespaced table for the rest of the plugin.
+--
+---@module "lvim-space.utils"
 
 local M = {}
 

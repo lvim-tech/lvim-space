@@ -1,6 +1,8 @@
---- Projects UI panel for lvim-space.
---- Manages the project list panel: rendering, keymaps, CRUD operations,
---- project switching, and navigation to child panels (workspaces/tabs/files).
+-- lvim-space.ui.projects: the projects panel — rendering, keymaps and CRUD for the project list, plus project
+-- switching and navigation down into the child panels (workspaces / tabs / files). The root panel of the entity
+-- hierarchy.
+--
+---@module "lvim-space.ui.projects"
 
 local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")

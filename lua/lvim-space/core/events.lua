@@ -1,5 +1,7 @@
--- lua/lvim-space/core/events.lua
--- Central event bus for the plugin
+-- lvim-space.core.events: a central event bus — modules publish and subscribe to named events so the
+-- subsystems stay decoupled from one another (metrics subscribes to "debug", etc.).
+--
+---@module "lvim-space.core.events"
 
 ---@alias EventHandler fun(...: any)
 

@@ -10,7 +10,19 @@ https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
 
 ## Installation
 
-### Lazy
+Requires Neovim >= 0.11 and [lvim-utils](https://github.com/lvim-tech/lvim-utils) and [sqlite.lua](https://github.com/kkharji/sqlite.lua).
+
+### lvim-installer (recommended)
+
+Install and manage it from the LVIM package manager — open the **Plugins** tab and install / update / pin it:
+
+```vim
+:LvimInstaller plugins
+```
+
+lvim-installer installs plugins through Neovim's built-in `vim.pack`, so no external plugin manager is needed.
+
+### lazy.nvim
 
 ```lua
 return {
@@ -25,19 +37,7 @@ return {
 }
 ```
 
-### Native (Neovim 0.11+)
-
-```lua
-vim.pack.add({
-    "https://github.com/kkharji/sqlite.lua",
-    "https://github.com/lvim-tech/lvim-utils",
-    "https://github.com/lvim-tech/lvim-space",
-})
-
-require("lvim-space").setup({ ... })
-```
-
-### Packer
+### packer.nvim
 
 ```lua
 use({
@@ -50,6 +50,17 @@ use({
         require("lvim-space").setup({})
     end,
 })
+```
+
+### Native (vim.pack)
+
+```lua
+vim.pack.add({
+    { src = "https://github.com/kkharji/sqlite.lua" },
+    { src = "https://github.com/lvim-tech/lvim-utils" },
+    { src = "https://github.com/lvim-tech/lvim-space" },
+})
+require("lvim-space").setup({})
 ```
 
 ---
@@ -88,6 +99,7 @@ local pub = require("lvim-space.pub")
 | `pub.get_active_tab()`     | `{ id, name }` or `nil`                    | Currently active tab  |
 | `pub.get_workspace_name()` | `string` or `nil`                          | Active workspace name |
 | `pub.get_project_name()`   | `string` or `nil`                          | Active project name   |
+| `pub.has_project_for_cwd()` | `boolean`                                 | `true` when the cwd has a saved project (opens the DB first; safe to call early — e.g. from a dashboard `should_open` probe) |
 
 `get_tab_info()` returns:
 
@@ -261,7 +273,10 @@ require("lvim-space").setup({
     ui = {
         filetype = "lvim-space",
         title = "LVIM SPACE",
-        title_position = "center", -- "left" | "center" | "right"
+        -- Title alignment. nil (default) INHERITS the central lvim-utils
+        -- `config.ui.title_pos` (default "left"); set "left" | "center" |
+        -- "right" to override the placement for lvim-space alone.
+        title_pos = nil,
 
         -- Where every panel, prompt and the search picker docks. Rendered
         -- through lvim-utils.ui.surface:
@@ -273,16 +288,17 @@ require("lvim-space").setup({
         --   "bottom" a bar docked over the bottom rows.
         mode = "area",
 
-        -- In "area" mode, where the panel title is drawn:
-        --   "border"     the native border-title (title left, count right on
-        --                the top border) — the default.
+        -- Where the panel title is drawn. nil (default) INHERITS the central
+        -- lvim-utils `config.ui.title_line` (default "row"):
+        --   "row"        a content row at the top — TITLE flush-left, item
+        --                count flush-right, matching the lvim-utils pickers.
+        --   "border"     the native border-title on the top border.
         --   "statusline" published to the lvim-utils chrome overlay
         --                (minibuffer style — the heirline file segments give
         --                way to the panel title while a panel is open).
-        -- "float"/"bottom" always use the border-title. The frame border
-        -- itself is the single shared lvim-utils `config.ui.border` — change
-        -- that one key to re-border every lvim-tech panel.
-        title_line = "border",
+        -- Set this key only to override the placement for lvim-space alone;
+        -- the frame border is the single shared lvim-utils `config.ui.border`.
+        title_line = nil,
 
         max_height = 10,
         spacing = 2, -- padding spaces in the status/info line
@@ -405,9 +421,11 @@ require("lvim-space").setup({
     statusline stay in place); otherwise it falls back to growing `cmdheight`.
   - **`float`** — a centred modal with a border-title.
   - **`bottom`** — a bar docked over the bottom rows.
-- Every mode draws the one shared lvim-utils frame border (`config.ui.border`) with the title
-  in the border — title left, item count right on the top border. `ui.title_line = "statusline"`
-  instead publishes an `area` panel's title to the chrome overlay (minibuffer style).
+- Every mode draws the one shared lvim-utils frame border (`config.ui.border`). By default
+  (`ui.title_line` inherits the central `"row"`) the title is a content row at the top of the
+  panel — title flush-left, item count flush-right — matching the lvim-utils pickers. Set
+  `ui.title_line = "border"` to move it onto the top border, or `"statusline"` to publish an
+  `area` panel's title to the chrome overlay (minibuffer style).
 - NerdFont icons are used everywhere for clarity.
 - The hardware cursor is hidden in panels via the lvim-utils cursor module.
 - Empty panels display an icon and message from your language configuration.
