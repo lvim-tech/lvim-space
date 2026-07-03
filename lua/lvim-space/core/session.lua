@@ -222,7 +222,12 @@ local function collect_tab_session_data(tab_id)
     end
     local buffer_cursor_info = {}
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-        if vim.api.nvim_win_is_valid(win) and not ui.is_plugin_window(win) then
+        -- Skip floats here too, so a preview float's cursor never overrides the real window's saved position.
+        if
+            vim.api.nvim_win_is_valid(win)
+            and vim.api.nvim_win_get_config(win).relative == ""
+            and not ui.is_plugin_window(win)
+        then
             local bufnr = vim.api.nvim_win_get_buf(win)
             local c = classify_buffer(bufnr)
             if not c.is_special and c.name ~= "" then
@@ -277,7 +282,15 @@ local function collect_tab_session_data(tab_id)
     local current_win = vim.api.nvim_get_current_win()
     local current_window_index, valid_window_count = nil, 0
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-        if vim.api.nvim_win_is_valid(win) and not ui.is_plugin_window(win) then
+        -- Skip FLOATING windows: a transient float showing a real file (e.g. the quickfix's live-preview float,
+        -- present only while the cursor sits on a qf entry) is NOT part of the persistent split layout. Capturing
+        -- it added a phantom SECOND window at the float's position → the restored session grew an extra bottom
+        -- split with that file. Only real (non-float) windows describe the layout.
+        if
+            vim.api.nvim_win_is_valid(win)
+            and vim.api.nvim_win_get_config(win).relative == ""
+            and not ui.is_plugin_window(win)
+        then
             local bufnr = vim.api.nvim_win_get_buf(win)
             if not classify_buffer(bufnr).is_special then
                 local abs = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":p")
