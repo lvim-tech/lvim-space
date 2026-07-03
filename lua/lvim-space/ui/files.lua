@@ -449,6 +449,15 @@ function M.handle_file_switch(opts)
             ui.close_all()
         end
     end
+    -- The <CR> that triggered this switch can LEAK into the freshly-opened buffer (its buffer-local panel mapping is
+    -- torn down mid-keypress by `close_all`, so nvim re-processes the key in the new buffer) and fire that buffer's
+    -- own <CR> mapping — orgmode's `org_return` runs `startinsert!`, stranding the user in INSERT after opening an
+    -- org file from the panel. Snap back to normal on the next tick, once any such leaked mapping has run.
+    vim.schedule(function()
+        if vim.fn.mode():sub(1, 1) == "i" then
+            vim.cmd("stopinsert")
+        end
+    end)
 end
 
 --- Opens the file under the cursor in a new vertical split.
@@ -531,6 +540,15 @@ function M._switch_file()
         return
     end
 
+    -- Load the buffer in a NORMAL context (not inside `nvim_win_call`): the file's open autocmds — a filetype's
+    -- ftplugin, an on-open formatter, orgmode's own hooks — may run a SYNCHRONOUS external command / job, which
+    -- DEADLOCKS if fired inside `nvim_win_call` (the callback can't spin the event loop the job needs → nvim hangs
+    -- on the pipe, unblockable except by a stray keypress). `bufload` here fires them in the normal main loop, then
+    -- `nvim_win_set_buf` just DISPLAYS the already-loaded buffer (no re-trigger). Orgmode is set up eagerly now, so
+    -- `bufload` no longer errors on an org ftplugin.
+    local bufnr = vim.fn.bufadd(file_path_to_open)
+    vim.fn.bufload(bufnr)
+
     local target_win = last_real_win
 
     if not target_win or not vim.api.nvim_win_is_valid(target_win) or is_plugin_panel_win(target_win) then
@@ -538,17 +556,10 @@ function M._switch_file()
         last_real_win = target_win
     end
 
-    -- Open through the standard `:edit` path (in the target window) rather than a manual bufadd()+bufload(): the
-    -- manual load runs a filetype's ftplugin BEFORE its LAZY-loaded plugin is set up (e.g. orgmode → "attempt to
-    -- index field 'orgmode'", E5108) — which aborted the switch and left the statusline unrendered. `:edit` fires
-    -- the filetype / lazy-load hooks in the right order, so the plugin is ready when its ftplugin runs.
-    local escaped = vim.fn.fnameescape(file_path_to_open)
     if target_win and vim.api.nvim_win_is_valid(target_win) then
-        vim.api.nvim_win_call(target_win, function()
-            vim.cmd("edit " .. escaped)
-        end)
+        vim.api.nvim_win_set_buf(target_win, bufnr)
     else
-        vim.cmd("edit " .. escaped)
+        vim.cmd("edit " .. vim.fn.fnameescape(file_path_to_open))
     end
 
     state.file_active = file_path_to_open
