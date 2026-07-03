@@ -593,9 +593,8 @@ local FOOTER_STYLE = {
 }
 
 -- The group separator (our defined RED DOT) and the ❮/❯ overflow chevrons, all on the overridable
--- LvimSpaceFooterSep group. `surface.bar` hardcodes the chassis' own LvimUiFooterSep for its divider and
--- emits no chevrons, so lvim-space assembles the band itself (below) to keep BOTH — while every BUTTON still
--- routes through the shared `surface.button` spec builder.
+-- LvimSpaceFooterSep group — passed to the shared `surface.bar` (via `separator_hl` + `chevrons`), so the WHOLE
+-- band (buttons, separator, chevrons, align) is assembled by the one shared builder, with lvim-space's own colours.
 ---@type string
 local FOOTER_SEP = "LvimSpaceFooterSep"
 
@@ -688,45 +687,19 @@ M.set_action_footer = function(ctx, handlers)
     groups[#groups + 1] = splits
     groups[#groups + 1] = panel_ids
 
-    -- Resolve the id groups into a `lvim-utils.ui.bar` band: each record → a `ui.button` spec via the shared
-    -- `surface.button` (carrying lvim-space's FOOTER_STYLE), with a `●` LvimSpaceFooterSep separator between
-    -- non-empty groups. `❮`/`❯` chevrons + centred alignment mirror the lvim-utils `ui.tabs` footer.
-    local items = {}
-    for _, group in ipairs(groups) do
-        local resolved = {}
-        for _, id in ipairs(group) do
-            local rec = registry[id]
-            if rec then
-                resolved[#resolved + 1] = surface.button({
-                    name = rec.name,
-                    key = rec.key,
-                    run = rec.run,
-                    no_hotkey = rec.no_hotkey,
-                    hl = FOOTER_STYLE,
-                }, "action")
-            end
-        end
-        if #resolved > 0 then
-            if #items > 0 then
-                items[#items + 1] =
-                    { type = "separator", text = "●", style = { padding = { 1, 1 }, hl = FOOTER_SEP } }
-            end
-            for _, spec in ipairs(resolved) do
-                items[#items + 1] = spec
-            end
-        end
-    end
-
+    -- Hand the id groups + registry straight to the SHARED `surface.bar`: it routes every record through
+    -- `surface.button` (with lvim-space's own FOOTER_STYLE colours via the bar-level `hl`), divides non-empty
+    -- groups with the `●` LvimSpaceFooterSep separator (`separator_hl`), and carries the `❮`/`❯` overflow chevrons
+    -- + centred align. One shared band builder for the whole footer — nothing assembled locally.
     ui.open_actions({
         bars = {
-            {
-                items = items,
+            surface.bar(groups, registry, {
                 align = "center",
-                chevrons = {
-                    left = { text = "❮", style = { hl = FOOTER_SEP } },
-                    right = { text = "❯", style = { hl = FOOTER_SEP } },
-                },
-            },
+                separator = "●",
+                separator_hl = FOOTER_SEP,
+                hl = FOOTER_STYLE,
+                chevrons = surface.chevrons(FOOTER_SEP),
+            }),
         },
     })
 end
