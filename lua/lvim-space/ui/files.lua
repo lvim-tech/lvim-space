@@ -531,9 +531,6 @@ function M._switch_file()
         return
     end
 
-    local bufnr = vim.fn.bufadd(file_path_to_open)
-    vim.fn.bufload(bufnr)
-
     local target_win = last_real_win
 
     if not target_win or not vim.api.nvim_win_is_valid(target_win) or is_plugin_panel_win(target_win) then
@@ -541,10 +538,17 @@ function M._switch_file()
         last_real_win = target_win
     end
 
+    -- Open through the standard `:edit` path (in the target window) rather than a manual bufadd()+bufload(): the
+    -- manual load runs a filetype's ftplugin BEFORE its LAZY-loaded plugin is set up (e.g. orgmode → "attempt to
+    -- index field 'orgmode'", E5108) — which aborted the switch and left the statusline unrendered. `:edit` fires
+    -- the filetype / lazy-load hooks in the right order, so the plugin is ready when its ftplugin runs.
+    local escaped = vim.fn.fnameescape(file_path_to_open)
     if target_win and vim.api.nvim_win_is_valid(target_win) then
-        vim.api.nvim_win_set_buf(target_win, bufnr)
+        vim.api.nvim_win_call(target_win, function()
+            vim.cmd("edit " .. escaped)
+        end)
     else
-        vim.cmd("edit " .. vim.fn.fnameescape(file_path_to_open))
+        vim.cmd("edit " .. escaped)
     end
 
     state.file_active = file_path_to_open
