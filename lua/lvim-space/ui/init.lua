@@ -346,84 +346,18 @@ M.open_main = function(lines, name, selected_line, count)
     })
 end
 
--- Footer button style: lvim-space's OWN, user-overridable groups (defined in config/highlights.lua),
--- NOT the internal LvimUiFooter* of lvim-utils — so the user can recolour the footer from lvim-space's
--- config exactly like the other LvimSpace* groups. The KEY box uses the blue tint, the LABEL box the
--- yellow tint, and the hover variants the stronger tints.
-local FOOTER_STYLE = {
-    icon = {
-        padding = { 1, 1 },
-        normal = "LvimSpaceFooterKey",
-        active = "LvimSpaceFooterKey",
-        hover = "LvimSpaceFooterKeyHover",
-        hover_active = "LvimSpaceFooterKeyHover",
-    },
-    text = {
-        padding = { 1, 1 },
-        normal = "LvimSpaceFooterLabel",
-        active = "LvimSpaceFooterLabel",
-        hover = "LvimSpaceFooterLabelHover",
-        hover_active = "LvimSpaceFooterLabelHover",
-    },
-}
-
--- The group separator (our defined RED DOT) and the ❮/❯ overflow chevrons, all on the overridable
--- LvimSpaceFooterSep group.
-local FOOTER_SEP = "LvimSpaceFooterSep"
-
----Assemble a navigable `lvim-utils.ui.bar` footer spec from a list of button GROUPS — modelled on the
----lvim-utils `ui.tabs` / picker footer: each group is a list of footer button shorthands
----`{ key, name, run, no_hotkey? }`; consecutive (non-empty) groups are joined by a `●` red-dot separator,
----the bar is centred, and `❮`/`❯` chevrons appear on overflow. Every button carries the lvim-space
----FOOTER_STYLE so it paints from the overridable LvimSpaceFooter* groups.
----@param groups table[][]  List of button groups (each a list of `{ key, name, run, no_hotkey? }`)
----@return table footer  A `{ bars = { { items, align, chevrons } } }` footer spec
-local function footer_bar(groups)
-    local items = {}
-    for _, group in ipairs(groups) do
-        if #group > 0 then
-            if #items > 0 then
-                items[#items + 1] =
-                    { type = "separator", text = "●", style = { padding = { 1, 1 }, hl = FOOTER_SEP } }
-            end
-            for _, it in ipairs(group) do
-                items[#items + 1] = {
-                    key = it.key,
-                    name = it.name,
-                    run = it.run,
-                    no_hotkey = it.no_hotkey,
-                    style = FOOTER_STYLE,
-                }
-            end
-        end
-    end
-    return {
-        bars = {
-            {
-                items = items,
-                align = "center",
-                chevrons = {
-                    left = { text = "❮", style = { hl = FOOTER_SEP } },
-                    right = { text = "❯", style = { hl = FOOTER_SEP } },
-                },
-            },
-        },
-    }
-end
-
----Update the open panel's footer. Accepts either a navigable button model `{ groups = { … } }` (the entity
----panels' action bar, built by `common.set_action_footer`) — rendered as a centred `ui.bar` of buttons with
----red-dot separators + chevrons — or a plain string / `{ string }` (the error / guidance info lines), which
----renders as a simple text band. No-op when no panel is open.
----@param footer string|string[]|table  A `{ groups = … }` button model, or a text info line
+---Update the open panel's footer. Accepts either a ready `lvim-utils.ui.bar` band model `{ bars = { … } }`
+---(the entity panels' navigable action bar, assembled by `common.set_action_footer` through the shared
+---`surface.button` spec builder) — rendered verbatim as a centred bar of buttons with red-dot separators +
+---chevrons — or a plain string / `{ string }` (the error / guidance info lines), which renders as a simple
+---text band. No-op when no panel is open.
+---@param footer string|string[]|table  A `{ bars = … }` band model, or a text info line
 M.open_actions = function(footer)
     if not (panel and panel.state and panel.state.set_footer) then
         return
     end
     local spec
-    if type(footer) == "table" and footer.groups then
-        spec = footer_bar(footer.groups)
-    elseif type(footer) == "table" and footer.bars then
+    if type(footer) == "table" and footer.bars then
         spec = footer
     else
         local text = type(footer) == "table" and (footer[1] or "") or tostring(footer or "")

@@ -9,6 +9,7 @@ local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
 local ui = require("lvim-space.ui")
 local picker = require("lvim-utils.picker")
+local surface = require("lvim-utils.ui.surface")
 
 local M = {}
 
@@ -568,10 +569,43 @@ local function key_badge(key)
     return (key:gsub("^<(.+)>$", "%1"))
 end
 
----Build and apply the panel's NAVIGABLE footer bar (replacing the old plain hint string). The buttons are
----grouped by the red-dot (`●`) separator — `move ● load/enter ● add[/rename]/delete[/splits] ● panels` — and
----fed to the surface footer via `ui.open_actions({ groups = … })`, which renders them as a centred
----`lvim-utils.ui.bar` with `❮`/`❯` overflow chevrons (modelled on the lvim-utils `ui.tabs` footer).
+-- Footer button style: lvim-space's OWN, user-overridable groups (defined in config/highlights.lua), NOT the
+-- internal LvimUiFooter* of lvim-utils — so the user can recolour the footer from lvim-space's config exactly
+-- like the other LvimSpace* groups. The KEY box uses the blue tint, the LABEL box the yellow tint, and the
+-- hover variants the stronger tints. Passed as each record's `hl`, which the shared `surface.button` merges
+-- OVER the `action` KIND's default box colours — so the buttons paint from these groups, not LvimUiFooter*.
+---@type table
+local FOOTER_STYLE = {
+    icon = {
+        padding = { 1, 1 },
+        normal = "LvimSpaceFooterKey",
+        active = "LvimSpaceFooterKey",
+        hover = "LvimSpaceFooterKeyHover",
+        hover_active = "LvimSpaceFooterKeyHover",
+    },
+    text = {
+        padding = { 1, 1 },
+        normal = "LvimSpaceFooterLabel",
+        active = "LvimSpaceFooterLabel",
+        hover = "LvimSpaceFooterLabelHover",
+        hover_active = "LvimSpaceFooterLabelHover",
+    },
+}
+
+-- The group separator (our defined RED DOT) and the ❮/❯ overflow chevrons, all on the overridable
+-- LvimSpaceFooterSep group. `surface.bar` hardcodes the chassis' own LvimUiFooterSep for its divider and
+-- emits no chevrons, so lvim-space assembles the band itself (below) to keep BOTH — while every BUTTON still
+-- routes through the shared `surface.button` spec builder.
+---@type string
+local FOOTER_SEP = "LvimSpaceFooterSep"
+
+---Build and apply the panel's NAVIGABLE footer bar (replacing the old plain hint string). Every button is a
+---`ui.button` spec produced by the SHARED `surface.button` builder (the ONE styling place for every lvim-tech
+---bar), so lvim-space's footer stays byte-identical to the ecosystem's — the only per-plugin bits are the
+---lvim-space FOOTER_STYLE (its own overridable colour groups) each record carries and the `❮`/`❯` overflow
+---chevrons. The buttons are drawn from a local REGISTRY (action id → record) and grouped by the red-dot (`●`)
+---separator — `move ● load/enter ● add[/rename]/delete[/splits] ● panels` — then handed to the surface footer
+---via `ui.open_actions({ bars = { … } })`, which renders the centred band.
 ---
 ---Each button's `run` REUSES the panel's own action function, so a focused footer button does exactly what
 ---its hotkey does. Selection-dependent actions (move / load / enter / rename / delete / splits) are omitted on
@@ -582,56 +616,119 @@ M.set_action_footer = function(ctx, handlers)
     handlers = handlers or {}
     local akeys = (config.keymappings and config.keymappings.action) or {}
     local has_items = ctx and not ctx.is_empty
-    local groups = {}
 
-    -- Cursor + reorder are DISPLAY chips (`no_hotkey` so they are never mapped — a multi-char "j/k" label
-    -- would otherwise become a `j` mapping prefix). `j`/`k` already move the list cursor; on panels that
-    -- support reordering, `K`/`J` (config `move_up`/`move_down`) move the selected entity — the chip mirrors
-    -- the live config keys so the legend stays accurate if the user rebinds them.
+    -- REGISTRY: action id → its footer record `{ name, key, run?, no_hotkey? }`. Every `key` is PRE-FORMATTED
+    -- through `key_badge` (lvim-space renders `<Space>`/`<CR>` as their Nerd glyphs and strips a chord's angle
+    -- brackets — a deliberately different badge from the chassis' generic key box, so the pre-formatted key is
+    -- passed through as-is). `move`/`reorder` are DISPLAY chips (`no_hotkey`, never mapped — a multi-char "j/k"
+    -- label would otherwise become a `j` mapping prefix); `j`/`k` already move the list cursor, and `K`/`J`
+    -- (config `move_up`/`move_down`) reorder the selected entity, so the chip mirrors the live config keys.
+    ---@type table<string, table>
+    local registry = {
+        move = { name = "move", key = "j/k", no_hotkey = true },
+        reorder = {
+            name = "reorder",
+            key = key_badge(akeys.move_up) .. "/" .. key_badge(akeys.move_down),
+            no_hotkey = true,
+        },
+        load = { name = "load", key = key_badge(akeys.switch), run = handlers.load },
+        enter = { name = "enter", key = key_badge(akeys.enter), run = handlers.enter },
+        add = { name = "add", key = key_badge(akeys.add), run = handlers.add },
+        rename = { name = "rename", key = key_badge(akeys.rename), run = handlers.rename },
+        delete = { name = "delete", key = key_badge(akeys.delete), run = handlers.delete },
+        vsplit = { name = "vsplit", key = key_badge(akeys.split_v), run = handlers.split_v },
+        hsplit = { name = "hsplit", key = key_badge(akeys.split_h), run = handlers.split_h },
+    }
+    -- The panel-nav buttons arrive as READY records with RAW keys (single global letters, not badged); register
+    -- them under synthetic ids so the whole bar resolves through the one registry + groups pattern.
+    local panel_ids = {}
+    for i, p in ipairs(handlers.panels or {}) do
+        local id = "panel_" .. i
+        registry[id] = { name = p.name, key = p.key, run = p.run }
+        panel_ids[#panel_ids + 1] = id
+    end
+
+    -- GROUPS of action ids, divided by the `●` separator. Selection-dependent ids are dropped on an empty list
+    -- (mirroring the per-panel keymap guards); `add` and the panel-nav buttons always show. Empty groups add
+    -- nothing to the band.
+    local groups = {}
     if has_items then
-        local nav = { { key = "j/k", name = "move", no_hotkey = true } }
+        local nav = { "move" }
         if handlers.reorder then
-            local reorder_label = key_badge(akeys.move_up) .. "/" .. key_badge(akeys.move_down)
-            nav[#nav + 1] = { key = reorder_label, name = "reorder", no_hotkey = true }
+            nav[#nav + 1] = "reorder"
         end
         groups[#groups + 1] = nav
     end
-
     local activate = {}
     if has_items and handlers.load then
-        activate[#activate + 1] = { key = key_badge(akeys.switch), name = "load", run = handlers.load }
+        activate[#activate + 1] = "load"
     end
     if has_items and handlers.enter then
-        activate[#activate + 1] = { key = key_badge(akeys.enter), name = "enter", run = handlers.enter }
+        activate[#activate + 1] = "enter"
     end
     groups[#groups + 1] = activate
-
     local crud = {}
     if handlers.add then
-        crud[#crud + 1] = { key = key_badge(akeys.add), name = "add", run = handlers.add }
+        crud[#crud + 1] = "add"
     end
     if has_items and handlers.rename then
-        crud[#crud + 1] = { key = key_badge(akeys.rename), name = "rename", run = handlers.rename }
+        crud[#crud + 1] = "rename"
     end
     if has_items and handlers.delete then
-        crud[#crud + 1] = { key = key_badge(akeys.delete), name = "delete", run = handlers.delete }
+        crud[#crud + 1] = "delete"
     end
     groups[#groups + 1] = crud
-
     local splits = {}
     if has_items and handlers.split_v then
-        splits[#splits + 1] = { key = key_badge(akeys.split_v), name = "vsplit", run = handlers.split_v }
+        splits[#splits + 1] = "vsplit"
     end
     if has_items and handlers.split_h then
-        splits[#splits + 1] = { key = key_badge(akeys.split_h), name = "hsplit", run = handlers.split_h }
+        splits[#splits + 1] = "hsplit"
     end
     groups[#groups + 1] = splits
+    groups[#groups + 1] = panel_ids
 
-    if handlers.panels then
-        groups[#groups + 1] = handlers.panels
+    -- Resolve the id groups into a `lvim-utils.ui.bar` band: each record → a `ui.button` spec via the shared
+    -- `surface.button` (carrying lvim-space's FOOTER_STYLE), with a `●` LvimSpaceFooterSep separator between
+    -- non-empty groups. `❮`/`❯` chevrons + centred alignment mirror the lvim-utils `ui.tabs` footer.
+    local items = {}
+    for _, group in ipairs(groups) do
+        local resolved = {}
+        for _, id in ipairs(group) do
+            local rec = registry[id]
+            if rec then
+                resolved[#resolved + 1] = surface.button({
+                    name = rec.name,
+                    key = rec.key,
+                    run = rec.run,
+                    no_hotkey = rec.no_hotkey,
+                    hl = FOOTER_STYLE,
+                }, "action")
+            end
+        end
+        if #resolved > 0 then
+            if #items > 0 then
+                items[#items + 1] =
+                    { type = "separator", text = "●", style = { padding = { 1, 1 }, hl = FOOTER_SEP } }
+            end
+            for _, spec in ipairs(resolved) do
+                items[#items + 1] = spec
+            end
+        end
     end
 
-    ui.open_actions({ groups = groups })
+    ui.open_actions({
+        bars = {
+            {
+                items = items,
+                align = "center",
+                chevrons = {
+                    left = { text = "❮", style = { hl = FOOTER_SEP } },
+                    right = { text = "❯", style = { hl = FOOTER_SEP } },
+                },
+            },
+        },
+    })
 end
 
 ---Open the main panel displaying a single formatted error message line.
