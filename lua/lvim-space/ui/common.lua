@@ -8,8 +8,8 @@ local config = require("lvim-space.config")
 local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
 local ui = require("lvim-space.ui")
-local picker = require("lvim-utils.picker")
-local surface = require("lvim-utils.ui.surface")
+local picker = require("lvim-picker")
+local surface = require("lvim-ui.surface")
 
 local M = {}
 

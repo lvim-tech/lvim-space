@@ -16,7 +16,7 @@ local state = require("lvim-space.api.state")
 local data = require("lvim-space.api.data")
 local session = require("lvim-space.core.session")
 local ui = require("lvim-space.ui")
-local picker = require("lvim-utils.picker")
+local picker = require("lvim-picker")
 
 local M = {}
 
@@ -202,7 +202,7 @@ M.init = function(opts)
         ui.close_all() -- release any open panel so the picker takes the shared zone without stacking over it
         picker.files(picker_opts)
     end
-    local ok_ma, msgarea = pcall(require, "lvim-utils.msgarea")
+    local ok_ma, msgarea = pcall(require, "lvim-msgarea")
     if ok_ma and msgarea.handoff and config.ui.mode == "area" and msgarea.is_enabled() then
         msgarea.handoff(open)
     else

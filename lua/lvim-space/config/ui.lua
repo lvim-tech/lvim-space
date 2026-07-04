@@ -13,7 +13,7 @@ return {
     title_pos = nil,
     -- Where the panel docks: "area" (the Emacs-minibuffer cmdline zone — hosted in the msgarea when it is
     -- enabled, else it grows cmdheight; the editor/heirline stay above it), "float" (a centred modal), or
-    -- "bottom" (a bar over the bottom rows). Rendered through lvim-utils.ui.surface.
+    -- "bottom" (a bar over the bottom rows). Rendered through lvim-ui.surface.
     mode = "area",
     -- Where the panel title goes — INHERITED from the central `lvim-utils config.ui.title_line` (default "row":
     -- a CONTENT row at the top, TITLE flush-left + count flush-right, matching the lvim-utils pickers). lvim-space

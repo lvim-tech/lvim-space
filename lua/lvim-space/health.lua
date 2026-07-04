@@ -34,8 +34,8 @@ function M.check()
     end
 
     -- lvim-utils chassis ----------------------------------------------------
-    local ok_surface = pcall(require, "lvim-utils.ui.surface")
-    local ok_picker = pcall(require, "lvim-utils.picker")
+    local ok_surface = pcall(require, "lvim-ui.surface")
+    local ok_picker = pcall(require, "lvim-picker")
     local ok_cursor = pcall(require, "lvim-utils.cursor")
     if ok_surface and ok_picker and ok_cursor then
         health.ok("lvim-utils found (ui.surface + picker + cursor)")
@@ -84,7 +84,7 @@ function M.check()
     if valid[mode] then
         health.ok("ui.mode = '" .. mode .. "'")
         if mode == "area" then
-            local ok_msg, msgarea = pcall(require, "lvim-utils.msgarea")
+            local ok_msg, msgarea = pcall(require, "lvim-msgarea")
             if ok_msg and msgarea.is_enabled and msgarea.is_enabled() then
                 health.ok("msgarea zone enabled — area panels dock above the messages")
             else

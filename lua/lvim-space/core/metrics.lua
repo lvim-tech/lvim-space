@@ -24,7 +24,7 @@ local events = require("lvim-space.core.events")
 local levels = require("lvim-space.utils.levels")
 local notify = require("lvim-space.utils.notify")
 local config = require("lvim-space.config")
-local surface = require("lvim-utils.ui.surface")
+local surface = require("lvim-ui.surface")
 
 -- ============================================================================
 -- Configuration helpers
@@ -649,7 +649,7 @@ end
 -- Floating window display
 -- ============================================================================
 
---- Open a centred metrics float on the shared lvim-utils.ui.surface chassis: a single markdown content
+--- Open a centred metrics float on the shared lvim-ui.surface chassis: a single markdown content
 --- block inside the ONE unified frame border (`surface.FRAME_BORDER` → `config.ui.border`) with a native
 --- centered-left border-title. Returns the block's `(buf, win)` plus the live surface `state` so the caller
 --- closes it cleanly via `state.close` (the chassis tears down the container + every band window). `q`/`<Esc>`

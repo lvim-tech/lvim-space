@@ -1,5 +1,5 @@
 -- lvim-space.ui: the UI CORE. Every entity panel (projects / workspaces / tabs / files / search) renders
--- through here. The list, the action/info bar and the input field are all drawn by the lvim-utils.ui.surface
+-- through here. The list, the action/info bar and the input field are all drawn by the lvim-ui.surface
 -- chassis — the ONE windowed-UI surface shared across every lvim-tech plugin — so lvim-space lives in the
 -- same zone as the pickers and the lsp peek and self-themes from the lvim-utils palette.
 --
@@ -22,7 +22,7 @@
 local config = require("lvim-space.config")
 local state = require("lvim-space.api.state")
 local lvim_cursor = require("lvim-utils.cursor")
-local surface = require("lvim-utils.ui.surface")
+local surface = require("lvim-ui.surface")
 local keymaps = require("lvim-space.core.keymaps")
 
 local api = vim.api
@@ -32,7 +32,7 @@ local M = {}
 local ns_syntax = api.nvim_create_namespace("lvim_space_syntax")
 
 ---@class LvimSpacePanelHandle
----@field state table  The live lvim-utils.ui.surface state (`.close`, `.set_footer`, `.reposition`, …)
+---@field state table  The live lvim-ui.surface state (`.close`, `.set_footer`, `.reposition`, …)
 ---@field buf integer  Buffer handle of the list content block
 ---@field win integer  Window handle of the list content block
 ---@field seg table|nil  The msgarea host segment (area mode, when the zone is enabled) — released on close
@@ -87,7 +87,7 @@ end
 ---Return the lvim-utils msgarea module when the zone is enabled, else nil.
 ---@return table|nil msgarea
 local function active_msgarea()
-    local ok, m = pcall(require, "lvim-utils.msgarea")
+    local ok, m = pcall(require, "lvim-msgarea")
     if ok and m.is_enabled and m.is_enabled() then
         return m
     end
@@ -346,7 +346,7 @@ M.open_main = function(lines, name, selected_line, count)
     })
 end
 
----Update the open panel's footer. Accepts either a ready `lvim-utils.ui.bar` band model `{ bars = { … } }`
+---Update the open panel's footer. Accepts either a ready `lvim-ui.bar` band model `{ bars = { … } }`
 ---(the entity panels' navigable action bar, assembled by `common.set_action_footer` through the shared
 ---`surface.button` spec builder) — rendered verbatim as a centred bar of buttons with red-dot separators +
 ---chevrons — or a plain string / `{ string }` (the error / guidance info lines), which renders as a simple

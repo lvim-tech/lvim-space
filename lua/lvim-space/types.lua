@@ -250,7 +250,7 @@
 --- @field fg_fuzzy_secondary string  Foreground hex colour for secondary fuzzy matches
 
 --- @class LvimSpace.UIConfig
---- @field mode       "area"|"float"|"bottom"   Where the panel docks (lvim-utils.ui.surface)
+--- @field mode       "area"|"float"|"bottom"   Where the panel docks (lvim-ui.surface)
 --- @field title_line "border"|"statusline"     In area mode, where the panel title goes
 --- @field icons      LvimSpace.IconsConfig      Icon strings
 --- @field highlight  LvimSpace.HighlightConfig  Highlight colours
