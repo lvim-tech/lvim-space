@@ -373,7 +373,6 @@ local function space_load_project(project_id, selected_line_in_ui)
     end
     state.project_id = project_id
     set_active_workspace_for_project(project_id)
-    local space_restore_augroup = vim.api.nvim_create_augroup("LvimSpaceProjectRestore", { clear = true })
     local function final_ui_update_and_notify()
         M.init(selected_line_in_ui)
         if state.ui and state.ui.content and vim.api.nvim_win_is_valid(state.ui.content.win) then
@@ -387,15 +386,12 @@ local function space_load_project(project_id, selected_line_in_ui)
         notify.info(state.lang.PROJECT_SWITCHED_TO .. selected_project.name)
     end
     if state.workspace_id and state.tab_active then
-        vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
-            group = space_restore_augroup,
-            callback = function()
-                vim.api.nvim_clear_autocmds({ group = space_restore_augroup })
-                vim.schedule(final_ui_update_and_notify)
-            end,
-            once = true,
-        })
-        session.restore_state(state.tab_active, true)
+        -- Drive the continuation off restore COMPLETION, not a one-shot BufEnter/WinEnter trap: that trap never
+        -- fires when the restore produces no window event, leaving the panel to spontaneously reopen on a LATER
+        -- unrelated event with `disable_auto_close` stuck true.
+        session.restore_state(state.tab_active, true, function()
+            vim.schedule(final_ui_update_and_notify)
+        end)
     else
         session.clear_current_state()
         vim.schedule(final_ui_update_and_notify)

@@ -363,31 +363,27 @@ local function space_load_session(workspace_id, selected_line_in_ui)
     end
     local old_disable_auto_close = state.disable_auto_close
     state.disable_auto_close = true
-    local space_restore_augroup = vim.api.nvim_create_augroup("LvimSpaceWorkspaceRestore", { clear = true })
-    vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
-        group = space_restore_augroup,
-        callback = function()
-            vim.api.nvim_clear_autocmds({ group = space_restore_augroup })
-            vim.schedule(function()
-                local ws_def = get_entity_def()
-                local switched_to_msg = (ws_def and ws_def.switched_to and state.lang[ws_def.switched_to])
-                    or "Switched to workspace: "
-                local ws_name_for_notify = (workspace and workspace.name) or "Selected Workspace"
-                notify.info(switched_to_msg .. ws_name_for_notify)
-                M.init(selected_line_in_ui)
-                if state.ui and state.ui.content and vim.api.nvim_win_is_valid(state.ui.content.win) then
-                    local main_ui_win = state.ui.content.win
-                    vim.api.nvim_set_current_win(main_ui_win)
-                    if selected_line_in_ui then
-                        pcall(vim.api.nvim_win_set_cursor, main_ui_win, { selected_line_in_ui, 0 })
-                    end
+    -- Drive the continuation off restore COMPLETION, not a one-shot BufEnter/WinEnter trap: that trap never
+    -- fires when the restore produces no window event (same buffer / empty session), which left the panel to
+    -- spontaneously reopen on a LATER unrelated event and `disable_auto_close` stuck true forever.
+    session.restore_state(state.tab_active, true, function()
+        vim.schedule(function()
+            local ws_def = get_entity_def()
+            local switched_to_msg = (ws_def and ws_def.switched_to and state.lang[ws_def.switched_to])
+                or "Switched to workspace: "
+            local ws_name_for_notify = (workspace and workspace.name) or "Selected Workspace"
+            notify.info(switched_to_msg .. ws_name_for_notify)
+            M.init(selected_line_in_ui)
+            if state.ui and state.ui.content and vim.api.nvim_win_is_valid(state.ui.content.win) then
+                local main_ui_win = state.ui.content.win
+                vim.api.nvim_set_current_win(main_ui_win)
+                if selected_line_in_ui then
+                    pcall(vim.api.nvim_win_set_cursor, main_ui_win, { selected_line_in_ui, 0 })
                 end
-                state.disable_auto_close = old_disable_auto_close
-            end)
-        end,
-        once = true,
-    })
-    session.restore_state(state.tab_active, true)
+            end
+            state.disable_auto_close = old_disable_auto_close
+        end)
+    end)
 end
 
 --- Switches to a workspace in "enter" mode: closes all panels, restores session state,

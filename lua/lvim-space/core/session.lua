@@ -636,22 +636,34 @@ end
 --- active window. The heavy work is deferred via `vim.schedule`.
 ---@param tab_id integer Tab ID whose session should be restored.
 ---@param force boolean|nil When true, restore even if `tab_id` matches the currently active tab.
+---@param on_done fun()|nil Fired EXACTLY once after the restore settles (async path: after the scheduled work;
+---       sync/early-return paths: right away). Lets a caller drive its continuation off completion instead of a
+---       fragile one-shot BufEnter/WinEnter trap that never fires when the restore produces no window event.
 ---@return boolean success True when restoration was initiated (or skipped for a valid reason).
-M.restore_state = function(tab_id, force)
+M.restore_state = function(tab_id, force, on_done)
+    local function finish()
+        if on_done then
+            on_done()
+        end
+    end
     if not tab_id then
+        finish()
         return false
     end
     if tab_id == cache.current_tab_id and not force then
+        finish()
         return true
     end
     local te = data.find_tab_by_id(tab_id, state.workspace_id)
     if not te or not te.data then
         M.clear_current_state()
+        finish()
         return true
     end
     local ok, sd = pcall(vim.json.decode, te.data)
     if not ok or not sd or not sd.buffers or #sd.buffers == 0 then
         M.clear_current_state()
+        finish()
         return true
     end
     -- A file that vanished then reappeared must be re-probed on restore, so drop any stale positive results
@@ -726,6 +738,7 @@ M.restore_state = function(tab_id, force)
             metrics.stats.session.session_restores = metrics.stats.session.session_restores + 1
             metrics.stats.session.files_opened = metrics.stats.session.files_opened + #sd.buffers
         end
+        finish()
     end)
     return true
 end
