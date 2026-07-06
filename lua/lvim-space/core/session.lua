@@ -649,7 +649,7 @@ M.restore_state = function(tab_id, force)
             end
             local cw = restore_session_layout(sd, fmap, init)
             local validwins = {}
-            for _, w in ipairs(cw) do
+            for _, w in pairs(cw) do
                 if w and vim.api.nvim_win_is_valid(w) then
                     validwins[w] = true
                 end
@@ -664,10 +664,11 @@ M.restore_state = function(tab_id, force)
                 target = cw[sd.current_window]
             end
             if not target or not vim.api.nvim_win_is_valid(target) then
-                for i = #cw, 1, -1 do
-                    if cw[i] and vim.api.nvim_win_is_valid(cw[i]) then
-                        target = cw[i]
-                        break
+                local best_idx = -1
+                for i, w in pairs(cw) do
+                    if i > best_idx and w and vim.api.nvim_win_is_valid(w) then
+                        best_idx = i
+                        target = w
                     end
                 end
             end
@@ -812,7 +813,7 @@ end
 M.setup_autocmds = function()
     local aug = vim.api.nvim_create_augroup(SESSION_CONFIG.autocommand_group, { clear = true })
     local function smart_debounced_save()
-        if state.tab_active and not cache.is_restoring then
+        if config.autosave and state.tab_active and not cache.is_restoring then
             M.save_current_state(state.tab_active, false)
         end
     end
@@ -825,7 +826,7 @@ M.setup_autocmds = function()
         group = aug,
         pattern = "*",
         callback = function()
-            if state.tab_active and not cache.is_restoring then
+            if config.autosave and state.tab_active and not cache.is_restoring then
                 M.save_current_state(state.tab_active, true)
             end
         end,
@@ -852,7 +853,7 @@ M.setup_autocmds = function()
                 if not name or name == "" or not is_valid_file_path(name) then
                     return
                 end
-                if not state.workspace_id or not state.tab_active then
+                if not config.autosave or not state.workspace_id or not state.tab_active then
                     return
                 end
                 local files = data.find_files(state.tab_active, state.workspace_id) or {}
@@ -878,7 +879,7 @@ M.setup_autocmds = function()
         group = aug,
         pattern = "*",
         callback = function()
-            if state.tab_active and not cache.is_restoring then
+            if config.autosave and state.tab_active and not cache.is_restoring then
                 M.save_current_state(state.tab_active, true)
             end
         end,

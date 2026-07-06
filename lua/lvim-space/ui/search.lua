@@ -35,7 +35,11 @@ local function select_file(path)
     end
 
     local bufnr = vim.fn.bufadd(path)
-    vim.fn.bufload(bufnr)
+    local ok_load, load_err = pcall(vim.fn.bufload, bufnr)
+    if not ok_load then
+        notify.error("Failed to load file: " .. tostring(load_err))
+        return
+    end
 
     -- Pick a real (non-plugin, non-floating) editor window to load the file into; fall back to `:edit`.
     local target = vim.api.nvim_get_current_win()

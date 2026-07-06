@@ -7,6 +7,8 @@
 
 local notify = require("lvim-space.utils.notify")
 
+local unpack = table.unpack or unpack
+
 ---@type table<string, EventHandler[]>
 local handlers = {}
 
@@ -36,7 +38,7 @@ function M.emit(event, ...)
     local n = select("#", ...)
     for i = 1, #event_handlers do
         local ok, err = pcall(function()
-            event_handlers[i](table.unpack(args, 1, n))
+            event_handlers[i](unpack(args, 1, n))
         end)
         if not ok then
             notify(string.format("Event handler error for %s: %s", event, err), vim.log.levels.ERROR)

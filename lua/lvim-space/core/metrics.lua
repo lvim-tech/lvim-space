@@ -254,9 +254,10 @@ end
 --- Classify an error message into an ERROR_TYPES bucket.
 ---@param msg string
 local function record_error_from_msg(msg)
-    local error_type = (msg:match("not found") and ERROR_TYPES.NOT_FOUND)
-        or (msg:match("permission") and ERROR_TYPES.PERMISSION)
-        or (msg:match("%bio%b") and ERROR_TYPES.IO)
+    local lower = msg:lower()
+    local error_type = (lower:match("not found") and ERROR_TYPES.NOT_FOUND)
+        or (lower:match("permission") and ERROR_TYPES.PERMISSION)
+        or (lower:match("%f[%a]io%f[%A]") and ERROR_TYPES.IO)
         or ERROR_TYPES.OTHER
     M.record_error(nil, error_type)
 end

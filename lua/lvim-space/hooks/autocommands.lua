@@ -84,7 +84,7 @@ end
 --- Debounced session save: waits 200 ms after the last trigger before writing.
 --- Does nothing when a save is already pending or no tab is active.
 local function save_session()
-    if cache.is_saving or not state.tab_active then
+    if not config.autosave or cache.is_saving or not state.tab_active then
         return
     end
     cache.is_saving = true
@@ -93,7 +93,9 @@ local function save_session()
     end
     cache.save_timer = vim.fn.timer_start(200, function()
         cache.save_timer = nil
-        pcall(session.save_current_state, state.tab_active, true)
+        if config.autosave and state.tab_active then
+            pcall(session.save_current_state, state.tab_active, true)
+        end
         cache.is_saving = false
     end)
 end

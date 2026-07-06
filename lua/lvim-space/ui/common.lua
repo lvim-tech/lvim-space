@@ -283,7 +283,10 @@ M.get_id_at_cursor = function(id_list_map)
     if type(id_list_map) ~= "table" then
         return nil
     end
-    local current_win = state.ui and state.ui.content and state.ui.content.win or 0
+    local current_win = state.ui and state.ui.content and state.ui.content.win
+    if not current_win or not vim.api.nvim_win_is_valid(current_win) then
+        return nil
+    end
     local line_num, _ = safe_get_cursor(current_win)
     return id_list_map[line_num]
 end

@@ -551,10 +551,10 @@ end
 --- `opts.space_mode` restores session inside the panel UI; `opts.enter_mode` closes panels
 --- and navigates to the deepest available child panel. Default (no mode) selects the workspace
 --- and opens the tabs panel.
----@param opts {space_mode: boolean|nil, enter_mode: boolean|nil, close_panel: boolean|nil}|nil Navigation mode flags
+---@param opts {space_mode: boolean|nil, enter_mode: boolean|nil, close_panel: boolean|nil, id: any}|nil Navigation mode flags
 M.handle_workspace_go = function(opts)
     local ws_def = get_entity_def()
-    local workspace_id_selected = common.get_id_at_cursor(cache.workspace_ids_map)
+    local workspace_id_selected = opts and opts.id or common.get_id_at_cursor(cache.workspace_ids_map)
     if not workspace_id_selected then
         return
     end
@@ -926,16 +926,8 @@ M.switch_to_workspace_by_name = function(workspace_name, project_id_context)
         if not cache.ctx or not cache.ctx.is_empty then
             M.init(nil, { select_workspace = false })
         end
-        local line_in_cache = nil
-        for i, ws_in_cache in ipairs(cache.workspaces_from_db or {}) do
-            if ws_in_cache.id == found_workspace.id then
-                line_in_cache = i
-                break
-            end
-        end
-        if line_in_cache and cache.workspace_ids_map then
-            cache.workspace_ids_map[line_in_cache] = found_workspace.id
-            M.handle_workspace_go({ space_mode = true, close_panel = false })
+        if found_workspace.id then
+            M.handle_workspace_go({ space_mode = true, close_panel = false, id = found_workspace.id })
             return true
         else
             state.workspace_id = found_workspace.id

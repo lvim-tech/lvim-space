@@ -507,12 +507,12 @@ function M.handle_tab_go(opts)
     local success = session.switch_tab(tab_id_selected)
     update_tabs_state_in_db()
     vim.defer_fn(function()
+        state.disable_auto_close = prev_disable_state
         if success then
             local switched_to_msg = (tab_def and tab_def.switched_to and state.lang[tab_def.switched_to])
                 or "Switched to tab: "
             notify.info(switched_to_msg .. (selected_tab.name or "Selected Tab"))
             if opts.close_panel then
-                state.disable_auto_close = prev_disable_state
                 ui.close_all()
                 if opts.go_to_files then
                     vim.schedule(function()
@@ -535,7 +535,6 @@ function M.handle_tab_go(opts)
             notify.error(
                 state.lang[(tab_def and tab_def.switch_failed) or "TAB_SWITCH_FAILED"] or "Failed to switch tab."
             )
-            state.disable_auto_close = prev_disable_state
         end
     end, 100)
 end

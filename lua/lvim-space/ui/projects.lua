@@ -530,9 +530,9 @@ end
 --- Activates the project under the cursor according to the provided mode option.
 --- `opts.space_mode` stays in the panel UI; `opts.enter_mode` closes panels and
 --- navigates to the deepest available child panel. Defaults to space_mode behaviour.
----@param opts {space_mode: boolean|nil, enter_mode: boolean|nil}|nil Navigation mode flags
+---@param opts {space_mode: boolean|nil, enter_mode: boolean|nil, id: any}|nil Navigation mode flags
 function M.handle_project_go(opts)
-    local project_id_selected = common.get_id_at_cursor(cache.project_ids_map)
+    local project_id_selected = opts and opts.id or common.get_id_at_cursor(cache.project_ids_map)
     if not project_id_selected then
         return
     end
@@ -895,12 +895,7 @@ M.switch_to_project_by_name = function(project_name)
     local projects = data.find_projects() or {}
     for i, project in ipairs(projects) do
         if project.name == project_name then
-            if cache.project_ids_map then
-                cache.project_ids_map[i] = project.id
-            else
-                state.project_id = project.id
-            end
-            M.handle_project_go({ space_mode = true })
+            M.handle_project_go({ space_mode = true, id = project.id })
             return true
         end
     end

@@ -279,7 +279,7 @@ local function delete_file_db(file_id_to_delete, workspace_id, tab_id)
             end
             if bufnr_of_deleted_file and vim.api.nvim_buf_is_valid(bufnr_of_deleted_file) then
                 if vim.bo[bufnr_of_deleted_file].modified then
-                    vim.ui.input({ prompt = "Buffer has unsaved changes. Save? (y/n): " }, function(input)
+                    ui.create_input_field("Buffer has unsaved changes. Save? (y/n):", "", function(input)
                         if input and input:lower() == "y" then
                             pcall(vim.api.nvim_buf_call, bufnr_of_deleted_file, function()
                                 vim.cmd("write")
@@ -434,10 +434,10 @@ function M.handle_file_delete()
 end
 
 --- Opens the file under the cursor in the last non-plugin editor window.
----@param opts? {close_panel?: boolean} When `close_panel` is true, all plugin panels are closed after switching.
+---@param opts? {close_panel?: boolean, path?: string} When `close_panel` is true, all plugin panels are closed after switching.
 function M.handle_file_switch(opts)
     opts = opts or {}
-    M._switch_file()
+    M._switch_file(opts.path)
     if opts.close_panel then
         if last_real_win and vim.api.nvim_win_is_valid(last_real_win) then
             local stored_win = last_real_win
@@ -525,8 +525,9 @@ end
 
 --- Internal helper: opens the file whose path is at the current cursor position
 --- into the last known non-plugin editor window and updates `state.file_active`.
-function M._switch_file()
-    local file_id_selected = common.get_id_at_cursor(cache.file_ids_map)
+---@param path? string
+function M._switch_file(path)
+    local file_id_selected = path or common.get_id_at_cursor(cache.file_ids_map)
     if not file_id_selected then
         return
     end
@@ -547,7 +548,11 @@ function M._switch_file()
     -- `nvim_win_set_buf` just DISPLAYS the already-loaded buffer (no re-trigger). Orgmode is set up eagerly now, so
     -- `bufload` no longer errors on an org ftplugin.
     local bufnr = vim.fn.bufadd(file_path_to_open)
-    vim.fn.bufload(bufnr)
+    local ok_load, load_err = pcall(vim.fn.bufload, bufnr)
+    if not ok_load then
+        notify.error("Failed to load file: " .. tostring(load_err))
+        return
+    end
 
     local target_win = last_real_win
 
@@ -964,11 +969,8 @@ M.switch_to_file_by_path = function(file_path)
     for _, file_entry in ipairs(cache.files_from_db) do
         local candidate_path = file_entry.id
         if candidate_path and vim.fn.fnamemodify(candidate_path, ":p") == normalized_path_to_switch then
-            if cache.file_ids_map then
-                cache.file_ids_map[1] = candidate_path
-            end
             state.file_active = candidate_path
-            M._switch_file()
+            M._switch_file(candidate_path)
             return true
         end
     end
@@ -981,11 +983,8 @@ M.switch_to_file_by_path = function(file_path)
                 candidate_path_after_add
                 and vim.fn.fnamemodify(candidate_path_after_add, ":p") == normalized_path_to_switch
             then
-                if cache.file_ids_map then
-                    cache.file_ids_map[1] = candidate_path_after_add
-                end
                 state.file_active = candidate_path_after_add
-                M._switch_file()
+                M._switch_file(candidate_path_after_add)
                 return true
             end
         end
