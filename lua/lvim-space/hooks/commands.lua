@@ -165,7 +165,7 @@ local function tab_new(tab_name)
         try = try + 1
         tab_name = orig .. "_" .. tostring(try)
     end
-    local json = vim.fn.json_encode({ buffers = {}, created_at = os.time(), modified_at = os.time() })
+    local json = vim.json.encode({ buffers = {}, created_at = os.time(), modified_at = os.time() })
     local newid = data.add_tab(tab_name, json, ws_id)
     if not newid or type(newid) ~= "number" or newid <= 0 then
         notify.error("Failed to create tab.")
@@ -174,7 +174,7 @@ local function tab_new(tab_name)
     state.tab_ids = state.tab_ids or {}
     table.insert(state.tab_ids, newid)
     data.update_workspace_tabs(
-        vim.fn.json_encode({ tab_ids = state.tab_ids, tab_active = newid, updated_at = os.time() }),
+        vim.json.encode({ tab_ids = state.tab_ids, tab_active = newid, updated_at = os.time() }),
         ws_id
     )
     state.tab_active = newid
@@ -191,12 +191,32 @@ local function tab_close(tab_id)
         notify.warn("No tab to close.")
         return
     end
-    data.delete_tab(tab_id, state.workspace_id)
+    if not data.delete_tab(tab_id, state.workspace_id) then
+        notify.error("Failed to close tab.")
+        return
+    end
+    -- Drop the deleted id from the in-memory tab list so a subsequent switch/autosave never targets a dead
+    -- row (which UPDATEs zero rows and silently "succeeds" until restart).
+    if state.tab_ids then
+        for i, id in ipairs(state.tab_ids) do
+            if tostring(id) == tostring(tab_id) then
+                table.remove(state.tab_ids, i)
+                break
+            end
+        end
+    end
     notify.info("Tab deleted: " .. tostring(tab_id))
     local remaining = data.find_tabs and data.find_tabs(state.workspace_id) or {}
     if #remaining > 0 then
+        -- switch_tab persists the pruned { tab_ids, tab_active } for us.
         session.switch_tab(remaining[1].id)
     else
+        -- Last tab closed: clear the active pointer and persist, so nothing keeps writing to the dead id.
+        state.tab_active = nil
+        data.update_workspace_tabs(
+            vim.json.encode({ tab_ids = state.tab_ids or {}, tab_active = nil, updated_at = os.time() }),
+            state.workspace_id
+        )
         notify.warn("No tabs left.")
     end
 end

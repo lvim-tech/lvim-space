@@ -335,20 +335,21 @@ M.init_entity_list = function(
     local is_list_empty = #entities_list == 0
     local display_lines = {}
     local actual_cursor_line = 1
-    local active_item_found = false
     local active_item_line = nil
 
-    entity_def.id_field = id_field_name or "id"
+    -- Resolve the id field LOCALLY instead of writing it onto the shared `M.entity_types` registry — a
+    -- module-level mutation would repoint every panel of this type to the last caller's id field. It is also
+    -- carried on the returned ctx (`id_field`) for callers that need it.
+    local id_field = id_field_name or "id"
 
     for _, entity_data in ipairs(entities_list) do
         local is_active = determine_active(entity_def, entity_data, active_entity_id, custom_active_check_fn)
         local formatted_line = format_line(entity_data, entity_def.name, is_active, line_formatter_fn)
         if formatted_line then
             table.insert(display_lines, formatted_line)
-            id_to_line_map[#display_lines] = entity_data[entity_def.id_field]
+            id_to_line_map[#display_lines] = entity_data[id_field]
             if is_active then
                 active_item_line = #display_lines
-                active_item_found = true
             end
         end
     end
@@ -359,9 +360,10 @@ M.init_entity_list = function(
             M.get_entity_icon(entity_def.name, false, true)
                 .. (state.lang[entity_def.empty_message] or "List is empty.")
         )
-    elseif not active_item_found and entity_def.state_id then
-        state[entity_def.state_id] = nil
     end
+    -- NOTE: the active-entity state (state[entity_def.state_id]) is NEVER cleared here — merely opening a
+    -- panel whose custom active-check finds no matching row (e.g. the files panel from an unrelated buffer)
+    -- must not deactivate the entity. Clearing happens only in the real deactivate/delete flows.
 
     if preferred_selected_line and preferred_selected_line >= 1 and preferred_selected_line <= #display_lines then
         actual_cursor_line = preferred_selected_line
@@ -385,6 +387,17 @@ M.init_entity_list = function(
     vim.bo[buf_handle].modifiable = false
     vim.bo[buf_handle].buftype = "nofile"
 
+    local result = {
+        buf = buf_handle,
+        win = win_handle,
+        is_empty = is_list_empty,
+        entities = entities_list,
+        id_list_map = id_to_line_map,
+        entity_type_def = entity_def,
+        refresh_function = refresh_fn,
+        id_field = id_field,
+    }
+
     -- The footer is the NAVIGABLE action bar now (built per panel by `M.set_action_footer` right after this
     -- returns, in each panel's `setup_keymaps`) — not a plain hint string here. The old `entity_def.info` /
     -- `info_empty` lang lines are kept only for reference / error guidance.
@@ -393,14 +406,16 @@ M.init_entity_list = function(
     -- panel), so every entity panel gains fuzzy filtering. Confirming a row jumps the panel cursor to that
     -- entity and fires the panel's own switch action (whatever each panel bound to `action.switch`) — so the
     -- filter REUSES the existing select flow rather than reimplementing it. `/` is free across the panels
-    -- (not a navigation/action key, not in key_control). No-op for an empty list.
+    -- (not a navigation/action key, not in key_control). No-op for an empty list. The closure reads the LIVE
+    -- `result.entities` / `result.id_list_map` (which every panel refresh refills in place) so the filter is
+    -- never built from a list the panel has since replaced.
     if not is_list_empty then
         local switch_key = (config.keymappings.action and config.keymappings.action.switch) or "<Space>"
         vim.keymap.set("n", "/", function()
             local items = {}
-            for _, ent in ipairs(entities_list) do
+            for _, ent in ipairs(result.entities) do
                 local text = (line_formatter_fn and line_formatter_fn(ent)) or ent.name or ent.path or "???"
-                local item = { text = text, _id = ent[entity_def.id_field] }
+                local item = { text = text, _id = ent[result.id_field or "id"] }
                 if entity_def.name == "file" then
                     item.path = ent.path or ent.filePath or ent.id
                 end
@@ -415,7 +430,7 @@ M.init_entity_list = function(
                         return
                     end
                     local target_line
-                    for line_no, id in pairs(id_to_line_map) do
+                    for line_no, id in pairs(result.id_list_map) do
                         if tostring(id) == tostring(it._id) then
                             target_line = line_no
                             break
@@ -434,15 +449,7 @@ M.init_entity_list = function(
         end, { buffer = buf_handle, noremap = true, silent = true, nowait = true })
     end
 
-    return {
-        buf = buf_handle,
-        win = win_handle,
-        is_empty = is_list_empty,
-        entities = entities_list,
-        id_list_map = id_to_line_map,
-        entity_type_def = entity_def,
-        refresh_function = refresh_fn,
-    }
+    return result
 end
 
 ---Re-render an entity list into its EXISTING panel buffer (no window teardown): rebuild every display
@@ -969,16 +976,17 @@ local function get_error_info_line(error_type_key)
     return lang_keys.INFO_LINE_GENERIC_QUIT or "Press 'q' to quit."
 end
 
----Attach error-navigation keymaps to the currently focused window/buffer and open the
----actions bar with contextual guidance for the given error state.
+---Attach error-navigation keymaps to the error panel's window/buffer and open the actions bar with
+---contextual guidance for the given error state.
 ---@param error_type_key string  Error category key (e.g. "PROJECT_NOT_ACTIVE", "TAB_NOT_ACTIVE")
 ---@param last_real_win_handle integer|nil  Window to restore focus to when the user closes the panel
-M.setup_error_navigation = function(error_type_key, last_real_win_handle)
-    local current_win = vim.api.nvim_get_current_win()
-    local current_buf = vim.api.nvim_get_current_buf()
+---@param error_buf integer|nil  Buffer of the error panel (from `open_entity_error`); falls back to the
+---  current buffer only when omitted, so the keymaps always land on the panel and never on a stray buffer.
+---@param error_win integer|nil  Window of the error panel; falls back to the current window when omitted.
+M.setup_error_navigation = function(error_type_key, last_real_win_handle, error_buf, error_win)
     local error_context_data = {
-        win = current_win,
-        buf = current_buf,
+        win = error_win or vim.api.nvim_get_current_win(),
+        buf = error_buf or vim.api.nvim_get_current_buf(),
         error_state_key = error_type_key,
         last_real_win = last_real_win_handle,
     }

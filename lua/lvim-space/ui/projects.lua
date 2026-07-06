@@ -23,7 +23,7 @@ local function safe_json_decode(str, default)
     if not str then
         return default
     end
-    local ok, result = pcall(vim.fn.json_decode, str)
+    local ok, result = pcall(vim.json.decode, str)
     return (ok and type(result) == "table") and result or default
 end
 
@@ -107,6 +107,12 @@ M.refresh = function()
     end)
     cache.project_ids_map = {}
 
+    -- Empty ↔ populated transition (either direction) needs the full re-init (footer buttons, `/` filter,
+    -- empty-state row); the in-place path only handles a populated → populated refresh.
+    if cache.ctx.is_empty ~= (#cache.projects_from_db == 0) then
+        return M.init()
+    end
+
     local icons = config.ui.icons
     local project_active_icon = icons.project_active or " "
     local project_icon = icons.project or " "
@@ -148,8 +154,9 @@ M.refresh = function()
 
     cache.ctx.is_empty = #new_lines == 0
     cache.ctx.entities = cache.projects_from_db
+    cache.ctx.id_list_map = cache.project_ids_map
 
-    ui.set_title(state.lang.PROJECTS or "Projects")
+    ui.set_title(state.lang.PROJECTS or "Projects", #cache.projects_from_db)
 end
 
 --- Returns the entity-type definition table for "project" from the common module.
@@ -292,7 +299,7 @@ local function update_project_state_in_db()
             tabs_json_obj.tab_active = state.tab_active
             tabs_json_obj.tab_ids = state.tab_ids
             tabs_json_obj.updated_at = os.time()
-            data.update_workspace_tabs(vim.fn.json_encode(tabs_json_obj), state.workspace_id)
+            data.update_workspace_tabs(vim.json.encode(tabs_json_obj), state.workspace_id)
         end
     end
 end
@@ -573,8 +580,8 @@ end
 function M.navigate_to_workspaces()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
-        common.open_entity_error("workspace", "PROJECT_NOT_ACTIVE")
-        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("workspace", "PROJECT_NOT_ACTIVE")
+        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     ui.close_all()
@@ -586,14 +593,14 @@ end
 function M.navigate_to_tabs()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
-        common.open_entity_error("tab", "PROJECT_NOT_ACTIVE")
-        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("tab", "PROJECT_NOT_ACTIVE")
+        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.workspace_id then
         notify.info(state.lang.WORKSPACE_NOT_ACTIVE)
-        common.open_entity_error("tab", "WORKSPACE_NOT_ACTIVE")
-        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("tab", "WORKSPACE_NOT_ACTIVE")
+        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     ui.close_all()
@@ -605,20 +612,20 @@ end
 function M.navigate_to_files()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
-        common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
-        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
+        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.workspace_id then
         notify.info(state.lang.WORKSPACE_NOT_ACTIVE)
-        common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
-        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
+        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.tab_active then
         notify.info(state.lang.TAB_NOT_ACTIVE)
-        common.open_entity_error("file", "TAB_NOT_ACTIVE")
-        common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "TAB_NOT_ACTIVE")
+        common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     ui.close_all()
@@ -630,20 +637,20 @@ end
 function M.navigate_to_search()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
-        common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
-        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
+        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.workspace_id then
         notify.info(state.lang.WORKSPACE_NOT_ACTIVE)
-        common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
-        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
+        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.tab_active then
         notify.info(state.lang.TAB_NOT_ACTIVE)
-        common.open_entity_error("file", "TAB_NOT_ACTIVE")
-        common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "TAB_NOT_ACTIVE")
+        common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     -- Do NOT close here — search.init swaps this panel for the picker inside a single msgarea HANDOFF (one
@@ -813,7 +820,7 @@ M.init = function(selected_line_num)
         local cursor_pos = vim.api.nvim_win_get_cursor(ctx.win)
         cache.last_cursor_position = cursor_pos[1]
     end
-    ui.set_title(state.lang.PROJECTS or "Projects")
+    ui.set_title(state.lang.PROJECTS or "Projects", #cache.projects_from_db)
 
     setup_keymaps(ctx)
     setup_cursor_tracking(ctx)

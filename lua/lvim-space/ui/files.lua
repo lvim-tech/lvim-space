@@ -34,8 +34,6 @@ local cache = {
 
 ---@type boolean Whether the panel is currently showing an empty list.
 local is_empty = false
----@type integer|nil Last known non-plugin normal window handle.
-local last_normal_win = nil
 ---@type integer|nil Last non-plugin editor window handle used as the file-open target.
 local last_real_win = nil
 
@@ -101,16 +99,31 @@ local function get_file_by_id(file_id, files_list)
     return nil
 end
 
+---@type { id: any, abs: string|nil } Memoised active-project absolute root path, keyed by project id.
+local proj_path_memo = { id = nil, abs = nil }
+
+--- Resolve the active project's absolute root path, fetching the project row from the DB at most once per
+--- project id. `relpath_to_project` runs per file row (and per `/` filter item), so the un-memoised
+--- `find_project_by_id` was an N+1 query on every render.
+---@return string|nil abs Absolute project root path (with `:p` normalisation), or nil when unresolved.
+local function project_abs_path()
+    if proj_path_memo.id ~= state.project_id then
+        local project = data.find_project_by_id(state.project_id)
+        proj_path_memo.id = state.project_id
+        proj_path_memo.abs = (project and project.path) and vim.fn.fnamemodify(project.path, ":p") or nil
+    end
+    return proj_path_memo.abs
+end
+
 --- Returns the path of `file_path` relative to the active project root.
 --- Falls back to `~`-shortened path when the file is outside the project.
 ---@param file_path string Absolute or relative file path to display.
 ---@return string relative_path The path suitable for display in the panel.
 local function relpath_to_project(file_path)
-    local project = data.find_project_by_id(state.project_id)
-    if not project or not project.path then
+    local abs_proj = project_abs_path()
+    if not abs_proj then
         return vim.fn.fnamemodify(file_path, ":~:.")
     end
-    local abs_proj = vim.fn.fnamemodify(project.path, ":p")
     local abs_file = vim.fn.fnamemodify(file_path, ":p")
     if vim.startswith(abs_file, abs_proj) then
         local rel = abs_file:sub(#abs_proj + 1)
@@ -135,7 +148,7 @@ local function validate_file_path(file_path)
     end
     local cache_key = file_path
     if cache.validation_cache[cache_key] then
-        return cache.validation_cache[cache_key].path, cache.validation_cache[cache_key].error
+        return cache.validation_cache[cache_key].path, nil
     end
     local normalized_path = vim.fn.expand(vim.trim(file_path))
     normalized_path = vim.fn.fnamemodify(normalized_path, ":p")
@@ -146,11 +159,12 @@ local function validate_file_path(file_path)
     elseif vim.fn.isdirectory(dir) ~= 1 and vim.fn.filereadable(normalized_path) ~= 1 then
         error_code = "INVALID_DIR"
     end
-    cache.validation_cache[cache_key] = {
-        path = error_code and nil or normalized_path,
-        error = error_code,
-    }
-    return cache.validation_cache[cache_key].path, cache.validation_cache[cache_key].error
+    -- Cache POSITIVES only: a path that failed because its directory did not yet exist (or was momentarily
+    -- unreadable) must be re-checked next time, not pinned to its old error forever.
+    if not error_code then
+        cache.validation_cache[cache_key] = { path = normalized_path }
+    end
+    return error_code and nil or normalized_path, error_code
 end
 
 --- Fetches and JSON-decodes the data payload for a tab.
@@ -162,7 +176,7 @@ local function get_tab_data(tab_id, workspace_id)
     if not tab or not tab.data then
         return nil
     end
-    local success, tab_data_decoded = pcall(vim.fn.json_decode, tab.data)
+    local success, tab_data_decoded = pcall(vim.json.decode, tab.data)
     if not success or not tab_data_decoded then
         return nil
     end
@@ -176,23 +190,12 @@ end
 ---@param tab_data_obj table The decoded tab data object to persist.
 ---@return boolean success true on success, false on database failure.
 local function update_tab_data_in_db(tab_id, workspace_id, tab_data_obj)
-    local updated_data_json = vim.fn.json_encode(tab_data_obj)
+    local updated_data_json = vim.json.encode(tab_data_obj)
     local success = data.update_tab_data(tab_id, updated_data_json, workspace_id)
     if not success then
         return false
     end
     return true
-end
-
---- Persists the current tab's file/buffer list to the database when autosave is enabled.
-local function update_files_state_in_db()
-    if not config.autosave or not state.tab_active or not state.workspace_id then
-        return
-    end
-    local tab_data_obj = get_tab_data(state.tab_active, state.workspace_id)
-    if tab_data_obj then
-        update_tab_data_in_db(state.tab_active, state.workspace_id, tab_data_obj)
-    end
 end
 
 --- Validates and adds a file to a tab's buffer list in the database.
@@ -221,7 +224,9 @@ local function add_file_db(file_path, workspace_id, tab_id)
     local new_buffer_entry = {
         filePath = validated_path,
         bufnr = new_bufnr,
-        filetype = vim.bo[new_bufnr].filetype or vim.fn.getbufvar(new_bufnr, "&filetype") or "",
+        -- `bufadd` leaves the buffer UNLOADED, so its `&filetype` is still "" here. Derive it from the path
+        -- instead so the recorded value is meaningful.
+        filetype = vim.filetype.match({ filename = validated_path }) or "",
         added_at = os.time(),
     }
     table.insert(tab_data_obj.buffers, new_buffer_entry)
@@ -354,7 +359,10 @@ M.refresh = function()
     cache.files_from_db = data.find_files(state.tab_active, state.workspace_id) or {}
     cache.file_ids_map = {}
 
-    if cache.ctx.is_empty and #cache.files_from_db > 0 then
+    -- A transition between the empty placeholder and a populated list (in EITHER direction) changes the
+    -- footer buttons, the `/` filter and the empty-state row — a full re-init handles all three; the
+    -- in-place path only covers a non-empty → non-empty refresh.
+    if cache.ctx.is_empty ~= (#cache.files_from_db == 0) then
         return M.init()
     end
 
@@ -408,6 +416,7 @@ M.refresh = function()
 
     cache.ctx.is_empty = #new_lines == 0
     cache.ctx.entities = cache.files_from_db
+    cache.ctx.id_list_map = cache.file_ids_map
 
     if #new_lines > 0 and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
         local max_line = #new_lines
@@ -415,6 +424,12 @@ M.refresh = function()
         target_line = math.max(target_line, 1)
         pcall(vim.api.nvim_win_set_cursor, cache.ctx.win, { target_line, 0 })
     end
+
+    -- Keep the docked header counter in sync with the live file total after an add/delete refresh.
+    local panel_title = cache.tab_display_name ~= ""
+            and string.format("%s (%s)", state.lang.FILES or "Files", cache.tab_display_name)
+        or (state.lang.FILES or "Files")
+    ui.set_title(panel_title, #cache.files_from_db)
 end
 
 --- Deletes the file under the cursor from the active tab.
@@ -437,7 +452,9 @@ end
 ---@param opts? {close_panel?: boolean, path?: string} When `close_panel` is true, all plugin panels are closed after switching.
 function M.handle_file_switch(opts)
     opts = opts or {}
-    M._switch_file(opts.path)
+    -- Skip the in-place list refresh when we are about to close every panel anyway (enter-mode): the render
+    -- would be torn down on the very next line.
+    M._switch_file(opts.path, opts.close_panel)
     if opts.close_panel then
         if last_real_win and vim.api.nvim_win_is_valid(last_real_win) then
             local stored_win = last_real_win
@@ -525,8 +542,9 @@ end
 
 --- Internal helper: opens the file whose path is at the current cursor position
 --- into the last known non-plugin editor window and updates `state.file_active`.
----@param path? string
-function M._switch_file(path)
+---@param path? string Explicit file path to open; falls back to the id under the cursor.
+---@param skip_refresh? boolean When true, don't re-render the panel (the caller is about to close it).
+function M._switch_file(path, skip_refresh)
     local file_id_selected = path or common.get_id_at_cursor(cache.file_ids_map)
     if not file_id_selected then
         return
@@ -568,9 +586,10 @@ function M._switch_file(path)
     end
 
     state.file_active = file_path_to_open
-    update_files_state_in_db()
 
-    M.refresh()
+    if not skip_refresh then
+        M.refresh()
+    end
 end
 
 --- Internal helper: opens the file at the cursor position in a vertical split.
@@ -734,29 +753,21 @@ M.init = function(selected_line_num)
 
     if not state.project_id then
         notify.error(state.lang.PROJECT_NOT_ACTIVE or "No active project. Please select or add a project first.")
-        common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
-        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
+        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.workspace_id then
         notify.error(state.lang.WORKSPACE_NOT_ACTIVE or "No active workspace. Please select or add a workspace first.")
-        common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
-        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
+        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.tab_active then
         notify.error(state.lang.TAB_NOT_ACTIVE or "No active tab. Please select or create a tab first.")
-        common.open_entity_error("file", "TAB_NOT_ACTIVE")
-        common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "TAB_NOT_ACTIVE")
+        common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win, _err_buf)
         return
-    end
-
-    if
-        not last_normal_win
-        or not vim.api.nvim_win_is_valid(last_normal_win)
-        or is_plugin_panel_win(last_normal_win)
-    then
-        last_normal_win = get_last_normal_win()
     end
 
     session.save_current_state(state.tab_active, true)
@@ -840,7 +851,7 @@ M.init = function(selected_line_num)
         local cursor_pos = vim.api.nvim_win_get_cursor(ctx.win)
         cache.last_cursor_position = cursor_pos[1]
     end
-    ui.set_title(panel_title)
+    ui.set_title(panel_title, #cache.files_from_db)
     setup_keymaps(ctx)
 
     setup_cursor_tracking(ctx)

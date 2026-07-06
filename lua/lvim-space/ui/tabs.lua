@@ -22,7 +22,7 @@ local function safe_json_decode(str, default)
     if not str then
         return default
     end
-    local ok, result = pcall(vim.fn.json_decode, str)
+    local ok, result = pcall(vim.json.decode, str)
     return (ok and type(result) == "table") and result or default
 end
 
@@ -32,6 +32,7 @@ end
 ---@field ctx table|nil Current panel window/buffer context.
 ---@field workspace_display_name string Display name of the active workspace.
 ---@field last_cursor_position number Last known cursor row in the panel.
+---@field cursor_scope any Workspace id the remembered cursor row belongs to (reset on scope change).
 
 ---@type TabsCache
 local cache = {
@@ -40,6 +41,7 @@ local cache = {
     ctx = nil,
     workspace_display_name = "",
     last_cursor_position = 1,
+    cursor_scope = nil,
 }
 
 ---@type integer|nil Last non-plugin editor window handle.
@@ -131,11 +133,17 @@ M.refresh = function()
     end)
     cache.tab_ids_map = {}
 
+    -- Empty ↔ populated transition (either direction) needs the full re-init (footer buttons, `/` filter,
+    -- empty-state row); the in-place path only handles a populated → populated refresh.
+    if cache.ctx.is_empty ~= (#cache.tabs_from_db == 0) then
+        return M.init()
+    end
+
     local function get_buffer_count(tab_entry)
         if not tab_entry.data then
             return 0
         end
-        local success, decoded_data = pcall(vim.fn.json_decode, tab_entry.data)
+        local success, decoded_data = pcall(vim.json.decode, tab_entry.data)
         if success and decoded_data and decoded_data.buffers then
             return #decoded_data.buffers
         end
@@ -197,8 +205,9 @@ M.refresh = function()
 
     cache.ctx.is_empty = #new_lines == 0
     cache.ctx.entities = cache.tabs_from_db
+    cache.ctx.id_list_map = cache.tab_ids_map
 
-    ui.set_title(final_panel_title)
+    ui.set_title(final_panel_title, #cache.tabs_from_db)
 end
 
 --- Validates a tab name for add or rename operations.
@@ -237,7 +246,7 @@ local function update_tabs_state_in_db()
         tabs_json_obj.tab_active = state.tab_active
         tabs_json_obj.tab_ids = state.tab_ids or {}
         tabs_json_obj.updated_at = os.time()
-        data.update_workspace_tabs(vim.fn.json_encode(tabs_json_obj), state.workspace_id)
+        data.update_workspace_tabs(vim.json.encode(tabs_json_obj), state.workspace_id)
     end
 end
 
@@ -248,7 +257,7 @@ end
 local function add_tab_db(tab_name_input, workspace_id)
     local tab_def = get_entity_def()
     local tab_data_obj = create_empty_tab_data_storage()
-    local tab_data_json_str = vim.fn.json_encode(tab_data_obj)
+    local tab_data_json_str = vim.json.encode(tab_data_obj)
     local new_tab_id = data.add_tab(tab_name_input, tab_data_json_str, workspace_id)
     if not new_tab_id or type(new_tab_id) ~= "number" or new_tab_id <= 0 then
         return (tab_def and tab_def.add_failed) or "TAB_ADD_FAILED"
@@ -264,7 +273,7 @@ local function add_tab_db(tab_name_input, workspace_id)
     end
     table.insert(ws_tabs_data.tab_ids, new_tab_id)
     ws_tabs_data.updated_at = os.time()
-    local update_success = data.update_workspace_tabs(vim.fn.json_encode(ws_tabs_data), workspace_id)
+    local update_success = data.update_workspace_tabs(vim.json.encode(ws_tabs_data), workspace_id)
     if not update_success then
         data.delete_tab(new_tab_id, workspace_id)
         return (tab_def and tab_def.add_failed) or "TAB_ADD_FAILED"
@@ -330,14 +339,37 @@ local function delete_tab_db(tab_id_to_delete, workspace_id, selected_line_num)
             state.file_active = nil
             session.clear_current_state()
             session.close_all_file_windows_and_buffers()
-            local main_win = state.ui and state.ui.content and state.ui.content.win
-            if main_win and vim.api.nvim_win_is_valid(main_win) then
-                vim.api.nvim_set_current_win(main_win)
+            -- Blank a REAL editor window, never `state.ui.content.win` (that is the panel list float — an
+            -- `:enew` there would replace the panel's own list buffer). Prefer the last real editor window,
+            -- else any non-plugin, non-floating window.
+            local editor_win = last_real_win
+            if
+                not (
+                    editor_win
+                    and vim.api.nvim_win_is_valid(editor_win)
+                    and not is_plugin_panel_win(editor_win)
+                    and vim.api.nvim_win_get_config(editor_win).relative == ""
+                )
+            then
+                editor_win = nil
+                for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+                    if
+                        vim.api.nvim_win_is_valid(w)
+                        and vim.api.nvim_win_get_config(w).relative == ""
+                        and not is_plugin_panel_win(w)
+                    then
+                        editor_win = w
+                        break
+                    end
+                end
+            end
+            if editor_win and vim.api.nvim_win_is_valid(editor_win) then
+                vim.api.nvim_set_current_win(editor_win)
                 vim.cmd("enew")
             end
         end
         ws_tabs_data.updated_at = os.time()
-        data.update_workspace_tabs(vim.fn.json_encode(ws_tabs_data), workspace_id)
+        data.update_workspace_tabs(vim.json.encode(ws_tabs_data), workspace_id)
         state.tab_ids = ws_tabs_data.tab_ids
         update_tabs_state_in_db()
         M.init(selected_line_num)
@@ -567,20 +599,20 @@ end
 function M.navigate_to_files()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
-        common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
-        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
+        common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.workspace_id then
         notify.info(state.lang.WORKSPACE_NOT_ACTIVE)
-        common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
-        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
+        common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.tab_active then
         notify.info(state.lang.TAB_NOT_ACTIVE)
-        common.open_entity_error("file", "TAB_NOT_ACTIVE")
-        common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("file", "TAB_NOT_ACTIVE")
+        common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     ui.close_all()
@@ -713,14 +745,19 @@ M.init = function(selected_line_num)
     local ws_def = get_ws_def()
     if not state.project_id then
         notify.error(state.lang[(project_def and project_def.not_active) or "PROJECT_NOT_ACTIVE"])
-        common.open_entity_error("tab", (project_def and project_def.not_active) or "PROJECT_NOT_ACTIVE")
-        common.setup_error_navigation((project_def and project_def.not_active) or "PROJECT_NOT_ACTIVE", last_real_win)
+        local _err_buf =
+            common.open_entity_error("tab", (project_def and project_def.not_active) or "PROJECT_NOT_ACTIVE")
+        common.setup_error_navigation(
+            (project_def and project_def.not_active) or "PROJECT_NOT_ACTIVE",
+            last_real_win,
+            _err_buf
+        )
         return
     end
     if not state.workspace_id then
         notify.error(state.lang[(ws_def and ws_def.not_active) or "WORKSPACE_NOT_ACTIVE"])
-        common.open_entity_error("tab", (ws_def and ws_def.not_active) or "WORKSPACE_NOT_ACTIVE")
-        common.setup_error_navigation((ws_def and ws_def.not_active) or "WORKSPACE_NOT_ACTIVE", last_real_win)
+        local _err_buf = common.open_entity_error("tab", (ws_def and ws_def.not_active) or "WORKSPACE_NOT_ACTIVE")
+        common.setup_error_navigation((ws_def and ws_def.not_active) or "WORKSPACE_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
 
@@ -745,11 +782,19 @@ M.init = function(selected_line_num)
         if not tab_entry.data then
             return 0
         end
-        local success, decoded_data = pcall(vim.fn.json_decode, tab_entry.data)
+        local success, decoded_data = pcall(vim.json.decode, tab_entry.data)
         if success and decoded_data and decoded_data.buffers then
             return #decoded_data.buffers
         end
         return 0
+    end
+
+    -- The remembered cursor row belongs to the tab list of a SPECIFIC workspace. When the workspace scope
+    -- changes, forget it so a stale row from the previous workspace's list can't outrank the new workspace's
+    -- active-tab row.
+    if cache.cursor_scope ~= state.workspace_id then
+        cache.cursor_scope = state.workspace_id
+        cache.last_cursor_position = 1
     end
 
     local actual_selected_line = selected_line_num
@@ -799,7 +844,7 @@ M.init = function(selected_line_num)
         else
             final_panel_title = base_tabs_title
         end
-        ui.set_title(final_panel_title)
+        ui.set_title(final_panel_title, #cache.tabs_from_db)
     end
 
     setup_keymaps(cache.ctx)

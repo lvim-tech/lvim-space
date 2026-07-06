@@ -64,7 +64,7 @@ local function select_file(path)
     -- Record the file in the active tab (persisted) when it is not already there.
     local tab = data.find_tab_by_id(state.tab_active, state.workspace_id)
     if tab then
-        local ok, tdata = pcall(vim.fn.json_decode, tab.data or "{}")
+        local ok, tdata = pcall(vim.json.decode, tab.data or "{}")
         if not ok or type(tdata) ~= "table" then
             tdata = {}
         end
@@ -78,7 +78,7 @@ local function select_file(path)
         end
         if not exists then
             table.insert(tdata.buffers, { filePath = path, bufnr = bufnr })
-            data.update_tab_data(state.tab_active, vim.fn.json_encode(tdata), state.workspace_id)
+            data.update_tab_data(state.tab_active, vim.json.encode(tdata), state.workspace_id)
             session.save_current_state(state.tab_active, true)
         end
     end

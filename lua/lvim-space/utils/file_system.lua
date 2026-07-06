@@ -197,37 +197,6 @@ function M.file_mtime(path)
     return stat.mtime.sec, nil
 end
 
---- Copy file
----@param src string Source path
----@param dst string Destination path
----@return boolean success, string|nil error message
-function M.copy_file(src, dst)
-    if not is_valid_path(src) or not is_valid_path(dst) then
-        return false, "Invalid source or destination path"
-    end
-
-    if not M.file_exists(src) then
-        return false, "Source file does not exist"
-    end
-
-    local dir_ok, dir_err = M.ensure_dir(dst)
-    if not dir_ok then
-        return false, string.format("Failed to create destination directory: %s", dir_err)
-    end
-
-    local src_content, read_err = M.read_lines(src)
-    if not src_content then
-        return false, string.format("Failed to read source file: %s", read_err)
-    end
-
-    local write_ok, write_err = M.write_lines(dst, src_content)
-    if not write_ok then
-        return false, string.format("Failed to write destination file: %s", write_err)
-    end
-
-    return true, nil
-end
-
 --- Move/rename file
 ---@param src string Source path
 ---@param dst string Destination path
@@ -328,37 +297,6 @@ function M.create_temp_file(content, extension)
     end
 
     return temp_file, nil
-end
-
---- Find files recursively by pattern
----@param dir string Directory to search
----@param pattern string File pattern
----@return table files, string|nil error message
-function M.find_files(dir, pattern)
-    if not is_valid_path(dir) then
-        return {}, "Invalid directory"
-    end
-
-    if not M.file_exists(dir) then
-        return {}, "Directory does not exist"
-    end
-
-    local files = {}
-    local find_success, _, find_err = safe_operation(function()
-        local handle = io.popen(string.format('find "%s" -name "%s" -type f 2>/dev/null', dir, pattern))
-        if handle then
-            for line in handle:lines() do
-                table.insert(files, line)
-            end
-            handle:close()
-        end
-    end)
-
-    if not find_success then
-        return {}, string.format("Failed to search files: %s", find_err)
-    end
-
-    return files, nil
 end
 
 --- Get plugin state file path

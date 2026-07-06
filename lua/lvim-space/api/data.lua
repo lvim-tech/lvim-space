@@ -59,7 +59,7 @@ end
 ---@param options table|nil  Optional db.find options (e.g. sort_by, sort_order_dir)
 ---@return table[]  List of project records
 M.find_projects = function(options)
-    options = options or { sort_by = "sort_order", sort_order_dir = "ASC" }
+    options = options or { order_by = { asc = "sort_order" } }
     ---@diagnostic disable-next-line: return-type-mismatch
     return db.find("projects", {}, options)
 end
@@ -221,7 +221,7 @@ M.find_workspaces = function(project_id, options)
     if not project_id then
         return {}
     end
-    options = options or { sort_by = "sort_order", sort_order_dir = "ASC" }
+    options = options or { order_by = { asc = "sort_order" } }
     ---@diagnostic disable-next-line: return-type-mismatch
     return db.find("workspaces", { project_id = project_id }, options)
 end
@@ -421,7 +421,7 @@ M.find_current_tab = function(workspace_id_param, project_id_param)
     end
     local ws = M.find_workspace_by_id(ws_id, p_id)
     if ws and ws.tabs then
-        local ok_decode, decoded_tabs = pcall(vim.fn.json_decode, ws.tabs)
+        local ok_decode, decoded_tabs = pcall(vim.json.decode, ws.tabs)
         if ok_decode and decoded_tabs and decoded_tabs.tab_active then
             return M.find_tab_by_id(decoded_tabs.tab_active, ws_id)
         end
@@ -449,7 +449,7 @@ M.find_tabs = function(workspace_id, options)
     if not workspace_id then
         return {}
     end
-    options = options or { sort_by = "sort_order", sort_order_dir = "ASC" }
+    options = options or { order_by = { asc = "sort_order" } }
     ---@diagnostic disable-next-line: return-type-mismatch
     return db.find("tabs", { workspace_id = workspace_id }, options)
 end
@@ -607,7 +607,7 @@ M.find_files = function(tab_id_param, workspace_id_param)
     if not tab_record.data then
         return {}
     end
-    local ok, tab_data_json = pcall(vim.fn.json_decode, tab_record.data)
+    local ok, tab_data_json = pcall(vim.json.decode, tab_record.data)
     if not ok then
         return {}
     end

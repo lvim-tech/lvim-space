@@ -540,6 +540,16 @@ function M.load(filepath)
 
     local ok, data = pcall(vim.json.decode, content)
     if ok and type(data) == "table" then
+        -- `by_level` is keyed by the numeric vim.log.levels values, but prepare_for_json() stringifies them
+        -- for the on-disk sparse-array form ("0".."4"). Re-numberify on load, or handle_debug() would index
+        -- by the numeric key and fork a SECOND counter (2 vs "2") off the restored strings.
+        if type(data.by_level) == "table" then
+            local renumbered = {}
+            for k, v in pairs(data.by_level) do
+                renumbered[tonumber(k) or k] = v
+            end
+            data.by_level = renumbered
+        end
         M.stats = data
         notify(str_format("Metrics loaded from %s", filepath), vim.log.levels.INFO)
     else

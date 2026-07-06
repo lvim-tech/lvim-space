@@ -18,7 +18,14 @@ M.find = function(table_name, conditions, options)
     if not M.db or not M[table_name] then
         return false
     end
-    local query_options = options or {}
+    -- Shallow-copy the caller's options before injecting `order_by`/`where`, so a shared options table
+    -- passed across calls never accumulates a stale `where` clause from a previous query.
+    local query_options = {}
+    if options then
+        for k, v in pairs(options) do
+            query_options[k] = v
+        end
+    end
     if not query_options.order_by then
         query_options.order_by = { asc = "sort_order" }
     end

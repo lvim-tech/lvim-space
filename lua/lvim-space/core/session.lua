@@ -35,21 +35,26 @@ local SESSION_CONFIG = {
 ---@field current_tab_id integer|nil ID of the tab whose session is currently loaded.
 ---@field is_restoring boolean True while a session restore is in progress.
 ---@field pending_save integer|nil Handle of the active debounce timer, or nil.
----@field buffer_cache table<string, integer> Weak-value map from file path to buffer number.
----@field buffer_type_cache table<integer, BufferClassification> Weak map from bufnr to classification result.
----@field path_validation_cache table<string, boolean> Weak-key map caching file-path validity.
+---@field buffer_cache table<string, integer> Map from file path to buffer number.
+---@field buffer_type_cache table<integer, BufferClassification> Map from bufnr to classification result.
+---@field path_validation_cache table<string, boolean> Map caching file-path validity (positives only).
+---@field last_saved_json table<integer, string> Last JSON blob written per tab id (dirty-check baseline).
 ---@field cache_stats { hits: integer, misses: integer, evictions: integer } Hit/miss counters.
 ---@field cleanup_timer integer|nil Handle for the periodic cache-cleanup timer.
 
+-- Plain (non-weak) tables: integer/string keys are never GC-collectable, so a `__mode` here was inert,
+-- and the kv-weak classification map was randomly wiped by any GC. Freshness is guaranteed instead by the
+-- explicit `cleanup_buffer_caches` sweep plus the BufFilePost / BufWipeout / OptionSet invalidation autocmds.
 ---@type SessionCache
 local cache = {
     last_save = 0,
     current_tab_id = nil,
     is_restoring = false,
     pending_save = nil,
-    buffer_cache = setmetatable({}, { __mode = "v" }),
-    buffer_type_cache = setmetatable({}, { __mode = "kv" }),
-    path_validation_cache = setmetatable({}, { __mode = "k" }),
+    buffer_cache = {},
+    buffer_type_cache = {},
+    path_validation_cache = {},
+    last_saved_json = {},
     cache_stats = { hits = 0, misses = 0, evictions = 0 },
 }
 
@@ -119,25 +124,28 @@ local function cleanup_buffer_caches()
         path_cache_size = path_cache_size + 1
     end
     if path_cache_size > SESSION_CONFIG.max_cache_size then
-        cache.path_validation_cache = setmetatable({}, { __mode = "k" })
+        cache.path_validation_cache = {}
         cache.cache_stats.evictions = cache.cache_stats.evictions + 1
     end
     return cleaned_count
 end
 
 --- Check whether a path points to a readable, non-directory file.
---- Results are cached in `cache.path_validation_cache`.
+--- Only POSITIVE results are cached in `cache.path_validation_cache`: a file that is temporarily missing
+--- (e.g. removed by a branch switch, then restored) must be re-probed, never pinned to "invalid" forever.
 ---@param file_path string Absolute or relative file path to validate.
 ---@return boolean is_valid True when the file is readable and is not a directory.
 local function is_valid_file_path(file_path)
     if not file_path or file_path == "" or type(file_path) ~= "string" then
         return false
     end
-    if cache.path_validation_cache[file_path] ~= nil then
-        return cache.path_validation_cache[file_path]
+    if cache.path_validation_cache[file_path] then
+        return true
     end
     local is_valid = vim.fn.filereadable(file_path) == 1 and vim.fn.isdirectory(file_path) == 0
-    cache.path_validation_cache[file_path] = is_valid
+    if is_valid then
+        cache.path_validation_cache[file_path] = true
+    end
     return is_valid
 end
 
@@ -339,19 +347,21 @@ local function collect_tab_session_data(tab_id)
 end
 
 --- Build a debounced save callback for the given tab.
---- Calling the returned function cancels any previously pending save and
---- schedules a new one after `SESSION_CONFIG.debounce_delay` ms.
+--- Calling the returned function cancels any previously pending save and schedules a new one after `delay`
+--- ms (default `SESSION_CONFIG.debounce_delay`). The retry fires with `force = false`, so the save-interval
+--- throttle is re-evaluated at fire time (the delay is chosen so the throttle window has elapsed by then) —
+--- this is what stops the throttle from collapsing into a fixed short delay.
 ---@param tab_id integer The tab to save when the debounce fires.
----@return function save_fn Zero-argument callback that triggers the debounced save.
+---@return fun(delay?: integer) save_fn Callback that triggers the debounced save after an optional delay.
 local function create_debounced_save(tab_id)
-    return function()
+    return function(delay)
         if cache.pending_save then
             vim.fn.timer_stop(cache.pending_save)
             cache.pending_save = nil
         end
-        cache.pending_save = vim.fn.timer_start(SESSION_CONFIG.debounce_delay, function()
+        cache.pending_save = vim.fn.timer_start(delay or SESSION_CONFIG.debounce_delay, function()
             cache.pending_save = nil
-            M.save_current_state(tab_id, true)
+            M.save_current_state(tab_id, false)
         end)
     end
 end
@@ -372,7 +382,11 @@ M.save_current_state = function(tab_id, force)
     end
     local now = (vim.uv or vim.loop).now()
     if not force and not cache.is_restoring and now - cache.last_save < SESSION_CONFIG.save_interval then
-        create_debounced_save(t)()
+        -- Re-schedule for the remainder of the throttle window and re-evaluate (force=false) when it fires,
+        -- so an idle CursorHold storm collapses to a SINGLE save at the end of each interval — not a save
+        -- every debounce_delay ms (which is what happened when the retry forced past the throttle).
+        local remaining = SESSION_CONFIG.save_interval - (now - cache.last_save)
+        create_debounced_save(t)(remaining)
         return false
     end
     if cache.is_restoring then
@@ -384,9 +398,14 @@ M.save_current_state = function(tab_id, force)
         return false
     end
     sd.tab_id = t
-    local ok, js = pcall(vim.fn.json_encode, sd)
+    local ok, js = pcall(vim.json.encode, sd)
     if not ok then
         return false
+    end
+    -- Dirty check: an idle cursor re-collects byte-identical data; skip the DB write when nothing changed
+    -- since the last successful save of this tab (the SELECT/UPDATE + JSON round-trip is the hot cost).
+    if cache.last_saved_json[t] == js then
+        return true
     end
     local tab_entry = data.find_tab_by_id(t, state.workspace_id)
     if not tab_entry then
@@ -395,6 +414,7 @@ M.save_current_state = function(tab_id, force)
     if not data.update_tab_data(t, js, state.workspace_id) then
         return false
     end
+    cache.last_saved_json[t] = js
     if metrics.stats then
         metrics.stats.operations.total_saves = metrics.stats.operations.total_saves + 1
     end
@@ -517,6 +537,8 @@ local function restore_session_layout(sd, fmap, init)
                 cursor_col = w1.cursor_col,
                 topline = w1.topline,
                 leftcol = w1.leftcol,
+                width = w1.width,
+                height = w1.height,
             })
         end)
     end
@@ -548,6 +570,8 @@ local function restore_session_layout(sd, fmap, init)
                         cursor_col = wi.cursor_col,
                         topline = wi.topline,
                         leftcol = wi.leftcol,
+                        width = wi.width,
+                        height = wi.height,
                     })
                 end)
                 created[i] = nw
@@ -559,6 +583,20 @@ local function restore_session_layout(sd, fmap, init)
         end
     end
     vim.schedule(function()
+        -- Reapply the saved split sizes in REVERSE creation order: the last-created split is the innermost,
+        -- so sizing from the leaf outward lets each `nvim_win_set_width/height` stick instead of being
+        -- re-equalised by a later sibling split. Done here (after every window exists) with the cursor restore.
+        for i = #cursor_restore_queue, 1, -1 do
+            local ri = cursor_restore_queue[i]
+            if vim.api.nvim_win_is_valid(ri.win) then
+                if ri.width then
+                    pcall(vim.api.nvim_win_set_width, ri.win, ri.width)
+                end
+                if ri.height then
+                    pcall(vim.api.nvim_win_set_height, ri.win, ri.height)
+                end
+            end
+        end
         for _, restore_info in ipairs(cursor_restore_queue) do
             if vim.api.nvim_win_is_valid(restore_info.win) then
                 local bufnr = vim.api.nvim_win_get_buf(restore_info.win)
@@ -611,11 +649,14 @@ M.restore_state = function(tab_id, force)
         M.clear_current_state()
         return true
     end
-    local ok, sd = pcall(vim.fn.json_decode, te.data)
+    local ok, sd = pcall(vim.json.decode, te.data)
     if not ok or not sd or not sd.buffers or #sd.buffers == 0 then
         M.clear_current_state()
         return true
     end
+    -- A file that vanished then reappeared must be re-probed on restore, so drop any stale positive results
+    -- captured while it was absent (the cache only holds positives now, so this just forces a fresh probe).
+    cache.path_validation_cache = {}
     cache.current_tab_id = tab_id
     cache.is_restoring = true
     vim.schedule(function()
@@ -623,9 +664,11 @@ M.restore_state = function(tab_id, force)
             cache.is_restoring = false
             return
         end
+        -- Capture `hidden` OUTSIDE the pcall and restore it unconditionally after, so an error mid-restore
+        -- can never leak `hidden = true` into the user's session.
+        local saved_hidden = vim.o.hidden
         pcall(function()
             cleanup_buffer_caches()
-            local saved_hidden = vim.o.hidden
             vim.o.hidden = true
             local init = force_single_window()
             local to_keep = {}
@@ -675,8 +718,8 @@ M.restore_state = function(tab_id, force)
             if target and not ui.is_plugin_window(target) then
                 pcall(vim.api.nvim_set_current_win, target)
             end
-            vim.o.hidden = saved_hidden
         end)
+        vim.o.hidden = saved_hidden
         vim.cmd("redraw!")
         cache.is_restoring = false
         if metrics.stats then
@@ -728,12 +771,12 @@ M.switch_tab = function(tab_id)
     local old = state.tab_active
     state.tab_active = tab_id
     local ws = { tab_ids = state.tab_ids, tab_active = state.tab_active }
-    data.update_workspace_tabs(vim.fn.json_encode(ws), state.workspace_id)
+    data.update_workspace_tabs(vim.json.encode(ws), state.workspace_id)
     M.clear_current_state()
     if not M.restore_state(tab_id, true) then
         state.tab_active = old
         ws.tab_active = old
-        data.update_workspace_tabs(vim.fn.json_encode(ws), state.workspace_id)
+        data.update_workspace_tabs(vim.json.encode(ws), state.workspace_id)
         if old then
             M.restore_state(old, true)
         end
@@ -808,8 +851,17 @@ M.close_all_file_windows_and_buffers = function()
     cleanup_buffer_caches()
 end
 
---- Register all session-related autocommands (BufEnter, BufWritePost, BufWinEnter,
---- VimLeavePre) and start the periodic cache-cleanup timer.
+--- Invalidate the cached classification for a buffer so a later save re-reads its live buftype/buflisted/name.
+---@param bufnr integer|nil Buffer handle whose cached classification should be dropped.
+local function invalidate_buffer_classification(bufnr)
+    if bufnr then
+        cache.buffer_type_cache[bufnr] = nil
+    end
+end
+
+--- Register all session-related autocommands (autosave triggers, BufWritePost, BufWinEnter, buffer-cache
+--- invalidation) and start the periodic cache-cleanup timer. VimLeavePre is owned by hooks.autocommands
+--- (which must save BEFORE it closes the DB), so it is deliberately NOT registered here.
 M.setup_autocmds = function()
     local aug = vim.api.nvim_create_augroup(SESSION_CONFIG.autocommand_group, { clear = true })
     local function smart_debounced_save()
@@ -817,7 +869,7 @@ M.setup_autocmds = function()
             M.save_current_state(state.tab_active, false)
         end
     end
-    vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter", "FocusGained", "CursorHold" }, {
+    vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter", "FocusGained", "FocusLost", "CursorHold" }, {
         group = aug,
         pattern = "*",
         callback = smart_debounced_save,
@@ -831,10 +883,33 @@ M.setup_autocmds = function()
             end
         end,
     })
+    -- Drop a buffer's cached classification when its identity changes: a rename (`:w newname`) or a
+    -- buflisted/buftype toggle can turn a "special" buffer into a real file (and vice versa), and a wiped
+    -- bufnr may be reused for a different file — a stale classification would keep it out of / into saves.
+    vim.api.nvim_create_autocmd({ "BufFilePost", "BufWipeout" }, {
+        group = aug,
+        pattern = "*",
+        callback = function(args)
+            invalidate_buffer_classification(args.buf)
+        end,
+    })
+    vim.api.nvim_create_autocmd("OptionSet", {
+        group = aug,
+        pattern = { "buflisted", "buftype" },
+        callback = function()
+            invalidate_buffer_classification(vim.api.nvim_get_current_buf())
+        end,
+    })
     vim.api.nvim_create_autocmd("BufWinEnter", {
         group = aug,
         pattern = "*",
         callback = function(args)
+            -- Bail at EVENT time while a restore is in flight: restore replays the tab's OWN saved buffers,
+            -- so none of them need adding — and without this guard every restored buffer triggered a
+            -- synchronous find_files DB read + JSON decode, multiplied across the whole session.
+            if cache.is_restoring then
+                return
+            end
             vim.schedule(function()
                 local b = args.buf
                 if not vim.api.nvim_buf_is_valid(b) or vim.bo[b].buftype ~= "" then
@@ -875,15 +950,6 @@ M.setup_autocmds = function()
             end)
         end,
     })
-    vim.api.nvim_create_autocmd("VimLeavePre", {
-        group = aug,
-        pattern = "*",
-        callback = function()
-            if config.autosave and state.tab_active and not cache.is_restoring then
-                M.save_current_state(state.tab_active, true)
-            end
-        end,
-    })
     local cleanup_timer = vim.fn.timer_start(SESSION_CONFIG.cache_cleanup_interval * 1000, function()
         cleanup_buffer_caches()
     end, { ["repeat"] = -1 })
@@ -916,7 +982,7 @@ M.get_session_info = function(tab_id)
     if not te or not te.data then
         return nil
     end
-    local ok, sd = pcall(vim.fn.json_decode, te.data)
+    local ok, sd = pcall(vim.json.decode, te.data)
     if ok and sd then
         return {
             tab_id = t,
@@ -1000,7 +1066,7 @@ M.save_all = function()
             tab_active = state.tab_active,
             updated_at = os.time(),
         }
-        data.update_workspace_tabs(vim.fn.json_encode(ws_tabs), state.workspace_id)
+        data.update_workspace_tabs(vim.json.encode(ws_tabs), state.workspace_id)
     end
     if state.project_id and state.workspace_id then
         data.set_workspace_active(state.workspace_id, state.project_id)
