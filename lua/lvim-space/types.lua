@@ -297,7 +297,6 @@
 --- @field title                   string                     Panel window title text
 --- @field title_pos               string                     Title alignment: "left" | "center" | "right" (nil = inherit central)
 --- @field spacing                 integer                    Padding spaces in the status line (config.ui.spacing)
---- @field max_height              integer                    Maximum panel height in rows
 --- @field autosave                boolean                    Automatically save session on buffer events
 --- @field autorestore             boolean                    Automatically restore session when cwd matches a project
 --- @field open_panel_on_add_file  boolean                    Open file panel after adding a new file

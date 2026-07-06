@@ -21,7 +21,6 @@ return {
     -- key here only to override the placement for lvim-space alone ("row" | "border" | "statusline"). Likewise
     -- the frame border is the ONE shared central `config.ui.border` — lvim-space defines neither.
     title_line = nil,
-    max_height = 10,
     spacing = 2,
 
     icons = {

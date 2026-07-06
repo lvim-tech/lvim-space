@@ -104,8 +104,6 @@ UI ~
                             central lvim-utils `config.ui.title_pos` (default
                             "left"). Set "left" | "center" | "right" to
                             override the placement for lvim-space alone.
-  ui.max_height   (number)  Maximum visible rows before the list scrolls.
-                            Default: 10.
   ui.spacing      (number)  Padding in the status/info line. Default: 2.
   ui.icons        (table)   NerdFont glyphs per entity state (project/
                             workspace/tab/file, active variants, error/warn/

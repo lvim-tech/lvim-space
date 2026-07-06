@@ -300,7 +300,6 @@ require("lvim-space").setup({
         -- the frame border is the single shared lvim-utils `config.ui.border`.
         title_line = nil,
 
-        max_height = 10,
         spacing = 2, -- padding spaces in the status/info line
 
         icons = {

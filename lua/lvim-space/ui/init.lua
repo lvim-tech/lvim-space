@@ -172,7 +172,6 @@ local function open_panel(spec)
     local mode = panel_mode()
     local msgarea = mode == "area" and active_msgarea() or nil
     local opener = api.nvim_get_current_win()
-    local max_h = config.ui.max_height or 10
 
     -- The live list store: the provider renders from it on first paint, then reads the panel buffer directly
     -- (the panels rewrite it on refresh) so a relayout / host reflow never clobbers their content.
@@ -185,9 +184,13 @@ local function open_panel(spec)
             end
             return list.lines, list.hls
         end,
+        -- Report the list's NATURAL content height (one row per item). The surface's auto-height clamps it to
+        -- the central dock slot (`dock.slot(layout)` — float/bottom via the surface, area via the msgarea zone's
+        -- reserve, which itself caps at `config.dock.geometry.area.height`), so the panel content-fits UP TO the
+        -- one central height authority and grows exactly like the pickers — no self-cap of its own.
         size = function()
             local n = (list.initialized and is_valid_buf(list.buf)) and api.nvim_buf_line_count(list.buf) or #list.lines
-            return nil, math.max(1, math.min(n, max_h))
+            return nil, math.max(1, n)
         end,
         keys = function(map, pan, st)
             list.buf = pan.buf
@@ -221,7 +224,6 @@ local function open_panel(spec)
             end
         or nil
 
-    local docked = mode ~= "float"
     local cfg = {
         mode = "float",
         position = (mode == "area" and "cmdline") or (mode == "bottom" and "bottom") or nil,
@@ -247,14 +249,10 @@ local function open_panel(spec)
         -- Canon: +1 blank "air" row under the border-title (and the footer auto-adds one above its content).
         -- Keeps the list visually detached from the title row instead of butting up against the top border.
         header_air = true,
-        size = {
-            -- AREA dock (hosted): leave the CONTAINER cap wide open so the panel grows like the pickers do — the
-            -- msgarea zone (`Handle:reserve`) clamps every docked float to its `max_height`, the single height
-            -- authority, so the panels line up instead of this one self-capping lower and squeezing its list.
-            -- FLOAT / BOTTOM (no host): `max_h` stays the real cap.
-            height = { auto = true, max = host and 9999 or max_h, min = 1 },
-            width = (not docked) and { auto = true, max = 0.8, min = 30 } or nil,
-        },
+        -- No `size` here ON PURPOSE: the surface is the SOLE size resolver. With no `size`, it derives the OUTER
+        -- slot geometry from the ONE central authority — `dock.slot(layout)` reading `config.dock.geometry` in
+        -- lvim-utils (area/bottom full-width, float centred at its configured fraction; area's rows come from the
+        -- msgarea zone's reserve). The panel then content-fits WITHIN that slot via the list provider's `size`.
         -- The list is a CONTENT data panel, so it carries the single-source content ring — `surface.CONTENT_BORDER`,
         -- resolved live to `config.ui.content_border` in lvim-utils at open time — independent of the container
         -- ring. The footer button bar below is a nav band (not a block) and stays borderless.
@@ -437,6 +435,10 @@ function M.create_input_field(prompt, default_value, callback, options)
         -- Same unified ring as the list panel — the shared `config.ui.border` via the chassis marker.
         border = surface.FRAME_BORDER,
         header_air = false,
+        -- KEPT explicit `size` — the input is a CONTENT-FIT SPECIAL float, NOT a full dock slot: an input band is
+        -- inherently 1..3 rows, so it caps its own height (never the central `dock.slot` height, which would blow
+        -- it up to a half-screen box). Passing an explicit `size` tells the surface to keep it verbatim (its rule:
+        -- no `size` ⇒ central slot; a `size` ⇒ the consumer's own content-fit float — hover/select/input modals).
         size = {
             height = { auto = true, max = 3, min = 1 },
             width = (not docked) and { auto = true, max = 0.8, min = 30 } or nil,
