@@ -28,7 +28,7 @@ local function notify(msg, level)
     end
 
     local title = (type(cfg) == "table" and cfg.title) or config.title or "LVIM Space"
-    local timeout = (type(cfg) == "table" and cfg.timeout) or 5000
+    local timeout = (type(cfg) == "table" and cfg.timeout) or 3000
 
     -- Pick an icon based on severity when one is available
     local icons = config.ui and config.ui.icons or {}

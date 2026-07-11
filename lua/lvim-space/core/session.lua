@@ -521,6 +521,13 @@ local function restore_session_layout(sd, fmap, init)
     if not sd.windows or type(sd.windows) ~= "table" or #sd.windows == 0 then
         return { [1] = init }
     end
+    -- Snapshot `cmdheight` BEFORE mutating the window layout. Restoring the saved ABSOLUTE window heights
+    -- (below, via nvim_win_set_height) that were captured while a docked area / cmdline zone had inflated
+    -- `cmdheight` makes Neovim park the leftover rows back INTO `cmdheight` under a global statusline
+    -- (laststatus=3): the statusline then floats mid-screen over empty, undraggable rows (the docked float
+    -- itself is never re-created — it is not part of the saved split layout). The layout restore must not
+    -- leak a `cmdheight` change it does not own, so we re-assert this value once the geometry settles.
+    local saved_cmdheight = vim.o.cmdheight
     local created = { [1] = init }
     local posmap = { [1] = { row = 0, col = 0 } }
 
@@ -626,6 +633,11 @@ local function restore_session_layout(sd, fmap, init)
                     end)
                 end
             end
+        end
+        -- Reclaim any `cmdheight` the height-restore above leaked into the global-statusline layout, so the
+        -- statusline sits back at the screen bottom (see the snapshot note at the top of this function).
+        if vim.o.cmdheight ~= saved_cmdheight then
+            vim.o.cmdheight = saved_cmdheight
         end
     end)
     return created

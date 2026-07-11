@@ -37,7 +37,7 @@ return function(msg, level)
 
     local level_num = levels.to_level_number(level)
     local title = (type(cfg) == "table" and cfg.title) or config.title or "LVIM Space"
-    local timeout = (type(cfg) == "table" and cfg.timeout) or 5000
+    local timeout = (type(cfg) == "table" and cfg.timeout) or 3000
 
     vim.schedule(function()
         pcall(vim.notify, msg, level_num, { title = title, timeout = timeout })
