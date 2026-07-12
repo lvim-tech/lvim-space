@@ -81,4 +81,25 @@ function M.get_project_name()
     return M.get_tab_info().project_name
 end
 
+---Switch to the tab with the given ID within the active workspace — the same
+---operation the tab panel performs when a tab is selected (saves the current
+---tab's window/buffer state, activates the target, restores its state, and
+---persists the change). Intended for external integrations that render the
+---lvim-space tabs and want them clickable (a tabline click). Safe to call at any
+---time: returns false (no error) when no session/tab context exists yet or the
+---switch fails, so consumers never have to guard the plugin's init order.
+---@param tab_id integer The tab ID (as returned by |M.get_tab_info|'s `tabs[].id`).
+---@return boolean success True when the switch completed successfully.
+function M.switch_tab(tab_id)
+    if not tab_id then
+        return false
+    end
+    local ok_session, session = pcall(require, "lvim-space.core.session")
+    if not (ok_session and session and session.switch_tab) then
+        return false
+    end
+    local ok, result = pcall(session.switch_tab, tab_id)
+    return ok and result == true
+end
+
 return M
