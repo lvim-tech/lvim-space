@@ -23,10 +23,13 @@ local function build()
     local foot_bg = c.bg_dark
     return {
         LvimSpaceNormal = { bg = panel_bg },
-        -- The ACTIVE entity's row (the loaded file, the current tab …). With a filetype devicon in the glyph
-        -- slot the icon can no longer mark it, so the row text carries the accent instead — a stronger tint of
-        -- the same blue the rest of the chrome uses, so it reads as "active" over either row stripe.
-        LvimSpaceActiveRow = { fg = c.blue, bold = true },
+        -- The ACTIVE entity's row (the loaded file, the current tab …). With a filetype devicon in the glyph slot
+        -- the icon can no longer mark it, so the ROW does — but ONLY by going BOLD. It carries NO colour of its
+        -- own on purpose: an fg here would override the row's stripe colour (odd/even), and an active row landing
+        -- on a yellow stripe would turn blue — breaking the alternation (three blue rows in a row). With just
+        -- `bold`, every other attribute falls through to the stripe underneath, so the row keeps its place in the
+        -- sequence and still reads as active.
+        LvimSpaceActiveRow = { bold = true },
         LvimSpaceCursorLine = { bg = panel_bg, fg = main_color, bold = true },
         LvimSpaceTitle = { bg = blue_high, fg = main_color, bold = true },
         LvimSpaceInfo = { bg = panel_bg, fg = main_color, bold = true },

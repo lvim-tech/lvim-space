@@ -73,7 +73,9 @@ function M.line(text, type_name, active, path)
     -- 1 space of breathing room at BOTH ends of every row: the leading space keeps the glyph off column 0.
     local lead = 1
     local line = " " .. glyph .. text .. " "
-    return line, { c0 = lead, c1 = lead + #glyph, hl = ghl, active = active }
+    -- `line_bytes` bounds the ACTIVE accent to the row's own text (see M.hls): a full-row span would take the
+    -- stripe's background with it.
+    return line, { c0 = lead, c1 = lead + #glyph, hl = ghl, active = active, line_bytes = #line }
 end
 
 --- The highlight ops for `n` rows, in the CHASSIS format (`{ row0, col0, col_end, group, priority }`, with
@@ -101,8 +103,12 @@ function M.hls(n, spans, sel)
         end
         if sp and sp.active then
             -- The ACTIVE entity (the loaded file / current tab …). With a devicon in the glyph slot the icon can
-            -- no longer carry this, so the row text does — above the stripe, below the icon colour.
-            out[#out + 1] = { i - 1, 0, -1, cfg.hl.active, 210 }
+            -- no longer carry this, so the row TEXT does. TEXT — not the row: a full-row span (`col_end = -1`,
+            -- hl_eol) painted with this fg-only group wiped the row's own stripe background, so an active row
+            -- that happened to land on an EVEN (yellow) stripe turned blue and the alternation read as three
+            -- blue rows in a row. Bounded to the line's own columns, the accent colours the text and the stripe
+            -- underneath survives.
+            out[#out + 1] = { i - 1, 0, sp.line_bytes or -1, cfg.hl.active, 210 }
         end
         if sp and sp.hl and sp.c1 > sp.c0 then
             out[#out + 1] = { i - 1, sp.c0, sp.c1, sp.hl, 220 }
