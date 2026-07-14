@@ -500,24 +500,6 @@ local function force_single_window()
     return t
 end
 
---- Stop the LSP work still IN FLIGHT for a buffer we are about to throw away — semantic tokens first.
----
---- `vim.lsp.semantic_tokens` debounces its request behind a `vim.defer_fn` timer. Deleting the buffer detaches
---- the client and drops its `client_state` entry, but the already-scheduled timer still fires — and the core's
---- `reset_timer` reads `state.timer` with no nil guard, so it throws
---- `semantic_tokens.lua:790: attempt to index local 'state' (a nil value)` on every project switch (which wipes
---- the old project's buffers). Stopping the highlighter first cancels that timer through the public API, so the
---- buffer leaves cleanly. (The missing guard is a Neovim bug; this simply does not leave it a pending timer.)
----@param buf integer  the buffer about to be deleted
-function M.quiesce_lsp(buf)
-    if not (buf and vim.api.nvim_buf_is_valid(buf)) then
-        return
-    end
-    for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf })) do
-        pcall(vim.lsp.semantic_tokens.stop, buf, client.id)
-    end
-end
-
 --- Delete loaded file buffers that are not in the keep-list and not shown in plugin windows.
 --- Preserves at least one buffer when only a single normal window is open.
 ---@param keep integer[]|nil List of buffer handles that must not be deleted.
@@ -564,7 +546,6 @@ local function cleanup_old_session_buffers(keep)
         buffers_to_delete = del
     end
     for _, buf in ipairs(buffers_to_delete) do
-        M.quiesce_lsp(buf)
         pcall(vim.api.nvim_buf_delete, buf, { force = true, unload = true })
     end
 end
@@ -923,12 +904,10 @@ M.close_all_file_windows_and_buffers = function()
         end
         if remaining_normal_windows == 1 and #buffers_to_delete >= 1 then
             for i = 1, math.max(0, #buffers_to_delete - 1) do
-                M.quiesce_lsp(buffers_to_delete[i])
                 pcall(vim.api.nvim_buf_delete, buffers_to_delete[i], { force = true })
             end
         else
             for _, buf in ipairs(buffers_to_delete) do
-                M.quiesce_lsp(buf)
                 pcall(vim.api.nvim_buf_delete, buf, { force = true })
             end
         end

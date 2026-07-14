@@ -291,11 +291,9 @@ local function delete_file_db(file_id_to_delete, workspace_id, tab_id)
                                 vim.cmd("write")
                             end)
                         end
-                        session.quiesce_lsp(bufnr_of_deleted_file)
                         pcall(vim.api.nvim_buf_delete, bufnr_of_deleted_file, { force = true })
                     end)
                 else
-                    session.quiesce_lsp(bufnr_of_deleted_file)
                     pcall(vim.api.nvim_buf_delete, bufnr_of_deleted_file, { force = false })
                 end
             end
