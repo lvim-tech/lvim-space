@@ -311,6 +311,17 @@ local function open_panel(spec)
     -- bind their own action keys AFTER open_main returns, overriding both these and the chassis defaults.
     keymaps.disable_all_maps(buf)
     keymaps.enable_base_maps(buf)
+    -- The cheatsheet (`g?`), bound centrally so EVERY entity panel has it. The panel keys the modules bind
+    -- afterwards are raw `vim.keymap.set`s the chassis never sees, so it cannot own the `g` chord prefix
+    -- itself — `surface.own_chords` is the shared seam that does (without it a `g?` typed at human speed
+    -- falls through to the builtin `g` once `timeoutlen` expires).
+    local help_key = (config.keymappings and config.keymappings.action and config.keymappings.action.help) or nil
+    if type(help_key) == "string" and help_key ~= "" then
+        vim.keymap.set("n", help_key, function()
+            require("lvim-space.ui.help").show()
+        end, { buffer = buf, nowait = true, silent = true, desc = "lvim-space: keymap cheatsheet" })
+        surface.own_chords(buf, { help_key })
+    end
 
     local selected = spec.selected or 1
     selected = math.max(1, math.min(selected, math.max(1, #list.lines)))

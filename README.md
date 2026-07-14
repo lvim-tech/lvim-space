@@ -174,6 +174,7 @@ Below are the default keybindings. You can customize these in the `keymappings` 
 | Action  | Move Up          | `K`         | Move selected entity up in order               |
 | Action  | Move Down        | `J`         | Move selected entity down in order             |
 | Action  | Filter           | `/`         | Open the picker over the current list to filter and jump |
+| Action  | Help             | `g?`        | The keymap **cheatsheet** (also a `help` chip on the footer bar) |
 | Nav     | Sector Down      | `<C-j>`     | Descend the focus sector (list → footer bar → messages) |
 | Nav     | Sector Up        | `<C-k>`     | Ascend the focus sector (footer bar → list → editor)    |
 
@@ -371,6 +372,9 @@ require("lvim-space").setup({
             search = "s",
         },
         action = {
+            -- The keymap CHEATSHEET — a CHORD, so `g` stays free as its prefix (it is in
+            -- `key_control.allowed` below, or a nowait <Nop> on `g` would kill the chord).
+            help = "g?",
             add = "a",
             delete = "d",
             rename = "r",
@@ -387,7 +391,9 @@ require("lvim-space").setup({
     -- listed: they belong to the surface's sector navigation, not the panel, so they fall through to the
     -- chassis. `K`/`J` are listed so the `uppercase_letters` blanket-disable does not no-op the reorder keys.
     key_control = {
-        allowed = { "j", "k", "K", "J" },
+        -- `g` is allowed so it can be the PREFIX of the `g?` cheatsheet chord (lvim-ui owns the prefix on
+        -- the panel buffer, so a bare `g` stays inert).
+        allowed = { "j", "k", "K", "J", "g" },
         explicitly_disabled = {
             "$",
             "gg",

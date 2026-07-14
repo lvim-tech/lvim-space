@@ -635,6 +635,17 @@ M.set_action_footer = function(ctx, handlers)
     ---@type table<string, table>
     local registry = {
         move = { name = "move", key = "j/k", no_hotkey = true },
+        -- The CHEATSHEET chip: the panel's action keys are not discoverable from the list, so the bar has to
+        -- say where they are written down. A DISPLAY chip (`no_hotkey`) — the real `g?` is bound centrally on
+        -- the panel buffer (ui.init `open_main`), which is where the `g` chord prefix is owned.
+        help = {
+            name = "help",
+            key = key_badge(akeys.help),
+            no_hotkey = true,
+            run = function()
+                require("lvim-space.ui.help").show()
+            end,
+        },
         reorder = {
             name = "reorder",
             key = key_badge(akeys.move_up) .. "/" .. key_badge(akeys.move_down),
@@ -696,6 +707,9 @@ M.set_action_footer = function(ctx, handlers)
     end
     groups[#groups + 1] = splits
     groups[#groups + 1] = panel_ids
+    if akeys.help and akeys.help ~= "" then
+        groups[#groups + 1] = { "help" }
+    end
 
     -- Hand the id groups + registry straight to the SHARED `surface.bar`: it routes every record through
     -- `surface.button` (with lvim-space's own FOOTER_STYLE colours via the bar-level `hl`), divides non-empty

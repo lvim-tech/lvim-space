@@ -199,6 +199,9 @@ Inside any entity panel (configurable via `keymappings`):
   <CR>              Enter the entity (descend a level / open the deepest view)
   /                 Open the picker over the CURRENT list to filter and jump
                     (see |lvim-space-search|)
+  g?                The keymap CHEATSHEET (also a `help` chip on the footer
+                    bar) — built from the live `keymappings`, so a rebind shows
+                    up in it. `q` / <Esc> / `g?` close it.
 
 Sector navigation (the same convention as the lvim-utils picker):
 
@@ -222,7 +225,9 @@ Panel-switch keys (jump straight to another level's panel):
 
 Keys not in `key_control.allowed` are blocked inside panels so navigation
 stays predictable. `K` / `J` are in the allowed set (otherwise the uppercase
-blanket-disable would no-op the reorder keys).
+blanket-disable would no-op the reorder keys), and so is `g` — it is the PREFIX
+of the `g?` cheatsheet chord, and a nowait <Nop> on `g` would fire the moment it
+is pressed, so the chord could never resolve.
 
 ==============================================================================
 8. PICKER SEARCH                                           *lvim-space-search*
