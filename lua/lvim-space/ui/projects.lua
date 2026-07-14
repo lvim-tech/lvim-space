@@ -9,6 +9,7 @@ local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
 local data = require("lvim-space.api.data")
 local ui = require("lvim-space.ui")
+local rows = require("lvim-space.ui.rows")
 local utils = require("lvim-space.utils")
 local common = require("lvim-space.ui.common")
 local session = require("lvim-space.core.session")
@@ -113,19 +114,13 @@ M.refresh = function()
         return M.init()
     end
 
-    local icons = config.ui.icons
-    local project_active_icon = icons.project_active or " "
-    local project_icon = icons.project or " "
-
-    local new_lines = {}
+    local new_lines, new_spans = {}, {}
     for i, project_entry in ipairs(cache.projects_from_db) do
         cache.project_ids_map[i] = project_entry.id
         local is_active = tostring(project_entry.id) == tostring(state.project_id)
         local display_text = string.format("%s [%s]", project_entry.name or "???", project_entry.path or "???")
-        -- 1 space at BOTH ends — match common.format_line (this live refresh bypasses it).
-        display_text = " " .. (is_active and project_active_icon or project_icon) .. display_text .. " "
-
-        table.insert(new_lines, display_text)
+        -- Through the ONE row renderer, like the first paint (`common.format_line`) — no second row format.
+        new_lines[i], new_spans[i] = rows.line(display_text, "project", is_active, nil)
     end
 
     local success = pcall(function()
@@ -139,6 +134,8 @@ M.refresh = function()
         if not was_modifiable then
             vim.bo[cache.ctx.buf].modifiable = false
         end
+        -- Stripes / selection / icon colours are extmarks — `set_lines` wipes them, so every write repaints.
+        ui.set_rows(cache.ctx.buf, new_spans)
     end)
 
     if not success then

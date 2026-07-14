@@ -23,6 +23,43 @@ return {
     title_line = nil,
     spacing = 2,
 
+    -- PICKER-PARITY ROWS. Every list (projects / workspaces / tabs / files / search) renders through
+    -- `lvim-space.ui.rows`, the same visual language as a lvim-picker list.
+    --
+    -- A FILE row gets a real filetype DEVICON in its own colour instead of the flat `icons.file` glyph; the
+    -- glyph therefore can no longer mark the ACTIVE file, so the active row is painted with `rows.hl.active`.
+    -- Set `devicons = false` to go back to the flat `icons.file` / `icons.file_active` pair.
+    devicons = true,
+    -- The icon PROVIDER + colour mode, passed to the shared `lvim-utils.icons` (nil = its own defaults), so
+    -- lvim-space resolves the same glyphs, from the same source, as every other lvim-tech list.
+    icon_provider = nil,
+    icon_color_mode = nil,
+    rows = {
+        -- Odd/even row striping + the stronger tint on the SELECTED row — the picker's list look. The cursor is
+        -- hidden in these panels, so the selection IS this tint (not `cursorline`).
+        stripes = true,
+        -- Every group is overridable. The defaults are the pickers' OWN list groups, so a theme change moves
+        -- lvim-space and the pickers together; name your own here to steer lvim-space alone.
+        hl = {
+            odd = "LvimUiMsgAreaRowOdd",
+            even = "LvimUiMsgAreaRowEven",
+            sel_odd = "LvimUiMsgAreaSelOdd",
+            sel_even = "LvimUiMsgAreaSelEven",
+            active = "LvimSpaceActiveRow",
+        },
+    },
+    -- The PREVIEW panel beside the FILES list — the file under the cursor, shown through the shared
+    -- `lvim-ui.preview` (the picker's preview: the file's REAL buffer, so it is editable and in two-way sync).
+    -- It follows the cursor as you move through the list. Only the files view has one (it is the only entity
+    -- that names a file); `enabled = false` turns it off.
+    preview = {
+        enabled = true,
+        side = "right", -- "right" | "left" | "dynamic" (a peek float above the list)
+        width = 0.5, -- the preview's share of the panel width (side = left/right)
+        numbers = true, -- line numbers in the preview
+        empty = "Nothing to preview",
+    },
+
     icons = {
         error = " ",
         warn = " ",

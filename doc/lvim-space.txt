@@ -98,6 +98,26 @@ UI ~
                             chrome overlay (minibuffer style). The frame border
                             itself is the single shared lvim-utils
                             `config.ui.border`.
+  ui.devicons     (boolean) File rows carry a real filetype DEVICON in its own
+                            colour (the picker's look) instead of the flat
+                            `icons.file` glyph; the ACTIVE file is then marked
+                            by the row accent (`ui.rows.hl.active`) instead of
+                            by the glyph. Default: true.
+  ui.rows.stripes (boolean) Odd/even row striping + a stronger tint on the
+                            SELECTED row — the picker's list look. The cursor
+                            is hidden in these panels, so the selection IS this
+                            tint; turn it off and 'cursorline' comes back.
+                            Default: true.
+  ui.rows.hl      (table)   The highlight group of each row state — `odd`,
+                            `even`, `sel_odd`, `sel_even`, `active`. Defaults
+                            are the pickers' own list groups, so a theme moves
+                            lvim-space and the pickers together.
+  ui.preview      (table)   The PREVIEW panel beside the FILES list — the file
+                            under the cursor, through the shared lvim-ui
+                            preview (its REAL buffer: editable, two-way
+                            synced), following the cursor as it moves.
+                            `enabled` (true), `side` ("right"), `width` (0.5),
+                            `numbers` (true), `empty` (placeholder text).
   ui.filetype     (string)  Panel buffer 'filetype'. Default: "lvim-space".
   ui.title        (string)  Panel title text. Default: "LVIM SPACE".
   ui.title_pos    (string)  Title alignment. Default: nil, which INHERITS the

@@ -9,6 +9,7 @@ local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
 local data = require("lvim-space.api.data")
 local ui = require("lvim-space.ui")
+local rows = require("lvim-space.ui.rows")
 local common = require("lvim-space.ui.common")
 local session = require("lvim-space.core.session")
 
@@ -290,9 +291,11 @@ local function delete_file_db(file_id_to_delete, workspace_id, tab_id)
                                 vim.cmd("write")
                             end)
                         end
+                        session.quiesce_lsp(bufnr_of_deleted_file)
                         pcall(vim.api.nvim_buf_delete, bufnr_of_deleted_file, { force = true })
                     end)
                 else
+                    session.quiesce_lsp(bufnr_of_deleted_file)
                     pcall(vim.api.nvim_buf_delete, bufnr_of_deleted_file, { force = false })
                 end
             end
@@ -369,11 +372,8 @@ M.refresh = function()
     update_tab_display_name()
 
     local current_buf_info = get_current_buffer_info()
-    local icons = config.ui.icons
-    local file_active_icon = icons.file_active or " "
-    local file_icon = icons.file or " "
 
-    local new_lines = {}
+    local new_lines, new_spans = {}, {}
 
     for i, file_entry in ipairs(cache.files_from_db) do
         local file_path = file_entry.path or file_entry.filePath or "???"
@@ -388,13 +388,12 @@ M.refresh = function()
             and candidate_path
             and vim.fn.fnamemodify(candidate_path, ":p") == vim.fn.fnamemodify(state.file_active, ":p")
 
-        local is_file_active = is_current_buffer_match or (not current_buf_info.name and is_state_active_match)
-        -- 1 space of breathing room at BOTH ends — match common.format_line (this live refresh builds the rows
-        -- itself instead of going through format_line, so it must replicate the padding or the spaces vanish on
-        -- a refresh, e.g. after loading a file with <Space>).
-        display_text = " " .. (is_file_active and file_active_icon or file_icon) .. display_text .. " "
-
-        table.insert(new_lines, display_text)
+        local is_file_active = (is_current_buffer_match or (not current_buf_info.name and is_state_active_match))
+                and true
+            or false
+        -- Through the ONE row renderer (the same one `common.format_line` uses on the first paint), so a live
+        -- refresh cannot drift from it: filetype devicon, the padding, the icon span the painter colours.
+        new_lines[i], new_spans[i] = rows.line(display_text, "file", is_file_active, candidate_path or file_path)
     end
 
     local success = pcall(function()
@@ -408,6 +407,8 @@ M.refresh = function()
         if not was_modifiable then
             vim.bo[cache.ctx.buf].modifiable = false
         end
+        -- Stripes / selection / icon colours are extmarks — `set_lines` wipes them, so every write repaints.
+        ui.set_rows(cache.ctx.buf, new_spans)
     end)
 
     if not success then

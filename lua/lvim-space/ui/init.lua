@@ -23,6 +23,9 @@ local config = require("lvim-space.config")
 local state = require("lvim-space.api.state")
 local lvim_cursor = require("lvim-utils.cursor")
 local surface = require("lvim-ui.surface")
+local uipreview = require("lvim-ui.preview")
+local picker_source = require("lvim-picker.source")
+local rows = require("lvim-space.ui.rows")
 local keymaps = require("lvim-space.core.keymaps")
 
 local api = vim.api
@@ -30,6 +33,15 @@ local api = vim.api
 local M = {}
 
 local ns_syntax = api.nvim_create_namespace("lvim_space_syntax")
+---@type integer  the preview panel's own namespace (the "nothing to preview" placeholder tint)
+local preview_ns = api.nvim_create_namespace("lvim_space_preview")
+
+---How many lines of a file the preview reads. One screenful is plenty for a docked panel; the cap keeps a huge
+---file from being read whole on every cursor move.
+---@return integer
+local function preview_lines()
+    return math.max(50, vim.o.lines)
+end
 
 ---@class LvimSpacePanelHandle
 ---@field state table  The live lvim-ui.surface state (`.close`, `.set_footer`, `.reposition`, …)
@@ -39,6 +51,11 @@ local ns_syntax = api.nvim_create_namespace("lvim_space_syntax")
 ---@field mode "area"|"float"|"bottom"  The resolved dock mode this panel opened in
 ---@field title string|nil  The panel's current title text (kept in sync by `M.set_title`)
 ---@field count integer|nil  The panel's current item count, shown in the docked header bar's counter
+---@field spans table[]|nil  The per-row icon spans of the CURRENT lines (re-rendered on every cursor move)
+---@field list_pan table|nil  The list panel handle (`refresh()` re-renders it through the chassis)
+---@field set_spans (fun(spans: table[]))|nil  Hand the provider the spans of the lines just written
+---@field augroup integer|nil  The row painter's CursorMoved group — destroyed with the panel
+---@field preview (fun(): table|nil)|nil  The live preview panel handle (files view), or nil when there is none
 
 ---@class LvimSpaceInputHandle
 ---@field state table|nil  The live surface state of the input prompt
@@ -121,11 +138,20 @@ M.clear_highlights = function(buf)
     api.nvim_buf_clear_namespace(buf, ns_syntax, 0, -1)
 end
 
+---@class LvimSpacePreviewSpec
+---@field item fun(): { filename: string, lnum: integer?, col: integer? }|nil  The location under the cursor
+---@field side "right"|"left"|"dynamic"|nil  Where the preview sits (default "right")
+---@field width number|nil  Its share of the editor width (side = left/right; default 0.5)
+---@field numbers boolean|nil  Line numbers in the preview (default true)
+---@field empty string|nil  The "nothing to preview" placeholder text
+
 ---@class LvimSpacePanelSpec
 ---@field title string|nil  Panel title (float border-title / docked header bar)
 ---@field count integer|nil  Item count shown beside the title in the docked header bar (the picker's counter)
 ---@field lines string[]  Initial content lines
 ---@field hls table[]|nil  Provider highlight ops `{ row, col0, col_end, group, priority }`
+---@field spans table[]|nil  Per-row icon spans from `ui.rows.line` (painted with the stripes/selection)
+---@field preview LvimSpacePreviewSpec|nil  A preview block beside the list (the files view)
 ---@field selected integer|nil  1-based row to place the cursor on
 ---@field footer string|nil  Initial footer info text
 ---@field on_keys (fun(map: fun(lhs: string|string[], fn: function), pan: table, st: table))|nil  Extra panel keys
@@ -161,6 +187,35 @@ local function close_input()
     end
 end
 
+---The 1-based cursor row of a window (1 when it is gone) — the SELECTED row of a list.
+---@param win integer|nil
+---@return integer
+local function selected_row(win)
+    if not (win and is_valid_win(win)) then
+        return 1
+    end
+    local ok, cur = pcall(api.nvim_win_get_cursor, win)
+    return (ok and cur[1]) or 1
+end
+
+---Repaint the open list after a panel rewrote its lines in place (stripes, the selection tint, the coloured
+---icons — all extmarks, all wiped by `nvim_buf_set_lines`). The panels call this through `common`, never by
+---hand-rolling their own highlighting.
+---@param buf integer  the list buffer that was rewritten
+---@param spans table[]|nil  the per-row icon spans the row renderer returned for the NEW lines
+M.set_rows = function(buf, spans)
+    if not (panel and panel.buf == buf) then
+        return
+    end
+    panel.spans = spans or {}
+    if panel.set_spans then
+        panel.set_spans(panel.spans) -- the provider renders from these on its next paint
+    end
+    if panel.list_pan and panel.list_pan.refresh then
+        panel.list_pan.refresh()
+    end
+end
+
 ---Build the single list content block + mode wiring and open the surface. Returns the real list block
 ---`(buf, win)` so the panel modules can keep operating directly on them.
 ---@param spec LvimSpacePanelSpec
@@ -175,14 +230,21 @@ local function open_panel(spec)
 
     -- The live list store: the provider renders from it on first paint, then reads the panel buffer directly
     -- (the panels rewrite it on refresh) so a relayout / host reflow never clobbers their content.
-    local list = { lines = spec.lines or {}, hls = spec.hls or {}, initialized = false }
+    local list = { lines = spec.lines or {}, hls = spec.hls or {}, spans = spec.spans or {}, initialized = false }
+    ---@type table|nil, table|nil  the live panel handles (captured by each provider's `keys`)
+    local list_pan, preview_pan
     ---@type table  the content-block provider
     local provider = {
+        cursorline = false, -- the SELECTION is a row tint (see ui.rows), not a cursorline
         render = function()
-            if list.initialized and is_valid_buf(list.buf) then
-                return api.nvim_buf_get_lines(list.buf, 0, -1, false), list.hls
-            end
-            return list.lines, list.hls
+            -- The rows and their look are ONE thing: whatever lines this panel currently holds, the highlight
+            -- ops (stripes, the selected row, the active entity, the coloured icons) are rebuilt for them here.
+            -- The chassis applies them right after it writes the lines, so a relayout / refresh repaints itself
+            -- — painting them separately with extmarks lost them on the next render.
+            local lines = (list.initialized and is_valid_buf(list.buf))
+                    and api.nvim_buf_get_lines(list.buf, 0, -1, false)
+                or list.lines
+            return lines, rows.hls(#lines, list.spans, selected_row(list.win))
         end,
         -- Report the list's NATURAL content height (one row per item). The surface's auto-height clamps it to
         -- the central dock slot (`dock.slot(layout)` — float/bottom via the surface, area via the msgarea zone's
@@ -195,6 +257,7 @@ local function open_panel(spec)
         keys = function(map, pan, st)
             list.buf = pan.buf
             list.win = pan.win
+            list_pan = pan
             if spec.on_keys then
                 spec.on_keys(map, pan, st)
             end
@@ -223,6 +286,74 @@ local function open_panel(spec)
                 end)
             end
         or nil
+
+    -- The PREVIEW block (files view): the shared `lvim-ui.preview` — the file's REAL buffer, so it is editable
+    -- and two-way synced, exactly as in the pickers. It re-reads its location from `spec.preview.item()` on every
+    -- `refresh()`, which the list's CursorMoved fires — so the preview follows the cursor.
+    local blocks = { { id = "list", provider = provider, border = surface.CONTENT_BORDER } }
+    if spec.preview and spec.preview.item then
+        -- A READ-ONLY SCRATCH preview — the picker's file preview, NOT `lvim-ui.preview` (the editable
+        -- real-buffer one the LSP peek uses). A real buffer drags the FILE's own autocmds into this docked
+        -- panel: showing it here fired the file's CursorMoved chain (LSP features, breadcrumbs, the lightbulb)
+        -- inside a two-row window, and one of them blew up with `E36: Not enough room`. A scratch copy has no
+        -- such wiring — and a panel preview should not be editable anyway.
+        local shown -- the path currently rendered (re-read only when the selection changes)
+        local shown_h = 1 -- its line count — the preview's natural height (see `size`)
+        blocks[#blocks + 1] = {
+            id = "preview",
+            -- When the stack does not fit the cap, the PREVIEW is the panel that gives up rows — the chassis'
+            -- own protection rule. So the LIST always keeps its content height and never jumps while you scroll
+            -- through files of wildly different lengths, side by side or stacked.
+            shrink_first = true,
+            provider = {
+                hide_cursor = true,
+                -- The preview's share of the width, and its OWN natural height — the shown file's line count, in
+                -- EVERY direction. The frame then fits the content of both panels (the taller one when they sit
+                -- side by side, their sum when stacked) and the central `dock.geometry` cap clamps it — so the
+                -- panel is never taller than the file it shows. `shrink_first` on this block means the PREVIEW is
+                -- the one that gives up rows when that does not fit, so the LIST keeps its own content height and
+                -- never shrinks/jumps as you scroll through files of wildly different lengths.
+                size = function()
+                    local w = tonumber(spec.preview.width) or 0.5
+                    return math.max(20, math.floor(vim.o.columns * w)), math.max(1, shown_h)
+                end,
+                update = function(pan)
+                    local it = spec.preview.item()
+                    local path = it and it.filename or nil
+                    if path == shown then
+                        return
+                    end
+                    shown = path
+                    if not path then
+                        shown_h = 1
+                        uipreview.render_empty(pan.buf, preview_ns, spec.preview.empty)
+                        return
+                    end
+                    local lines, ft = picker_source.read_preview(path, preview_lines())
+                    local prev_h = shown_h
+                    shown_h = #lines
+                    api.nvim_buf_clear_namespace(pan.buf, preview_ns, 0, -1)
+                    uipreview.render_file(pan, lines, ft)
+                    if pan.win and is_valid_win(pan.win) then
+                        vim.wo[pan.win].number = spec.preview.numbers ~= false
+                    end
+                    -- Re-fit when the height this panel wants actually changed (a new file of a different
+                    -- length): the frame re-fits to the two panels' content, and the list — protected by
+                    -- `shrink_first` on this block — keeps its height through it.
+                    if shown_h ~= prev_h then
+                        local st = pan.frame
+                        if st and st.relayout then
+                            st.relayout()
+                        end
+                    end
+                end,
+                keys = function(_, pan)
+                    preview_pan = pan
+                end,
+            },
+            border = surface.CONTENT_BORDER,
+        }
+    end
 
     local cfg = {
         mode = "float",
@@ -256,7 +387,9 @@ local function open_panel(spec)
         -- The list is a CONTENT data panel, so it carries the single-source content ring — `surface.CONTENT_BORDER`,
         -- resolved live to `config.ui.content_border` in lvim-utils at open time — independent of the container
         -- ring. The footer button bar below is a nav band (not a block) and stays borderless.
-        content = { blocks = { { id = "list", provider = provider, border = surface.CONTENT_BORDER } } },
+        content = { blocks = blocks },
+        -- Where the preview sits beside the list — the chassis lays the blocks out along this axis.
+        preview_side = spec.preview and (spec.preview.side or "right") or nil,
         footer = { bars = { { text = spec.footer or "", hl = "LvimSpaceInfo" } } },
         -- Sector navigation is the surface chassis default: <C-j> descends (list → footer bar → … messages),
         -- <C-k> ascends (footer → list → editor), exactly like the lvim-utils picker. The list keeps these for
@@ -273,6 +406,12 @@ local function open_panel(spec)
             return msgarea.focus_messages()
         end or nil,
         on_close = function()
+            -- The row painter's cursor hook dies WITH the panel: a stale autocmd on a torn-down frame would
+            -- keep firing (the buffer outlives the windows) and drive a layout that no longer exists.
+            if panel and panel.augroup then
+                pcall(api.nvim_del_augroup_by_id, panel.augroup)
+                panel.augroup = nil
+            end
             if seg then
                 pcall(function()
                     seg:release()
@@ -293,9 +432,12 @@ local function open_panel(spec)
     list.initialized = true
 
     local buf, win = pan.buf, pan.win
-    -- Self-theme the list window: the panel background + a full-row active-line tint, the lvim-space way.
+    -- Self-theme the list window: the panel background. The SELECTION is not `cursorline` any more — the rows
+    -- are striped and the selected row is a stronger tint of its stripe, painted by `ui.rows` (the picker's
+    -- language; the hardware cursor is hidden in this panel, so a cursorline would be the only marker and it
+    -- cannot stripe). `LvimSpaceCursorLine` stays mapped for a user who turns the stripes off.
     vim.wo[win].winhighlight = "Normal:LvimSpaceNormal,NormalNC:LvimSpaceNormal,CursorLine:LvimSpaceCursorLine"
-    vim.wo[win].cursorline = true
+    vim.wo[win].cursorline = not ((config.ui.rows or {}).stripes ~= false)
     vim.wo[win].signcolumn = "no"
     vim.wo[win].wrap = false
     -- The lvim-space filetype drives cursor hiding (registered as a current-only panel_ft in M.init) and lets
@@ -305,7 +447,50 @@ local function open_panel(spec)
     state.ui = state.ui or {}
     state.ui.content = { win = win, buf = buf }
 
-    panel = { state = st, buf = buf, win = win, seg = seg, mode = mode, title = spec.title, count = spec.count }
+    panel = {
+        state = st,
+        buf = buf,
+        win = win,
+        seg = seg,
+        mode = mode,
+        title = spec.title,
+        count = spec.count,
+        spans = list.spans,
+        list_pan = list_pan,
+        set_spans = function(sp)
+            list.spans = sp
+        end,
+        preview = function()
+            return preview_pan
+        end,
+    }
+
+    -- ONE cursor hook for every view: repaint the selection (the row tint that replaces `cursorline`) and let
+    -- the preview follow the cursor. Central here — not per panel module — so every entity list behaves the
+    -- same and a module cannot forget it.
+    local rows_group = api.nvim_create_augroup("lvim_space_rows_" .. buf, { clear = true })
+    panel.augroup = rows_group
+    api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+        buffer = buf,
+        group = rows_group,
+        callback = function()
+            -- Only while the user is actually ON the list. A CursorMoved also fires in this buffer while the
+            -- panel is being TORN DOWN (closing, or handing the zone over to the search picker): the frame is
+            -- half-dismantled by then, so driving a preview re-render from here tried to lay out a window that
+            -- no longer has room (E36). The panel's own window being current is the precise "the user moved"
+            -- signal; the augroup is destroyed with the panel besides (see cfg.on_close).
+            if not (panel and panel.buf == buf and is_valid_win(win) and api.nvim_get_current_win() == win) then
+                return
+            end
+            if list_pan and list_pan.refresh then
+                list_pan.refresh() -- re-render → the selected row's tint follows the (hidden) cursor
+            end
+            local pv = preview_pan
+            if pv and pv.refresh then
+                pv.refresh()
+            end
+        end,
+    })
 
     -- Suppress stray typing keys and bind <Esc> → close, exactly as the legacy panel did. The panel modules
     -- bind their own action keys AFTER open_main returns, overriding both these and the chassis defaults.
@@ -340,10 +525,12 @@ end
 ---@param name string|nil Title shown in the panel (defaults to the configured title)
 ---@param selected_line integer|nil 1-based line to position the cursor on initially
 ---@param count integer|nil Item count shown beside the title in the docked header bar (e.g. the entity total)
+---@param opts { spans: table[]|nil, preview: LvimSpacePreviewSpec|nil }|nil  Row spans + the preview block
 ---@return integer|nil buf Buffer handle of the list block
 ---@return integer|nil win Window handle of the list block
-M.open_main = function(lines, name, selected_line, count)
+M.open_main = function(lines, name, selected_line, count, opts)
     lines = lines or {}
+    opts = opts or {}
     if not selected_line then
         selected_line = (saved_state.input_line and saved_state.input_line <= #lines) and saved_state.input_line or 1
     end
@@ -352,6 +539,8 @@ M.open_main = function(lines, name, selected_line, count)
         count = count,
         lines = lines,
         selected = selected_line,
+        spans = opts.spans, -- the row renderer's per-row icon spans (painted with the stripes)
+        preview = opts.preview, -- the files view's preview block ({ item, side, width, numbers, empty })
     })
 end
 

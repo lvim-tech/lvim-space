@@ -262,17 +262,56 @@ local function collect_tab_session_data(tab_id)
             end
         end
     end
+    -- THE TAB'S FILE LIST IS AUTHORITATIVE. A session save may only ENRICH it (cursor, view, the loaded bufnr) —
+    -- never SHRINK it. This used to walk nvim's buffer list and keep an entry only for files that happened to be
+    -- LOADED and LISTED right now, and since the tab's files ARE this array (`data.find_files` reads it back),
+    -- every save silently dropped every file the current session had not opened: press <CR> on a file (the panel
+    -- closes, one buffer is shown), reopen the panel — which saves first — and the tab was down to that one file.
+    -- So: iterate the TAB'S files, in their order, and attach the live buffer's state when it is open.
+    -- The buffers ALREADY STORED on this tab (the very array `data.find_files` reads the file list back from) —
+    -- kept whole, with their saved cursor / view / filetype, so a file this session never opened keeps not only
+    -- its place but its position too.
+    local stored = {}
+    local tab_record = data.find_tab_by_id(tab_id, state.workspace_id)
+    if tab_record and tab_record.data then
+        local ok_prev, prev = pcall(vim.json.decode, tab_record.data)
+        if ok_prev and type(prev) == "table" and type(prev.buffers) == "table" then
+            for _, b in ipairs(prev.buffers) do
+                if type(b) == "table" and b.filePath then
+                    stored[vim.fn.fnamemodify(b.filePath, ":p")] = b
+                end
+            end
+        end
+    end
+    local open_by_path = {}
     for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
         local c = classify_buffer(bufnr)
         if c.is_valid and not c.is_special and c.name ~= "" then
             local abs = vim.fn.fnamemodify(c.name, ":p")
-            if valid_paths[abs] and c.is_listed and not path_to_idx[abs] then
+            if not open_by_path[abs] then
+                open_by_path[abs] = { bufnr = bufnr, filetype = c.filetype }
+            end
+        end
+    end
+    for _, entry in ipairs(files_in_tab) do
+        local path = entry.path or entry.filePath --[[@diagnostic disable-line: undefined-field]]
+        if path and type(path) == "string" and path ~= "" then
+            local abs = vim.fn.fnamemodify(path, ":p")
+            if not path_to_idx[abs] then
+                local prev = stored[abs] or {}
+                local live = open_by_path[abs]
                 local buffer_entry = {
                     filePath = abs,
-                    bufnr = bufnr,
-                    filetype = c.filetype,
+                    -- A file of this tab that is NOT open right now keeps its entry with no live bufnr: the
+                    -- restore opens it by path. Cursor / view / filetype carry over from the stored record.
+                    bufnr = live and live.bufnr or nil,
+                    filetype = (live and live.filetype) or prev.filetype or nil,
+                    cursor_line = prev.cursor_line,
+                    cursor_col = prev.cursor_col,
+                    topline = prev.topline,
+                    leftcol = prev.leftcol,
                 }
-                if buffer_cursor_info[abs] then
+                if buffer_cursor_info[abs] then -- shown in a window right now → its LIVE view wins
                     buffer_entry.cursor_line = buffer_cursor_info[abs].cursor_line
                     buffer_entry.cursor_col = buffer_cursor_info[abs].cursor_col
                     buffer_entry.topline = buffer_cursor_info[abs].topline
@@ -461,6 +500,24 @@ local function force_single_window()
     return t
 end
 
+--- Stop the LSP work still IN FLIGHT for a buffer we are about to throw away — semantic tokens first.
+---
+--- `vim.lsp.semantic_tokens` debounces its request behind a `vim.defer_fn` timer. Deleting the buffer detaches
+--- the client and drops its `client_state` entry, but the already-scheduled timer still fires — and the core's
+--- `reset_timer` reads `state.timer` with no nil guard, so it throws
+--- `semantic_tokens.lua:790: attempt to index local 'state' (a nil value)` on every project switch (which wipes
+--- the old project's buffers). Stopping the highlighter first cancels that timer through the public API, so the
+--- buffer leaves cleanly. (The missing guard is a Neovim bug; this simply does not leave it a pending timer.)
+---@param buf integer  the buffer about to be deleted
+function M.quiesce_lsp(buf)
+    if not (buf and vim.api.nvim_buf_is_valid(buf)) then
+        return
+    end
+    for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf })) do
+        pcall(vim.lsp.semantic_tokens.stop, buf, client.id)
+    end
+end
+
 --- Delete loaded file buffers that are not in the keep-list and not shown in plugin windows.
 --- Preserves at least one buffer when only a single normal window is open.
 ---@param keep integer[]|nil List of buffer handles that must not be deleted.
@@ -507,6 +564,7 @@ local function cleanup_old_session_buffers(keep)
         buffers_to_delete = del
     end
     for _, buf in ipairs(buffers_to_delete) do
+        M.quiesce_lsp(buf)
         pcall(vim.api.nvim_buf_delete, buf, { force = true, unload = true })
     end
 end
@@ -865,10 +923,12 @@ M.close_all_file_windows_and_buffers = function()
         end
         if remaining_normal_windows == 1 and #buffers_to_delete >= 1 then
             for i = 1, math.max(0, #buffers_to_delete - 1) do
+                M.quiesce_lsp(buffers_to_delete[i])
                 pcall(vim.api.nvim_buf_delete, buffers_to_delete[i], { force = true })
             end
         else
             for _, buf in ipairs(buffers_to_delete) do
+                M.quiesce_lsp(buf)
                 pcall(vim.api.nvim_buf_delete, buf, { force = true })
             end
         end

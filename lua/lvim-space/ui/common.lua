@@ -5,6 +5,7 @@
 ---@module "lvim-space.ui.common"
 
 local config = require("lvim-space.config")
+local rows = require("lvim-space.ui.rows")
 local notify = require("lvim-space.api.notify")
 local state = require("lvim-space.api.state")
 local ui = require("lvim-space.ui")
@@ -240,7 +241,8 @@ end
 ---@param type_name string  Entity type name passed to `get_entity_icon`
 ---@param active boolean  Whether this entity is currently active
 ---@param custom_formatter (fun(ent: table): string)|nil  Optional override for the text portion
----@return string  Fully formatted display line (icon + trimmed text)
+---@return string line  Fully formatted display row (icon + trimmed text, 1 space of air at both ends)
+---@return table span  The icon's byte span `{ c0, c1, hl, active }` — what `ui.rows.paint` colours
 local function format_line(ent, type_name, active, custom_formatter)
     local display_text
     if custom_formatter then
@@ -250,9 +252,10 @@ local function format_line(ent, type_name, active, custom_formatter)
     end
     display_text = display_text:gsub("^[>%s▶󰋜󰉋󰏘󰉌󰓩󰎃󰈙󰈚]*", "")
     display_text = vim.trim(display_text)
-    -- 1 space of breathing room at BOTH ends of every list row: a leading space BEFORE the icon (the icon glyph
-    -- would otherwise hug column 0) and a trailing space after the text.
-    return " " .. M.get_entity_icon(type_name, active, false) .. display_text .. " "
+    -- THE one row renderer (`ui.rows`) builds every list row in every view — the picker's language: a filetype
+    -- devicon for a file, the entity glyph otherwise, 1 space of air at both ends. It also hands back the icon's
+    -- byte span so the caller can paint the glyph in its own colour.
+    return rows.line(display_text, type_name, active, ent.path or ent.filePath or ent.id)
 end
 
 ---Safely read the cursor position of a window, returning (1, 0) when the window is
@@ -334,6 +337,8 @@ M.init_entity_list = function(
 
     local is_list_empty = #entities_list == 0
     local display_lines = {}
+    ---@type table[]  per-row icon spans (the row renderer's), painted by `ui.rows` after every write
+    local row_spans = {}
     local actual_cursor_line = 1
     local active_item_line = nil
 
@@ -344,9 +349,10 @@ M.init_entity_list = function(
 
     for _, entity_data in ipairs(entities_list) do
         local is_active = determine_active(entity_def, entity_data, active_entity_id, custom_active_check_fn)
-        local formatted_line = format_line(entity_data, entity_def.name, is_active, line_formatter_fn)
+        local formatted_line, span = format_line(entity_data, entity_def.name, is_active, line_formatter_fn)
         if formatted_line then
             table.insert(display_lines, formatted_line)
+            row_spans[#display_lines] = span
             id_to_line_map[#display_lines] = entity_data[id_field]
             if is_active then
                 active_item_line = #display_lines
@@ -375,9 +381,37 @@ M.init_entity_list = function(
 
     actual_cursor_line = math.max(1, math.min(actual_cursor_line, #display_lines))
 
+    -- The FILES view gets the PREVIEW panel beside the list (the only entity that names a file): the shared
+    -- `lvim-ui.preview` — the same one the pickers use — showing the file under the cursor and following it as
+    -- the cursor moves. `item()` resolves the CURSOR row through the same line→id map the panel's actions use,
+    -- so the preview can never drift from what the keys act on.
+    local preview_spec
+    local pv = (config.ui or {}).preview or {}
+    if entity_def.name == "file" and pv.enabled ~= false and not is_list_empty then
+        preview_spec = {
+            side = pv.side,
+            width = pv.width,
+            numbers = pv.numbers,
+            empty = pv.empty,
+            item = function()
+                local id = M.get_id_at_cursor(id_to_line_map)
+                -- a file entity's id IS its absolute path (see files.lua)
+                if type(id) == "string" and id ~= "" then
+                    return { filename = id }
+                end
+                return nil
+            end,
+        }
+    end
+
     -- The header counter shows the REAL entity total (0 on the empty-state placeholder row), not #display_lines.
-    local buf_handle, win_handle =
-        ui.open_main(display_lines, state.lang[entity_def.title] or entity_def.name, actual_cursor_line, #entities_list)
+    local buf_handle, win_handle = ui.open_main(
+        display_lines,
+        state.lang[entity_def.title] or entity_def.name,
+        actual_cursor_line,
+        #entities_list,
+        { spans = row_spans, preview = preview_spec }
+    )
     if not buf_handle or not win_handle then
         notify.error(state.lang.FAILED_TO_CREATE_UI or "Failed to create UI.")
         return nil
@@ -472,10 +506,10 @@ local function render_entity_buffer(buf, entities, id_map, type_def, active_id, 
         id_map[line_no] = nil
     end
     local id_field = type_def.id_field or "id"
-    local lines = {}
+    local lines, spans = {}, {}
     for index, ent in ipairs(entities) do
         local is_active = determine_active(type_def, ent, active_id, active_check)
-        lines[index] = format_line(ent, type_def.name, is_active, formatter)
+        lines[index], spans[index] = format_line(ent, type_def.name, is_active, formatter)
         id_map[index] = ent[id_field]
     end
     local was_modifiable = vim.bo[buf].modifiable
@@ -486,6 +520,9 @@ local function render_entity_buffer(buf, entities, id_map, type_def, active_id, 
     if not was_modifiable then
         vim.bo[buf].modifiable = false
     end
+    -- The rows are only half the picture: stripes / selection / icon colours are extmarks, and a plain
+    -- `set_lines` wipes them. Every write goes back through the painter (`ui.set_rows`).
+    ui.set_rows(buf, spans)
     return ok
 end
 
@@ -889,14 +926,17 @@ M.refresh_entity_icons = function(
     if not entity_def then
         return false
     end
-    local display_lines = {}
+    local display_lines, spans = {}, {}
     for _, entity_item in ipairs(entities_data) do
         local is_active = determine_active(entity_def, entity_item, active_entity_id, custom_active_check_fn)
-        table.insert(display_lines, format_line(entity_item, entity_def.name, is_active, line_formatter_fn))
+        local line, span = format_line(entity_item, entity_def.name, is_active, line_formatter_fn)
+        display_lines[#display_lines + 1] = line
+        spans[#display_lines] = span
     end
     vim.bo[buf_handle].modifiable = true
     vim.api.nvim_buf_set_lines(buf_handle, 0, -1, false, display_lines)
     vim.bo[buf_handle].modifiable = false
+    ui.set_rows(buf_handle, spans)
     return true
 end
 
