@@ -647,6 +647,41 @@ end
 
 --- Registers all buffer-local keymaps for the files panel.
 ---@param ctx table Panel context with `buf` and `entities` fields.
+--- Move the file under the cursor one row up/down in the tab's file order, through the shared in-place reorder
+--- helper (same path tabs / projects / workspaces use): swaps the held file with its neighbour, commits the new
+--- `buffers` array synchronously (`data.reorder_files`), and re-renders into the SAME panel buffer with the
+--- cursor following — so a rapid `K`/`J` burst keeps carrying the same file.
+---@param ctx table  panel context (`win`/`buf`)
+---@param direction "up"|"down"
+local function handle_reorder(ctx, direction)
+    common.reorder_entity({
+        ctx = ctx,
+        type_name = "file",
+        entities = cache.files_from_db,
+        id_map = cache.file_ids_map,
+        direction = direction,
+        active_id = state.file_active,
+        persist = function(order_table)
+            return data.reorder_files(state.tab_active, state.workspace_id, order_table)
+        end,
+        formatter = function(file_entry)
+            return relpath_to_project(file_entry.path or file_entry.filePath or file_entry.id or "???")
+        end,
+    })
+end
+
+--- Move the file under the cursor one row up.
+---@param ctx table
+function M.handle_move_up(ctx)
+    handle_reorder(ctx, "up")
+end
+
+--- Move the file under the cursor one row down.
+---@param ctx table
+function M.handle_move_down(ctx)
+    handle_reorder(ctx, "down")
+end
+
 local function setup_keymaps(ctx)
     local keymap_opts = { buffer = ctx.buf, noremap = true, silent = true, nowait = true }
     vim.keymap.set("n", config.keymappings.action.add, function()
@@ -655,6 +690,16 @@ local function setup_keymaps(ctx)
     vim.keymap.set("n", config.keymappings.action.delete, function()
         if next(ctx.entities) ~= nil then
             M.handle_file_delete()
+        end
+    end, keymap_opts)
+    vim.keymap.set("n", config.keymappings.action.move_up, function()
+        if next(ctx.entities) ~= nil then
+            M.handle_move_up(ctx)
+        end
+    end, keymap_opts)
+    vim.keymap.set("n", config.keymappings.action.move_down, function()
+        if next(ctx.entities) ~= nil then
+            M.handle_move_down(ctx)
         end
     end, keymap_opts)
     vim.keymap.set("n", config.keymappings.action.switch, function()
@@ -693,6 +738,7 @@ local function setup_keymaps(ctx)
     -- The navigable footer bar: each button reuses the same action functions the keymaps above fire. Files
     -- have no rename, but add the v/h split actions instead.
     common.set_action_footer(ctx, {
+        reorder = true, -- surfaces the K/J reorder chip (files are reorderable like every other entity)
         load = function()
             M.handle_file_switch({ close_panel = false })
         end,

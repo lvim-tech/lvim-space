@@ -550,6 +550,64 @@ M.reorder_tabs = function(workspace_id, tab_order_table)
     return true, nil
 end
 
+---Reorder the files of a tab: apply `file_order_table` (`{ { id = <filePath>, order = N }, … }`) to the tab's
+---`buffers` array and persist it. A file has no sort_order column — its order IS the array position — so this
+---rebuilds the array in the requested order (any buffer NOT named in the table keeps its relative place after
+---the named ones), then writes the tab data back. Mirrors `reorder_tabs` for the `common.reorder_entity` path.
+---@param tab_id any  Owning tab ID
+---@param workspace_id any  Owning workspace ID
+---@param file_order_table { id: string, order: integer }[]  new order, keyed by file path
+---@return boolean ok, string|nil err
+M.reorder_files = function(tab_id, workspace_id, file_order_table)
+    if not validate_params({ tab_id = tab_id, workspace_id = workspace_id }, { "tab_id", "workspace_id" }) then
+        return false, "FILE_REORDER_MISSING_PARAMS"
+    end
+    if not file_order_table or type(file_order_table) ~= "table" or #file_order_table == 0 then
+        return false, "FILE_REORDER_MISSING_PARAMS"
+    end
+    local tab_record = M.find_tab_by_id(tab_id, workspace_id)
+    if not tab_record or not tab_record.data then
+        return false, "FILE_REORDER_FAILED"
+    end
+    local ok, tab_data = pcall(vim.json.decode, tab_record.data)
+    if not ok or type(tab_data) ~= "table" or type(tab_data.buffers) ~= "table" then
+        return false, "FILE_REORDER_FAILED"
+    end
+    -- The desired ordinal for each named path.
+    local want = {}
+    for _, item in ipairs(file_order_table) do
+        if item and item.id and item.order then
+            want[vim.fn.fnamemodify(item.id, ":p")] = item.order
+        end
+    end
+    -- Stable sort the buffers by (requested order, else current index) so a partial table only moves the two
+    -- swapped rows and leaves every other file where it was.
+    local indexed = {}
+    for i, b in ipairs(tab_data.buffers) do
+        local key = (type(b) == "table" and b.filePath) and vim.fn.fnamemodify(b.filePath, ":p") or nil
+        indexed[i] = { buf = b, ord = (key and want[key]) or i, idx = i }
+    end
+    table.sort(indexed, function(a, c)
+        if a.ord ~= c.ord then
+            return a.ord < c.ord
+        end
+        return a.idx < c.idx
+    end)
+    local new_buffers = {}
+    for i, e in ipairs(indexed) do
+        new_buffers[i] = e.buf
+    end
+    tab_data.buffers = new_buffers
+    local ok_enc, encoded = pcall(vim.json.encode, tab_data)
+    if not ok_enc then
+        return false, "FILE_REORDER_FAILED"
+    end
+    if not M.update_tab_data(tab_id, encoded, workspace_id) then
+        return false, "FILE_REORDER_FAILED"
+    end
+    return true, nil
+end
+
 ---Delete a tab record.
 ---@param tab_id any  ID of the tab to remove
 ---@param workspace_id any  Owning workspace ID
@@ -624,6 +682,10 @@ M.find_files = function(tab_id_param, workspace_id_param)
                 bufnr_original = buf_info.bufnr,
                 tab_id = tab_id_param,
                 workspace_id = workspace_id_param,
+                -- A file's ORDER is its position in the tab's `buffers` array (there is no per-file sort_order
+                -- column — the array IS the order). Surfacing it as `sort_order` lets files reorder through the
+                -- SAME `common.reorder_entity` path as every other entity; `reorder_files` writes the array back.
+                sort_order = #files_list + 1,
             })
         end
     end

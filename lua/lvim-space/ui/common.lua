@@ -705,44 +705,44 @@ M.set_action_footer = function(ctx, handlers)
         panel_ids[#panel_ids + 1] = id
     end
 
-    -- GROUPS of action ids, divided by the `●` separator. Selection-dependent ids are dropped on an empty list
-    -- (mirroring the per-panel keymap guards); `add` and the panel-nav buttons always show. Empty groups add
-    -- nothing to the band.
+    -- GROUPS of action ids, divided by the `●` separator. The ENTRY ACTIONS — move / reorder, load / enter,
+    -- add / rename / delete, the splits — are ONE group: they all operate on the list entry, so a single run of
+    -- buttons reads as one toolbar instead of four boxed clusters. The panel-NAV buttons (projects / workspaces
+    -- / tabs / …) are a separate group (they leave this panel), and `help` its own. Selection-dependent ids are
+    -- dropped on an empty list (mirroring the per-panel keymap guards); `add` and the panel-nav always show.
     local groups = {}
+    local actions = {}
+    local function push(id)
+        actions[#actions + 1] = id
+    end
     if has_items then
-        local nav = { "move" }
+        push("move")
         if handlers.reorder then
-            nav[#nav + 1] = "reorder"
+            push("reorder")
         end
-        groups[#groups + 1] = nav
+        if handlers.load then
+            push("load")
+        end
+        if handlers.enter then
+            push("enter")
+        end
     end
-    local activate = {}
-    if has_items and handlers.load then
-        activate[#activate + 1] = "load"
-    end
-    if has_items and handlers.enter then
-        activate[#activate + 1] = "enter"
-    end
-    groups[#groups + 1] = activate
-    local crud = {}
     if handlers.add then
-        crud[#crud + 1] = "add"
+        push("add")
     end
     if has_items and handlers.rename then
-        crud[#crud + 1] = "rename"
+        push("rename")
     end
     if has_items and handlers.delete then
-        crud[#crud + 1] = "delete"
+        push("delete")
     end
-    groups[#groups + 1] = crud
-    local splits = {}
     if has_items and handlers.split_v then
-        splits[#splits + 1] = "vsplit"
+        push("vsplit")
     end
     if has_items and handlers.split_h then
-        splits[#splits + 1] = "hsplit"
+        push("hsplit")
     end
-    groups[#groups + 1] = splits
+    groups[#groups + 1] = actions
     groups[#groups + 1] = panel_ids
     if akeys.help and akeys.help ~= "" then
         groups[#groups + 1] = { "help" }
