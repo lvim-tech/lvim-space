@@ -645,8 +645,6 @@ function M._split_file_horizontal()
     end
 end
 
---- Registers all buffer-local keymaps for the files panel.
----@param ctx table Panel context with `buf` and `entities` fields.
 --- Move the file under the cursor one row up/down in the tab's file order, through the shared in-place reorder
 --- helper (same path tabs / projects / workspaces use): swaps the held file with its neighbour, commits the new
 --- `buffers` array synchronously (`data.reorder_files`), and re-renders into the SAME panel buffer with the
