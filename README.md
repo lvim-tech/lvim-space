@@ -301,6 +301,11 @@ require("lvim-space").setup({
         -- the frame border is the single shared lvim-utils `config.ui.border`.
         title_line = nil,
 
+        -- How the add / rename text prompt asks for a name:
+        --   "cmd"   = Neovim's command-line prompt (vim.ui.input -> the lvim-hud external cmdline)
+        --   "popup" = the centred, themed lvim-ui input popup
+        input = "cmd",
+
         spacing = 2, -- padding spaces in the status/info line
 
         -- PICKER-PARITY ROWS. Every view (projects / workspaces / tabs / files;

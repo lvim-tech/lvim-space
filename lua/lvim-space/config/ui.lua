@@ -21,6 +21,10 @@ return {
     -- key here only to override the placement for lvim-space alone ("row" | "border" | "statusline"). Likewise
     -- the frame border is the ONE shared central `config.ui.border` — lvim-space defines neither.
     title_line = nil,
+    -- How the add / rename text prompt (the `a` add and the rename actions) asks for a name:
+    --   "cmd"   — Neovim's command-line prompt (vim.ui.input), rendered by the lvim-hud external cmdline.
+    --   "popup" — a centred, themed lvim-ui input popup (the canonical lvim-tech chooser look).
+    input = "cmd",
     spacing = 2,
 
     -- PICKER-PARITY ROWS. Every list (projects / workspaces / tabs / files / search) renders through

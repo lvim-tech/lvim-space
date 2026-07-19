@@ -12,9 +12,9 @@
 -- The public surface kept STABLE for the panel modules: `open_main(lines, name, selected)` opens the list and
 -- returns the REAL `(buf, win)` of the list block (so the panels keep setting their own a/d/r/Space/CR/K/J
 -- keymaps + CursorMoved tracking + live `nvim_buf_set_lines` refresh on that buffer); `open_actions(line)`
--- fills the footer info bar; `create_input_field(prompt, default, cb)` opens an in-zone prompt; `close_all()`
--- tears the surface down (releasing the msgarea host); `submit_input` / `cancel_input` resolve the prompt;
--- `is_plugin_window(win)` is consulted by the session engine. `state.ui.content = { win, buf }` is the handle
+-- fills the footer info bar; `create_input_field(prompt, default, cb)` asks for a name through Neovim's
+-- command-line prompt or the lvim-ui popup (`config.ui.input`); `close_all()` tears the surface down
+-- (releasing the msgarea host); `is_plugin_window(win)` is consulted by the session engine. `state.ui.content = { win, buf }` is the handle
 -- the panels read. Cursor hiding is delegated to `lvim-utils.cursor` (panel_ft), never hand-rolled.
 --
 ---@module "lvim-space.ui"
@@ -23,6 +23,7 @@ local config = require("lvim-space.config")
 local state = require("lvim-space.api.state")
 local lvim_cursor = require("lvim-utils.cursor")
 local surface = require("lvim-ui.surface")
+local lvim_ui = require("lvim-ui")
 local uipreview = require("lvim-ui.preview")
 local picker_source = require("lvim-picker.source")
 local rows = require("lvim-space.ui.rows")
@@ -53,23 +54,14 @@ end
 ---@field count integer|nil  The panel's current item count, shown in the docked header bar's counter
 ---@field spans table[]|nil  The per-row icon spans of the CURRENT lines (re-rendered on every cursor move)
 ---@field list_pan table|nil  The list panel handle (`refresh()` re-renders it through the chassis)
+---@field last_h integer  Row count the surface last fitted its height to — `set_rows` re-fits on a CRUD change
 ---@field set_spans (fun(spans: table[]))|nil  Hand the provider the spans of the lines just written
 ---@field augroup integer|nil  The row painter's CursorMoved group — destroyed with the panel
 ---@field preview (fun(): table|nil)|nil  The live preview panel handle (files view), or nil when there is none
 
----@class LvimSpaceInputHandle
----@field state table|nil  The live surface state of the input prompt
----@field buf integer|nil  Buffer handle of the editable input band
----@field callback fun(value: string|nil, input_line: integer|nil)|nil  Resolved on submit
----@field input_line integer|nil  Cursor row of the list when the prompt opened
-
 ---The open list panel (nil while closed).
 ---@type LvimSpacePanelHandle|nil
 local panel = nil
-
----The open input prompt (nil while no prompt is active).
----@type LvimSpaceInputHandle|nil
-local input = nil
 
 ---@class LvimSpaceSavedState
 ---@field input_line integer|nil  Cursor row that was active when an input was opened
@@ -175,20 +167,6 @@ local function close_panel()
 end
 
 ---Close the active input prompt (if any).
-local function close_input()
-    local inp = input
-    if not inp then
-        return
-    end
-    input = nil
-    if api.nvim_get_mode().mode:match("i") then
-        pcall(vim.cmd, "stopinsert")
-    end
-    if inp.state and inp.state.close then
-        pcall(inp.state.close)
-    end
-end
-
 ---The 1-based cursor row of a window (1 when it is gone) — the SELECTED row of a list.
 ---@param win integer|nil
 ---@return integer
@@ -215,6 +193,17 @@ M.set_rows = function(buf, spans)
     end
     if panel.list_pan and panel.list_pan.refresh then
         panel.list_pan.refresh()
+    end
+    -- A CRUD op (add / delete) changes the row count: the in-place repaint above only rewrites the buffer,
+    -- it does NOT re-reserve the zone — so a new row would be clipped by the old dock height. Re-fit the
+    -- surface to the new content height ONLY when the count actually changed, so a plain selection-move
+    -- repaint (same count) never triggers a zone reflow.
+    local n = is_valid_buf(buf) and api.nvim_buf_line_count(buf) or nil
+    if n and n ~= panel.last_h then
+        panel.last_h = n
+        if panel.state and panel.state.relayout then
+            panel.state.relayout()
+        end
     end
 end
 
@@ -492,6 +481,8 @@ local function open_panel(spec)
         count = spec.count,
         spans = list.spans,
         list_pan = list_pan,
+        -- Row count the surface last fitted its height to — `set_rows` re-fits when a CRUD op changes it.
+        last_h = #(spec.lines or {}),
         set_spans = function(sp)
             list.spans = sp
         end,
@@ -623,17 +614,15 @@ M.set_title = function(text, count)
     end
 end
 
----Open an in-zone input prompt. Pressing `<CR>` resolves it (calls `callback(value, input_line)`); `<Esc>`
----cancels (the callback is NOT invoked, matching the legacy behaviour). Works in every panel mode.
----@param prompt string Label displayed in the prompt badge
----@param default_value string|nil Pre-filled text for the input field
----@param callback fun(value: string|nil, input_line: integer|nil) Called on submit with the entered text and saved cursor line
----@param options table|nil Optional overrides (`input_filetype`)
----@return integer|nil buf Buffer handle of the input field, or nil on failure
-function M.create_input_field(prompt, default_value, callback, options)
-    options = options or {}
-    close_input()
-
+---Ask for a single line of text for the add / rename actions. Presented as Neovim's command-line prompt
+---(`config.ui.input == "cmd"`, the default — `vim.ui.input({ ui = "cmdline" })`, the lvim-hud external
+---cmdline) or the centred, themed lvim-ui input popup (`"popup"`). The callback fires ONLY on confirm, with
+---the typed value and the list row selected when the prompt opened (so the caller can restore the selection
+---after the CRUD op); cancelling (Esc / Ctrl-C) does NOT invoke it.
+---@param prompt string Label shown in the command-line prompt / popup title (a trailing colon is normalised away)
+---@param default_value string|nil Pre-filled text
+---@param callback fun(value: string, input_line: integer|nil) Called on confirm with the entered text and saved cursor line
+function M.create_input_field(prompt, default_value, callback)
     -- Remember the list cursor row so the callback can restore selection after a CRUD op.
     local input_line
     if panel and is_valid_win(panel.win) then
@@ -641,127 +630,54 @@ function M.create_input_field(prompt, default_value, callback, options)
     end
     saved_state.input_line = input_line
 
-    local mode = panel_mode()
-    local msgarea = mode == "area" and active_msgarea() or nil
-    -- The prompt label reads "<prompt>: " — a literal colon, the lvim-space prompt convention.
-    local separator = ":"
-    local docked = mode ~= "float"
+    -- "Workspace Name:" → "Workspace Name" — the command-line prompt / popup title add their own separator.
+    local label = tostring(prompt or ""):gsub("%s*:%s*$", "")
 
-    local seg
-    local host = msgarea
-            and function(h)
-                seg = msgarea.segment("lvim-space-input-host", { priority = 6 })
-                return seg:reserve(h, function(rect)
-                    if input and input.state and input.state.reposition then
-                        input.state.reposition(rect)
-                    end
-                end)
-            end
-        or nil
-
-    ---@type LvimSpaceInputHandle
-    local inp = { callback = callback, input_line = input_line }
-
-    local cfg = {
-        mode = "float",
-        position = (mode == "area" and "cmdline") or (mode == "bottom" and "bottom") or nil,
-        host = host,
-        zindex = (host and 215) or (mode == "area" and 205) or nil,
-        -- Same unified ring as the list panel — the shared `config.ui.border` via the chassis marker.
-        border = surface.FRAME_BORDER,
-        header_air = false,
-        -- KEPT explicit `size` — the input is a CONTENT-FIT SPECIAL float, NOT a full dock slot: an input band is
-        -- inherently 1..3 rows, so it caps its own height (never the central `dock.slot` height, which would blow
-        -- it up to a half-screen box). Passing an explicit `size` tells the surface to keep it verbatim (its rule:
-        -- no `size` ⇒ central slot; a `size` ⇒ the consumer's own content-fit float — hover/select/input modals).
-        size = {
-            height = { auto = true, max = 3, min = 1 },
-            width = (not docked) and { auto = true, max = 0.8, min = 30 } or nil,
-        },
-        content = { blocks = {} },
-        header = {
-            bars = {
-                {
-                    input = true,
-                    prompt = " " .. prompt .. separator .. " ",
-                    prompt_hl = "LvimSpacePrompt",
-                    input_hl = "LvimSpaceInput",
-                    filetype = options.input_filetype or "lvim-space-input",
-                    keys = function(buf, st)
-                        inp.buf = buf
-                        inp.state = st
-                        -- Keep the hardware cursor VISIBLE here (the user types) even though the panel ft hides it.
-                        lvim_cursor.mark_input_buffer(buf, true)
-                        if default_value and default_value ~= "" then
-                            api.nvim_buf_set_lines(buf, 0, 1, false, { default_value })
-                        end
-                        local function imap(lhs, fn)
-                            vim.keymap.set("i", lhs, fn, { buffer = buf, nowait = true, silent = true })
-                        end
-                        imap("<CR>", function()
-                            M.submit_input()
-                        end)
-                        imap("<Esc>", function()
-                            M.cancel_input()
-                        end)
-                        imap("<C-c>", function()
-                            M.cancel_input()
-                        end)
-                    end,
-                },
-            },
-        },
-        close_keys = {},
-        on_close = function()
-            if seg then
-                pcall(function()
-                    seg:release()
-                end)
-                seg = nil
-            end
-        end,
-    }
-
-    inp.state = surface.open(cfg)
-    input = inp
-    return inp.buf
-end
-
----Submit the active input prompt: read the field, close it, and schedule the stored callback.
-function M.submit_input()
-    local inp = input
-    if not inp then
-        return
-    end
-    local value = ""
-    if is_valid_buf(inp.buf) then
-        value = api.nvim_buf_get_lines(inp.buf, 0, 1, false)[1] or ""
-    end
-    local callback, input_line = inp.callback, inp.input_line
-    close_input()
-    if panel and is_valid_win(panel.win) then
-        api.nvim_set_current_win(panel.win)
-        lvim_cursor.update()
-    end
-    if type(callback) == "function" then
+    local function resolve(value)
+        if type(callback) ~= "function" then
+            return
+        end
+        -- Defer the CRUD op so the prompt's own teardown starts settling first, then defer ONE more tick to
+        -- RE-FIT the (possibly rebuilt) panel. A CRUD rebuild (`M.init` — delete / rename) positions the docked
+        -- area float while the input's ASYNC teardown and the result notify are still reflowing the zone, so it
+        -- lands one row too high — covering the global statusline and leaving an empty band below. A settled
+        -- `relayout` (same re-fit a VimResized would do) drops the panel back onto the zone. No-op when the CRUD
+        -- op closed the panel (guarded on a live window).
         vim.schedule(function()
             callback(value, input_line)
+            vim.schedule(function()
+                if panel and panel.state and panel.state.relayout and is_valid_win(panel.win) then
+                    panel.state.relayout()
+                end
+            end)
         end)
     end
-end
 
----Cancel the active input prompt without invoking the callback; return focus to the list.
-function M.cancel_input()
-    close_input()
-    if panel and is_valid_win(panel.win) then
-        api.nvim_set_current_win(panel.win)
-        lvim_cursor.update()
+    if config.ui.input == "popup" then
+        -- The canonical centred, themed lvim-ui input popup.
+        lvim_ui.input({
+            title = label,
+            default = default_value,
+            callback = function(confirmed, value)
+                if confirmed then
+                    resolve(value or "")
+                end
+            end,
+        })
+    else
+        -- Neovim's command-line prompt. `ui = "cmdline"` pins it to the lvim-hud external cmdline explicitly,
+        -- so the mode is deterministic regardless of the hud's own `input.default` (which may be "popup").
+        vim.ui.input({ prompt = label .. ": ", default = default_value, ui = "cmdline" }, function(val)
+            if val ~= nil then
+                resolve(val)
+            end
+        end)
     end
 end
 
 ---Check whether a window belongs to one of the plugin's managed windows. The session engine consults this
 ---to skip plugin UI when scanning / restoring editor windows. Every lvim-utils surface window carries the
----`w:lvim_frame` mark, so the panel + input + header/footer band windows are all recognised.
+---`w:lvim_frame` mark, so the panel + header/footer band windows are all recognised.
 ---@param win integer Window handle to test
 ---@return boolean is_plugin_window True when `win` is owned by lvim-space (or any lvim-utils frame)
 M.is_plugin_window = function(win)
@@ -789,16 +705,13 @@ M.init = function()
     })
 end
 
----Close every window managed by the plugin (the input prompt and the list panel), releasing the msgarea
----host and clearing the `state.ui` handles.
+---Close every window managed by the plugin (the list panel), releasing the msgarea host and clearing the
+---`state.ui` handles.
 M.close_all = function()
-    close_input()
     close_panel()
     state.ui = state.ui or {}
     state.ui.content = nil
     state.ui.status_line = nil
-    state.ui.prompt_window = nil
-    state.ui.input_window = nil
 end
 
 return M

@@ -33,8 +33,6 @@ local function build()
         LvimSpaceCursorLine = { bg = panel_bg, fg = main_color, bold = true },
         LvimSpaceTitle = { bg = blue_high, fg = main_color, bold = true },
         LvimSpaceInfo = { bg = panel_bg, fg = main_color, bold = true },
-        LvimSpacePrompt = { bg = panel_bg, fg = main_color, bold = true },
-        LvimSpaceInput = { bg = blue_high, fg = c.blue },
         LvimSpaceSign = { bg = panel_bg, fg = main_color },
         LvimSpaceCursor = { bg = panel_bg, fg = c.bg_dark },
         LvimSpaceFuzzyPrimary = { bg = blue_high, fg = c.blue, bold = true },

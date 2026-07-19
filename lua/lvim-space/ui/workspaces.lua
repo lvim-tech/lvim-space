@@ -490,7 +490,7 @@ M.handle_workspace_add = function()
             end
             notify.error(state.lang[err_key_to_use] or "Failed to add workspace.")
         end
-    end, { input_filetype = "lvim-space-workspace-input" })
+    end)
 end
 
 --- Opens a rename prompt for the workspace under the cursor in the panel.

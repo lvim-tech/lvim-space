@@ -579,13 +579,6 @@ local function restore_session_layout(sd, fmap, init)
     if not sd.windows or type(sd.windows) ~= "table" or #sd.windows == 0 then
         return { [1] = init }
     end
-    -- Snapshot `cmdheight` BEFORE mutating the window layout. Restoring the saved ABSOLUTE window heights
-    -- (below, via nvim_win_set_height) that were captured while a docked area / cmdline zone had inflated
-    -- `cmdheight` makes Neovim park the leftover rows back INTO `cmdheight` under a global statusline
-    -- (laststatus=3): the statusline then floats mid-screen over empty, undraggable rows (the docked float
-    -- itself is never re-created — it is not part of the saved split layout). The layout restore must not
-    -- leak a `cmdheight` change it does not own, so we re-assert this value once the geometry settles.
-    local saved_cmdheight = vim.o.cmdheight
     local created = { [1] = init }
     local posmap = { [1] = { row = 0, col = 0 } }
 
@@ -648,6 +641,16 @@ local function restore_session_layout(sd, fmap, init)
         end
     end
     vim.schedule(function()
+        -- Snapshot the `cmdheight` reclaim target HERE, at the START of the deferred pass — NOT at function
+        -- entry. By now the caller's on_done has run: on a `<CR>` tab pick that means `close_all` has already
+        -- released the panel's docked area/cmdline zone, so `cmdheight` is at its TRUE post-close baseline (0);
+        -- on a `<Space>` switch (panel stays) it is the panel's height. Restoring the saved ABSOLUTE window
+        -- heights below (captured while a docked zone had inflated `cmdheight`) makes Neovim PARK the leftover
+        -- rows back INTO `cmdheight` under a global statusline (laststatus=3) — the statusline then floats
+        -- mid-screen over an empty, undraggable band. Snapshotting at function entry caught the panel-INFLATED
+        -- value, so the reclaim clamped back to THAT (the band stayed). Capturing after the panel closed, and
+        -- clamping only DOWNWARD (the leak is always upward), returns `cmdheight` to the real baseline.
+        local target_cmdheight = vim.o.cmdheight
         -- Reapply the saved split sizes in REVERSE creation order: the last-created split is the innermost,
         -- so sizing from the leaf outward lets each `nvim_win_set_width/height` stick instead of being
         -- re-equalised by a later sibling split. Done here (after every window exists) with the cursor restore.
@@ -692,10 +695,10 @@ local function restore_session_layout(sd, fmap, init)
                 end
             end
         end
-        -- Reclaim any `cmdheight` the height-restore above leaked into the global-statusline layout, so the
-        -- statusline sits back at the screen bottom (see the snapshot note at the top of this function).
-        if vim.o.cmdheight ~= saved_cmdheight then
-            vim.o.cmdheight = saved_cmdheight
+        -- Reclaim any `cmdheight` the height-restore above parked into the global-statusline layout, clamping
+        -- back DOWN to the post-close baseline captured at the top of this callback.
+        if vim.o.cmdheight > target_cmdheight then
+            vim.o.cmdheight = target_cmdheight
         end
     end)
     return created

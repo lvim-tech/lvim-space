@@ -137,8 +137,6 @@
 --- @class LvimSpace.UIState
 --- @field content      LvimSpace.UIWindow   Main content panel
 --- @field status_line  LvimSpace.UIWindow   Status / info bar
---- @field prompt_window { win: integer }    Prompt label window (no dedicated buffer)
---- @field input_window  LvimSpace.UIWindow  User text-input window
 
 --- A (buffer, window) pair for a managed floating window.
 --- @class LvimSpace.UIWindow

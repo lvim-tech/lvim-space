@@ -433,7 +433,7 @@ function M.handle_tab_add()
         else
             notify.error(state.lang[result_or_err_key] or "Failed to add tab.")
         end
-    end, { input_filetype = "lvim-space-tabs-input" })
+    end)
 end
 
 --- Opens an input prompt pre-filled with the current tab name and renames it on confirmation.
