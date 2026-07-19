@@ -355,7 +355,9 @@ local function space_load_session(workspace_id, selected_line_in_ui)
             or "Switched to workspace: "
         local ws_name = workspace and workspace.name or "Unknown Workspace"
         notify.info(switched_to_msg .. ws_name)
-        M.init(selected_line_in_ui)
+        -- Empty target workspace (no active tab, nothing to restore): just refresh the marker in place — no
+        -- surface rebuild, so the title/footer bar don't blink. Falls back to M.init if the panel is gone.
+        M.refresh()
         return
     end
     local old_disable_auto_close = state.disable_auto_close
@@ -363,23 +365,28 @@ local function space_load_session(workspace_id, selected_line_in_ui)
     -- Drive the continuation off restore COMPLETION, not a one-shot BufEnter/WinEnter trap: that trap never
     -- fires when the restore produces no window event (same buffer / empty session), which left the panel to
     -- spontaneously reopen on a LATER unrelated event and `disable_auto_close` stuck true forever.
+    -- Reopen the panel DIRECTLY in on_done (no inner `vim.schedule`): on_done fires inside restore_state's
+    -- coalescing tick, so the restored layout and this reopened (dimmed) panel paint as ONE frame. An extra
+    -- schedule pushed the reopen to a LATER tick — the restored bright editor painted first, then the panel
+    -- popped back a frame later: the flicker on a workspace load.
     session.restore_state(state.tab_active, true, function()
-        vim.schedule(function()
-            local ws_def = get_entity_def()
-            local switched_to_msg = (ws_def and ws_def.switched_to and state.lang[ws_def.switched_to])
-                or "Switched to workspace: "
-            local ws_name_for_notify = (workspace and workspace.name) or "Selected Workspace"
-            notify.info(switched_to_msg .. ws_name_for_notify)
-            M.init(selected_line_in_ui)
-            if state.ui and state.ui.content and vim.api.nvim_win_is_valid(state.ui.content.win) then
-                local main_ui_win = state.ui.content.win
-                vim.api.nvim_set_current_win(main_ui_win)
-                if selected_line_in_ui then
-                    pcall(vim.api.nvim_win_set_cursor, main_ui_win, { selected_line_in_ui, 0 })
-                end
+        local ws_def = get_entity_def()
+        local switched_to_msg = (ws_def and ws_def.switched_to and state.lang[ws_def.switched_to])
+            or "Switched to workspace: "
+        local ws_name_for_notify = (workspace and workspace.name) or "Selected Workspace"
+        notify.info(switched_to_msg .. ws_name_for_notify)
+        -- Refresh the SAME panel IN PLACE (only the active-workspace marker moves) rather than tearing the
+        -- surface down and rebuilding it — recreating the float blinks the title and the footer button bar even
+        -- when coalesced. M.refresh falls back to M.init if the panel window/buffer is gone.
+        M.refresh()
+        if state.ui and state.ui.content and vim.api.nvim_win_is_valid(state.ui.content.win) then
+            local main_ui_win = state.ui.content.win
+            vim.api.nvim_set_current_win(main_ui_win)
+            if selected_line_in_ui then
+                pcall(vim.api.nvim_win_set_cursor, main_ui_win, { selected_line_in_ui, 0 })
             end
-            state.disable_auto_close = old_disable_auto_close
-        end)
+        end
+        state.disable_auto_close = old_disable_auto_close
     end)
 end
 
@@ -614,13 +621,13 @@ end
 M.navigate_to_tabs = function()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
-        local _err_buf = common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
+        local _err_buf = common.open_entity_error("tab", "PROJECT_NOT_ACTIVE")
         common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.workspace_id then
         notify.info(state.lang.WORKSPACE_NOT_ACTIVE)
-        local _err_buf = common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
+        local _err_buf = common.open_entity_error("tab", "WORKSPACE_NOT_ACTIVE")
         common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
@@ -658,19 +665,19 @@ end
 function M.navigate_to_search()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
-        local _err_buf = common.open_entity_error("file", "PROJECT_NOT_ACTIVE")
+        local _err_buf = common.open_entity_error("search", "PROJECT_NOT_ACTIVE")
         common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.workspace_id then
         notify.info(state.lang.WORKSPACE_NOT_ACTIVE)
-        local _err_buf = common.open_entity_error("file", "WORKSPACE_NOT_ACTIVE")
+        local _err_buf = common.open_entity_error("search", "WORKSPACE_NOT_ACTIVE")
         common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
     if not state.tab_active then
         notify.info(state.lang.TAB_NOT_ACTIVE)
-        local _err_buf = common.open_entity_error("file", "TAB_NOT_ACTIVE")
+        local _err_buf = common.open_entity_error("search", "TAB_NOT_ACTIVE")
         common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end

@@ -87,8 +87,12 @@ M.init = function()
     if M.db then
         return true -- already initialised — idempotent, so an early cwd-project probe can safely open it first
     end
-    if vim.fn.isdirectory(config.save) == 0 then
-        local mkdir_ok, _ = pcall(vim.fn.mkdir, config.save, "p")
+    -- EXPAND the save dir: a `setup({ save = "~/…" })` override merges an unexpanded string, and
+    -- vim.fn.mkdir does not expand `~` — a verbatim path would create a literal `./~` tree (or fail). Resolve
+    -- from the LIVE config at init time (not a module-load snapshot) so an override actually redirects the DB.
+    local save_dir = vim.fn.expand(config.save)
+    if vim.fn.isdirectory(save_dir) == 0 then
+        local mkdir_ok, _ = pcall(vim.fn.mkdir, save_dir, "p")
         if not mkdir_ok then
             notify.error(
                 (state.lang and state.lang.FAILED_TO_CREATE_SAVE_DIRECTORY)
@@ -97,9 +101,7 @@ M.init = function()
             return false
         end
     end
-    -- Resolve the DB path from the LIVE config at init time (not a module-load
-    -- snapshot) so a `setup({ save = … })` override actually redirects the DB.
-    local uri = config.save .. "/lvimspace.db"
+    local uri = save_dir .. "/lvimspace.db"
     local db_init_ok, _ = pcall(function()
         M.db = sqlite({
             uri = uri,

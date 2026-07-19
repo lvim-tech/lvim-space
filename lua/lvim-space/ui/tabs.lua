@@ -533,39 +533,38 @@ function M.handle_tab_go(opts)
     local current_line_in_ui = cursor_pos and cursor_pos[1] or nil
     local prev_disable_state = state.disable_auto_close
     state.disable_auto_close = true
-    local success = session.switch_tab(tab_id_selected)
-    update_tabs_state_in_db()
-    vim.defer_fn(function()
+    -- Reopen the panel in switch_tab's on_done — it fires INSIDE the restore's coalescing tick, so the restored
+    -- tab layout and the reopened (dimmed) panel paint as ONE frame. The old path deferred the reopen 100 ms
+    -- after a forced `redraw!` of the bright, blank editor, so the whole editor + panel + footer bar flashed
+    -- before the panel returned dimmed — the load flicker.
+    local success = session.switch_tab(tab_id_selected, function()
         state.disable_auto_close = prev_disable_state
-        if success then
-            local switched_to_msg = (tab_def and tab_def.switched_to and state.lang[tab_def.switched_to])
-                or "Switched to tab: "
-            notify.info(switched_to_msg .. (selected_tab.name or "Selected Tab"))
-            if opts.close_panel then
-                ui.close_all()
-                if opts.go_to_files then
-                    vim.schedule(function()
-                        require("lvim-space.ui.files").init()
-                    end)
-                end
-            else
-                M.init(current_line_in_ui)
-                vim.defer_fn(function()
-                    local new_panel_win = state.ui and state.ui.content and state.ui.content.win
-                    if new_panel_win and vim.api.nvim_win_is_valid(new_panel_win) then
-                        vim.api.nvim_set_current_win(new_panel_win)
-                        if current_line_in_ui then
-                            pcall(vim.api.nvim_win_set_cursor, new_panel_win, { current_line_in_ui, 0 })
-                        end
-                    end
-                end, 50)
+        local switched_to_msg = (tab_def and tab_def.switched_to and state.lang[tab_def.switched_to])
+            or "Switched to tab: "
+        notify.info(switched_to_msg .. (selected_tab.name or "Selected Tab"))
+        if opts.close_panel then
+            ui.close_all()
+            if opts.go_to_files then
+                require("lvim-space.ui.files").init()
             end
         else
-            notify.error(
-                state.lang[(tab_def and tab_def.switch_failed) or "TAB_SWITCH_FAILED"] or "Failed to switch tab."
-            )
+            -- Refresh the SAME panel IN PLACE (only the active-tab marker moves) instead of rebuilding the
+            -- surface — recreating the float blinks the title and footer button bar. Falls back to M.init if gone.
+            M.refresh()
+            local new_panel_win = state.ui and state.ui.content and state.ui.content.win
+            if new_panel_win and vim.api.nvim_win_is_valid(new_panel_win) then
+                vim.api.nvim_set_current_win(new_panel_win)
+                if current_line_in_ui then
+                    pcall(vim.api.nvim_win_set_cursor, new_panel_win, { current_line_in_ui, 0 })
+                end
+            end
         end
-    end, 100)
+    end)
+    update_tabs_state_in_db()
+    if not success then
+        state.disable_auto_close = prev_disable_state
+        notify.error(state.lang[(tab_def and tab_def.switch_failed) or "TAB_SWITCH_FAILED"] or "Failed to switch tab.")
+    end
 end
 
 --- Moves the tab under the cursor one position up in the list.

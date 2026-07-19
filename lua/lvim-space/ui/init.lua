@@ -222,11 +222,13 @@ end
 ---@return integer|nil buf
 ---@return integer|nil win
 local function open_panel(spec)
-    close_panel()
-
     local mode = panel_mode()
     local msgarea = mode == "area" and active_msgarea() or nil
-    local opener = api.nvim_get_current_win()
+    -- The window lvim-space was entered from: filled in during the SWAP below (after the outgoing panel's
+    -- close restores focus to it) and read lazily by `on_escape_above`. Sharing it through a table lets the
+    -- cfg — built here, BEFORE the swap — reference an opener that is only known once the swap runs, so the
+    -- panel teardown + re-open can coalesce into one zone reflow (no backdrop flicker on a panel change).
+    local swap_ctx = {}
 
     -- The live list store: the provider renders from it on first paint, then reads the panel buffer directly
     -- (the panels rewrite it on refresh) so a relayout / host reflow never clobbers their content.
@@ -267,6 +269,10 @@ local function open_panel(spec)
     -- The msgarea host: reserve our rows ABOVE the messages instead of growing cmdheight ourselves, and follow
     -- the zone as it reflows. A descend from the editor enters the list directly.
     local seg
+    -- Forward-declared so `on_close` (defined in cfg below, BEFORE the panel is built) can delete the row
+    -- painter's augroup. close_panel() nils the module `panel` before the surface teardown runs, so the old
+    -- `panel.augroup` guard in on_close was always false → the augroup leaked one per panel open.
+    local rows_group
     local host = msgarea
             and function(h)
                 seg = msgarea.segment("lvim-space-host", { priority = 5 })
@@ -398,8 +404,8 @@ local function open_panel(spec)
         -- From the footer, the menu keys (h/l) move along the buttons and <CR>/<Space> fire the focused button.
         close_keys = {}, -- <Esc> is bound by keymaps.enable_base_maps → close_all
         on_escape_above = function()
-            if is_valid_win(opener) then
-                api.nvim_set_current_win(opener)
+            if swap_ctx.opener and is_valid_win(swap_ctx.opener) then
+                api.nvim_set_current_win(swap_ctx.opener)
             end
         end,
         on_escape_below = msgarea and function()
@@ -407,10 +413,11 @@ local function open_panel(spec)
         end or nil,
         on_close = function()
             -- The row painter's cursor hook dies WITH the panel: a stale autocmd on a torn-down frame would
-            -- keep firing (the buffer outlives the windows) and drive a layout that no longer exists.
-            if panel and panel.augroup then
-                pcall(api.nvim_del_augroup_by_id, panel.augroup)
-                panel.augroup = nil
+            -- keep firing (the buffer outlives the windows) and drive a layout that no longer exists. Use the
+            -- closure local (not the module `panel`, already nil'd by close_panel by the time this runs).
+            if rows_group then
+                pcall(api.nvim_del_augroup_by_id, rows_group)
+                rows_group = nil
             end
             if seg then
                 pcall(function()
@@ -424,7 +431,22 @@ local function open_panel(spec)
         end,
     }
 
-    local st = surface.open(cfg)
+    -- Release the outgoing panel and reserve/open the incoming one as ONE zone reflow (msgarea's lazyredraw +
+    -- single flush), so the shared area zone and its PER-SURFACE backdrop never collapse-then-regrow between
+    -- the two surfaces — the one-frame flicker on any panel change. `close_panel` runs FIRST inside the swap
+    -- (its focus-restore is what `swap_ctx.opener` captures). Off the area zone (no msgarea host) there is no
+    -- shared zone to coalesce, so `swap` runs directly.
+    local st
+    local function swap()
+        close_panel()
+        swap_ctx.opener = api.nvim_get_current_win()
+        st = surface.open(cfg)
+    end
+    if msgarea and msgarea.handoff then
+        msgarea.handoff(swap)
+    else
+        swap()
+    end
     local pan = st and st.panels and st.panels[1]
     if not (pan and is_valid_buf(pan.buf) and is_valid_win(pan.win)) then
         return nil, nil
@@ -468,7 +490,7 @@ local function open_panel(spec)
     -- ONE cursor hook for every view: repaint the selection (the row tint that replaces `cursorline`) and let
     -- the preview follow the cursor. Central here — not per panel module — so every entity list behaves the
     -- same and a module cannot forget it.
-    local rows_group = api.nvim_create_augroup("lvim_space_rows_" .. buf, { clear = true })
+    rows_group = api.nvim_create_augroup("lvim_space_rows_" .. buf, { clear = true })
     panel.augroup = rows_group
     api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
         buffer = buf,
@@ -744,7 +766,10 @@ end
 ---surface stays put until an explicit `close_all` (every flow that leaves the panel calls it directly).
 M.init = function()
     state.disable_auto_close = false
-    lvim_cursor.setup({
+    -- Self-register our panel filetype via `register` (the CLAUDE.md canon): it EXTENDS the shared cursor
+    -- registry (deduped) without rebuilding the shared autocmds, unlike `setup` which a plugin should not
+    -- drive.
+    lvim_cursor.register({
         panel_ft = {
             config.ui.filetype or "lvim-space",
         },

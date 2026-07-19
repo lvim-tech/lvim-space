@@ -87,11 +87,20 @@ local function get_next_tab_name(tabs_list)
 end
 
 local function open_empty_window()
+    local ui = require("lvim-space.ui")
     local keep = vim.api.nvim_get_current_win()
     local wins = vim.api.nvim_list_wins()
     if #wins > 1 then
         for _, win in ipairs(wins) do
-            if win ~= keep and vim.api.nvim_win_is_valid(win) then
+            -- Keep the current window AND any plugin-owned or FLOATING windows (docked msgarea zones,
+            -- lvim-term/hud floats, an open lvim-space panel) — matching the session engine's
+            -- force_single_window, which force-closing every other window would otherwise tear down.
+            if
+                win ~= keep
+                and vim.api.nvim_win_is_valid(win)
+                and not ui.is_plugin_window(win)
+                and vim.api.nvim_win_get_config(win).relative == ""
+            then
                 vim.api.nvim_win_close(win, true)
             end
         end
@@ -177,6 +186,12 @@ local function tab_new(tab_name)
         vim.json.encode({ tab_ids = state.tab_ids, tab_active = newid, updated_at = os.time() }),
         ws_id
     )
+    -- Persist the OUTGOING tab's live layout/cursor BEFORE repointing active: the debounced autosave may not
+    -- have fired since the last change, and moving away without a forced save loses it (the panel switch_tab
+    -- path force-saves for exactly this reason).
+    if state.tab_active then
+        get_session().save_current_state(state.tab_active, true)
+    end
     state.tab_active = newid
     notify.info("Created new tab: " .. tab_name)
     open_empty_window()
@@ -207,8 +222,15 @@ local function tab_close(tab_id)
     end
     notify.info("Tab deleted: " .. tostring(tab_id))
     local remaining = data.find_tabs and data.find_tabs(state.workspace_id) or {}
-    if #remaining > 0 then
-        -- switch_tab persists the pruned { tab_ids, tab_active } for us.
+    if tostring(tab_id) ~= tostring(state.tab_active) then
+        -- Closed a NON-active tab: keep the user on the tab they are working in (tearing their
+        -- windows/buffers down to switch to remaining[1] would be a surprise). Just persist the pruned list.
+        data.update_workspace_tabs(
+            vim.json.encode({ tab_ids = state.tab_ids or {}, tab_active = state.tab_active, updated_at = os.time() }),
+            state.workspace_id
+        )
+    elseif #remaining > 0 then
+        -- Closed the ACTIVE tab: move to another one. switch_tab persists the pruned { tab_ids, tab_active }.
         session.switch_tab(remaining[1].id)
     else
         -- Last tab closed: clear the active pointer and persist, so nothing keeps writing to the dead id.

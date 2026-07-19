@@ -250,7 +250,11 @@ local function format_line(ent, type_name, active, custom_formatter)
     else
         display_text = ent.name or ent.path or "???"
     end
-    display_text = display_text:gsub("^[>%s▶󰋜󰉋󰏘󰉌󰓩󰎃󰈙󰈚]*", "")
+    -- Strip only a legacy leading ASCII marker (`>`) / whitespace. The old pattern also listed multibyte icon
+    -- glyphs in this byte character class — Lua patterns match BYTES, so a name/path whose first character
+    -- shared any of those glyphs' bytes got partially stripped into mojibake. Entity names no longer carry a
+    -- baked-in icon (the rows renderer prepends the canonical one), so those glyphs are gone from the class.
+    display_text = display_text:gsub("^[>%s]*", "")
     display_text = vim.trim(display_text)
     -- THE one row renderer (`ui.rows`) builds every list row in every view — the picker's language: a filetype
     -- devicon for a file, the entity glyph otherwise, 1 space of air at both ends. It also hands back the icon's
@@ -765,6 +769,37 @@ M.set_action_footer = function(ctx, handlers)
     })
 end
 
+---The EMPTY/ERROR panel's footer as the SAME navigable button bar the populated panels use — reusing the
+---pre-defined panel-nav buttons (projects / workspaces / tabs) through `set_action_footer` instead of the old
+---plain-text info line, so an empty panel (no active project / workspace / tab) reads identically to a real
+---one. Which parent buttons appear MIRRORS `setup_error_navigation_keymaps` exactly (a button exists iff its
+---hotkey is bound). There are no records, so `is_empty` drops the entity actions and only the nav (+ help)
+---chips show — the empty version of the normal footer. `Esc`/`q` close, as everywhere.
+---@param error_type_key string  PROJECT_NOT_ACTIVE / WORKSPACE_NOT_ACTIVE / TAB_NOT_ACTIVE
+M.set_error_footer = function(error_type_key)
+    local g = (config.keymappings and config.keymappings.global) or {}
+    local panels = {}
+    local function nav(key, name, mod)
+        panels[#panels + 1] = {
+            key = key,
+            name = name,
+            run = function()
+                require("lvim-space.ui." .. mod).init()
+            end,
+        }
+    end
+    nav(g.projects or "p", "projects", "projects")
+    if (error_type_key == "WORKSPACE_NOT_ACTIVE" or error_type_key == "TAB_NOT_ACTIVE") and state.project_id then
+        nav(g.workspaces or "w", "workspaces", "workspaces")
+    end
+    if error_type_key == "TAB_NOT_ACTIVE" and state.project_id and state.workspace_id then
+        nav(g.tabs or "t", "tabs", "tabs")
+    end
+    -- set_action_footer reads only `ctx.is_empty`, so a minimal ctx is intentional (no records to list).
+    ---@diagnostic disable-next-line: missing-fields
+    M.set_action_footer({ is_empty = true }, { panels = panels })
+end
+
 ---Open the main panel displaying a single formatted error message line.
 ---@param type_name string  Entity type key used to derive the panel title
 ---@param error_key string|nil  Lang key (or raw string) for the error message
@@ -1003,33 +1038,6 @@ local function setup_error_navigation_keymaps(error_context, error_type_key)
     end
 end
 
----Return the localized info-bar string that guides the user out of an error state.
----The message adapts based on how much of the project/workspace/tab hierarchy is established
----in the global state.
----@param error_type_key string  Error category key (e.g. "PROJECT_NOT_ACTIVE")
----@return string  Localized instruction string for the actions bar
-local function get_error_info_line(error_type_key)
-    local lang_keys = state.lang or {}
-    if error_type_key == "PROJECT_NOT_ACTIVE" then
-        return lang_keys.INFO_LINE_PROJECT_ERROR or "Project not active. Press 'p' for projects."
-    elseif error_type_key == "WORKSPACE_NOT_ACTIVE" then
-        if state.project_id then
-            return lang_keys.INFO_LINE_WORKSPACE_ERROR or "Workspace not active. Press 'w' for workspaces."
-        else
-            return lang_keys.INFO_LINE_PROJECT_ERROR or "Project not active. Press 'p' for projects."
-        end
-    elseif error_type_key == "TAB_NOT_ACTIVE" then
-        if state.project_id and state.workspace_id then
-            return lang_keys.INFO_LINE_TAB_ERROR or "Tab not active. Press 't' for tabs."
-        elseif state.project_id then
-            return lang_keys.INFO_LINE_WORKSPACE_ERROR or "Workspace not active. Press 'w' for workspaces."
-        else
-            return lang_keys.INFO_LINE_PROJECT_ERROR or "Project not active. Press 'p' for projects."
-        end
-    end
-    return lang_keys.INFO_LINE_GENERIC_QUIT or "Press 'q' to quit."
-end
-
 ---Attach error-navigation keymaps to the error panel's window/buffer and open the actions bar with
 ---contextual guidance for the given error state.
 ---@param error_type_key string  Error category key (e.g. "PROJECT_NOT_ACTIVE", "TAB_NOT_ACTIVE")
@@ -1045,7 +1053,7 @@ M.setup_error_navigation = function(error_type_key, last_real_win_handle, error_
         last_real_win = last_real_win_handle,
     }
     setup_error_navigation_keymaps(error_context_data, error_type_key)
-    ui.open_actions(get_error_info_line(error_type_key))
+    M.set_error_footer(error_type_key)
 end
 
 return M

@@ -132,6 +132,7 @@ return {
     FILE_NAME_LEN = "The file name cannot be empty.",
     FILE_NAME_EXIST = "A file with this name already exists in this tab.",
     FILE_PATH_EMPTY = "File path cannot be empty.",
+    FILE_PATH_LEN = "The file path is invalid (empty or too short).",
     FILE_PATH_EXIST = "The file path cannot match the path of another file in this tab",
     FILE_DIR_ADD_NOT_ALLOWED = "You cannot add a directory",
     FILE_ADD_FAILED = "Failed to add file",

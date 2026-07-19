@@ -265,17 +265,18 @@ M.add_workspace = function(workspace_name, workspace_tabs_json, project_id)
     then
         return "ADD_FAILED"
     end
+    -- Insert INACTIVE and do NOT deactivate the current workspace: the user stays in the workspace they are
+    -- in (state.workspace_id), so its DB active flag must keep pointing there. Activating the freshly-added
+    -- EMPTY workspace here made a crash/kill resume into it instead of the one in use (VimLeavePre normally
+    -- papered over the divergence). Activation belongs to the switch flow (space_load_session) only.
     local next_order = get_next_sort_order("workspaces", { project_id = project_id })
-    if M.set_workspaces_inactive(project_id) then
-        return db.insert("workspaces", {
-            project_id = project_id,
-            name = workspace_name,
-            tabs = workspace_tabs_json,
-            active = true,
-            sort_order = next_order,
-        })
-    end
-    return false
+    return db.insert("workspaces", {
+        project_id = project_id,
+        name = workspace_name,
+        tabs = workspace_tabs_json,
+        active = false,
+        sort_order = next_order,
+    })
 end
 
 ---Rename an existing workspace.

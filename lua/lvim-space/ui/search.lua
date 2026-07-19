@@ -57,9 +57,8 @@ local function select_file(path)
     else
         pcall(vim.cmd, "edit " .. vim.fn.fnameescape(path))
     end
-    if session.save_window_context then
-        session.save_window_context(state.tab_active)
-    end
+    -- (the former `session.save_window_context` guard was dead — the core session module exports no such
+    -- function; the real-window selection above already covers the "load into the right window" intent.)
 
     -- Record the file in the active tab (persisted) when it is not already there.
     local tab = data.find_tab_by_id(state.tab_active, state.workspace_id)
@@ -147,6 +146,12 @@ M.init = function(opts)
     local picker_opts = {
         title = state.lang.SEARCH or "Search",
         layout = config.ui.mode,
+        -- ONE-SHOT: our on_confirm/on_cancel step BACK to the launching panel, so the finder MUST close on select.
+        -- `area` globally sets `auto_hide = false` (a finder stays open on file-open and restarts in place) — that
+        -- fights lvim-space, which reopens its panel in the same zone right after. Force `auto_hide = true` for THIS
+        -- open (a documented per-call geometry override) so the fzf backend takes the normal close path, not
+        -- keep-open; the Lua backend already closes before the callback. No effect off area/bottom.
+        force = { area = { auto_hide = true }, bottom = { auto_hide = true } },
         on_confirm = function(item)
             local abs = item_abs(item)
             if abs then

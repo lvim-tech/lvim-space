@@ -10,6 +10,16 @@ local ui = require("lvim-space.ui")
 local notify = require("lvim-space.api.notify")
 local metrics = require("lvim-space.core.metrics")
 
+local ok_dim, dim = pcall(require, "lvim-utils.dim")
+--- Hold (true) / release (false) the lvim-utils backdrop veil lift across a load, so the editor never flashes
+--- bright while the restore transiently focuses it. Safe no-op if lvim-utils is unavailable or predates the API.
+---@param on boolean
+local function dim_hold(on)
+    if ok_dim and dim and dim.hold_backdrop then
+        dim.hold_backdrop(on)
+    end
+end
+
 local M = {}
 
 ---@class SessionConfig
@@ -442,8 +452,14 @@ M.save_current_state = function(tab_id, force)
         return false
     end
     -- Dirty check: an idle cursor re-collects byte-identical data; skip the DB write when nothing changed
-    -- since the last successful save of this tab (the SELECT/UPDATE + JSON round-trip is the hot cost).
-    if cache.last_saved_json[t] == js then
+    -- since the last successful save of this tab (the SELECT/UPDATE + JSON round-trip is the hot cost). The
+    -- compare must be timestamp-NEUTRAL: `timestamp` is stamped fresh on every collect, so comparing the raw
+    -- json would never match and every idle save would still hit the DB. Compare with `timestamp` zeroed.
+    local real_ts = sd.timestamp
+    sd.timestamp = 0
+    local ok_cmp, cmp = pcall(vim.json.encode, sd)
+    sd.timestamp = real_ts
+    if ok_cmp and cache.last_saved_json[t] == cmp then
         return true
     end
     local tab_entry = data.find_tab_by_id(t, state.workspace_id)
@@ -453,7 +469,7 @@ M.save_current_state = function(tab_id, force)
     if not data.update_tab_data(t, js, state.workspace_id) then
         return false
     end
-    cache.last_saved_json[t] = js
+    cache.last_saved_json[t] = ok_cmp and cmp or js
     if metrics.stats then
         metrics.stats.operations.total_saves = metrics.stats.operations.total_saves + 1
     end
@@ -537,7 +553,10 @@ local function cleanup_old_session_buffers(keep)
             normal_windows = normal_windows + 1
         end
     end
-    local buffers_to_delete = normal_windows > 1 and del or {}
+    -- base is always {}: when normal_windows > 1 the else-branch below overwrites with `del` wholesale, and
+    -- the single-window branch appends into this table — so the old `> 1 and del or {}` ternary's `del` arm
+    -- was dead.
+    local buffers_to_delete = {}
     if normal_windows == 1 and #del > 0 then
         for i = 1, #del - 1 do
             table.insert(buffers_to_delete, del[i])
@@ -692,10 +711,18 @@ end
 ---       fragile one-shot BufEnter/WinEnter trap that never fires when the restore produces no window event.
 ---@return boolean success True when restoration was initiated (or skipped for a valid reason).
 M.restore_state = function(tab_id, force, on_done)
+    -- HOLD the backdrop for the whole restore: the layout rebuild runs in a `vim.schedule`, which focuses the
+    -- editor an EARLIER tick than the panel reopens in on_done — without the hold the focus-aware veil lifts
+    -- there and the editor flashes bright for a frame (the load flicker). The hold keeps it dimmed until on_done
+    -- brings the panel back, then releases. Balanced on EVERY return path via `finish`.
+    dim_hold(true)
     local function finish()
+        -- pcall on_done so a fault inside it can NEVER strand the hold on (which would leave the veil unable to
+        -- lift for the rest of the session). The hold is always balanced against the `dim_hold(true)` above.
         if on_done then
-            on_done()
+            pcall(on_done)
         end
+        dim_hold(false)
     end
     if not tab_id then
         finish()
@@ -725,6 +752,10 @@ M.restore_state = function(tab_id, force, on_done)
     vim.schedule(function()
         if cache.current_tab_id ~= tab_id then
             cache.is_restoring = false
+            -- Superseded by a newer restore, but `on_done` is THIS caller's completion signal (not the
+            -- winner's) and the contract is "fires exactly once on every path" — callers restore
+            -- state.disable_auto_close inside it, so skipping it strands that flag on forever.
+            finish()
             return
         end
         -- Capture `hidden` OUTSIDE the pcall and restore it unconditionally after, so an error mid-restore
@@ -783,20 +814,31 @@ M.restore_state = function(tab_id, force, on_done)
             end
         end)
         vim.o.hidden = saved_hidden
-        vim.cmd("redraw!")
         cache.is_restoring = false
         if metrics.stats then
             metrics.stats.session.session_restores = metrics.stats.session.session_restores + 1
             metrics.stats.session.files_opened = metrics.stats.session.files_opened + #sd.buffers
         end
-        finish()
+        -- Repaint ONCE, and only AFTER the caller's on_done. A `switch` consumer reopens its panel INSIDE
+        -- on_done, in THIS same scheduled tick; holding the screen across the layout restore AND that reopen
+        -- coalesces them into a single clean frame. The old forced `redraw!` fired BEFORE on_done, painting the
+        -- bright editor with no panel first, then the panel popped back dimmed a frame later — the flicker on
+        -- every tab/workspace/project load (panel, footer bar, and backdrop all). `lazyredraw` also swallows the
+        -- reopened panel's own intermediate paints, so exactly one final frame reaches the screen.
+        local lz = vim.o.lazyredraw
+        vim.o.lazyredraw = true
+        pcall(finish)
+        vim.o.lazyredraw = lz
+        vim.cmd("redraw!")
     end)
     return true
 end
 
 --- Clear the current session: close extra windows, open a blank buffer, and
 --- purge all internal caches. Used before loading a different tab's session.
-M.clear_current_state = function()
+---@param skip_redraw? boolean Skip the forced `redraw!` — pass true when a restore follows in the same
+--- operation (switch_tab) so the blanked editor is never painted as an intermediate bright frame.
+M.clear_current_state = function(skip_redraw)
     cache.is_restoring = true
     local tw = force_single_window()
     if tw and vim.api.nvim_win_is_valid(tw) and not ui.is_plugin_window(tw) then
@@ -804,7 +846,9 @@ M.clear_current_state = function()
         vim.cmd("enew")
         cleanup_old_session_buffers({})
     end
-    vim.cmd("redraw!")
+    if not skip_redraw then
+        vim.cmd("redraw!")
+    end
     cleanup_buffer_caches()
     cache.is_restoring = false
 end
@@ -812,14 +856,24 @@ end
 --- Save the current tab session, switch active tab state, and restore the target tab.
 --- Falls back to the previous tab on failure.
 ---@param tab_id integer The tab ID to switch to.
+---@param on_done? fun() Fired inside the restore's coalescing tick once the target layout is up — a `switch`
+--- consumer reopens its panel here so the layout + panel paint as one frame (no load flicker). Runs on every
+--- non-early path (mirrors restore_state's contract), so callers restore transient flags inside it.
 ---@return boolean success True when the switch completed successfully.
-M.switch_tab = function(tab_id)
+M.switch_tab = function(tab_id, on_done)
     if not tab_id then
         return false
     end
     if tostring(state.tab_active) == tostring(tab_id) then
+        if on_done then
+            on_done()
+        end
         return true
     end
+    -- Hold the veil from BEFORE the window teardown/clear (which focuses the editor) until restore_state's own
+    -- hold takes over, so no lift fires in the gap. restore_state releases its hold in on_done; this one is
+    -- released as soon as that async hold is in place (right after the call).
+    dim_hold(true)
     for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
         if
             vim.api.nvim_win_is_valid(w)
@@ -836,16 +890,20 @@ M.switch_tab = function(tab_id)
     state.tab_active = tab_id
     local ws = { tab_ids = state.tab_ids, tab_active = state.tab_active }
     data.update_workspace_tabs(vim.json.encode(ws), state.workspace_id)
-    M.clear_current_state()
-    if not M.restore_state(tab_id, true) then
+    -- Skip the clear's own `redraw!`: restore_state follows in the SAME operation and its coalesced tick paints
+    -- the final frame — an intermediate forced paint of the blanked editor here was a bright flash mid-switch.
+    M.clear_current_state(true)
+    if not M.restore_state(tab_id, true, on_done) then
         state.tab_active = old
         ws.tab_active = old
         data.update_workspace_tabs(vim.json.encode(ws), state.workspace_id)
         if old then
             M.restore_state(old, true)
         end
+        dim_hold(false)
         return false
     end
+    dim_hold(false)
     if metrics.stats then
         metrics.stats.session.tab_switches = metrics.stats.session.tab_switches + 1
     end

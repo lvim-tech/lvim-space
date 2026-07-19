@@ -344,15 +344,17 @@ local function setup_cursor_tracking(ctx)
     })
 end
 
---- Refreshes the file list in the panel in-place without re-creating the window.
---- Falls back to `M.init` when the panel window or buffer becomes invalid.
+--- Refreshes the file list in the panel in-place without re-creating the window. NO-OP when no live panel
+--- exists: API flows (delete/switch a file) schedule a refresh, and reopening the panel as a side effect of
+--- those would pop it open unexpectedly. The interactive entry points that genuinely want a (re)open call
+--- `M.init` themselves.
 M.refresh = function()
     if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
-        return M.init()
+        return
     end
 
     if not cache.ctx.buf or not vim.api.nvim_buf_is_valid(cache.ctx.buf) then
-        return M.init()
+        return
     end
 
     save_cursor_position()
@@ -1003,13 +1005,15 @@ M.remove_current_buffer_from_tab = function()
     end
 end
 
---- Returns the cached file entry for the currently active file.
----@return table|nil file_entry The file entry from `cache.files_from_db`, or nil when no file is active.
+--- Returns the file entry for the currently active file, read from the STORE (not the panel render cache,
+--- which is only populated while the panel is open) so it is correct when the panel was never opened.
+---@return table|nil file_entry The active file's entry, or nil when no file is active / not found.
 M.get_current_file_info = function()
     if not state.file_active or not state.workspace_id or not state.tab_active then
         return nil
     end
-    return get_file_by_id(state.file_active, cache.files_from_db)
+    local files = data.find_files(state.tab_active, state.workspace_id) or {}
+    return get_file_by_id(state.file_active, files)
 end
 
 --- Switches to a file by its absolute path, adding it to the tab first if necessary.
@@ -1020,7 +1024,10 @@ M.switch_to_file_by_path = function(file_path)
         return false
     end
     local normalized_path_to_switch = vim.fn.fnamemodify(file_path, ":p")
-    for _, file_entry in ipairs(cache.files_from_db) do
+    -- Resolve membership from the STORE, not the panel render cache (cache.files_from_db is only populated
+    -- while the panel is open) — so a switch works when the panel was never opened and the file is already in
+    -- the tab (otherwise add_file_db returns EXIST_NAME and the switch silently fails).
+    for _, file_entry in ipairs(data.find_files(state.tab_active, state.workspace_id) or {}) do
         local candidate_path = file_entry.id
         if candidate_path and vim.fn.fnamemodify(candidate_path, ":p") == normalized_path_to_switch then
             state.file_active = candidate_path
@@ -1031,7 +1038,7 @@ M.switch_to_file_by_path = function(file_path)
     local add_result_switch = add_file_db(normalized_path_to_switch, state.workspace_id, state.tab_active)
     if type(add_result_switch) == "number" then
         M.refresh()
-        for _, file_entry_after_add in ipairs(cache.files_from_db) do
+        for _, file_entry_after_add in ipairs(data.find_files(state.tab_active, state.workspace_id) or {}) do
             local candidate_path_after_add = file_entry_after_add.id
             if
                 candidate_path_after_add
