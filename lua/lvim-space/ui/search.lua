@@ -152,6 +152,12 @@ M.init = function(opts)
         -- open (a documented per-call geometry override) so the fzf backend takes the normal close path, not
         -- keep-open; the Lua backend already closes before the callback. No effect off area/bottom.
         force = { area = { auto_hide = true }, bottom = { auto_hide = true } },
+        -- Our on_confirm/on_cancel/<BS> re-open the launching panel in the SAME area zone. Ask the finder to run
+        -- that callback BEFORE closing itself: the panel's `surface.open` then evicts the finder in the background
+        -- (after the panel's windows already hold focus), so closing the finder steals no focus to the editor —
+        -- no inactive→active→inactive flip of the editor's focus-dependent highlights (the last "backdrop tremble"
+        -- on the way back). The finder's own close afterwards is a no-op (already evicted).
+        replace_before_close = true,
         on_confirm = function(item)
             local abs = item_abs(item)
             if abs then
@@ -194,12 +200,14 @@ M.init = function(opts)
                 name = "back",
                 mode = "n",
                 run = function(_, close)
-                    -- close + re-open SYNCHRONOUSLY: the picker's `fire` wraps this in a msgarea handoff, so the
-                    -- two coalesce into one zone reflow (no flicker stepping back to the panel).
-                    close()
+                    -- Re-open the panel FIRST, then close the finder: opening the panel evicts this finder in the
+                    -- background (via surface.open's replace-before-close), so the finder window closes without
+                    -- stealing focus to the editor (no tremble). The finder's `close()` after is idempotent. Both
+                    -- run inside the picker's zone handoff → one coalesced reflow.
                     if opts.on_back then
                         opts.on_back()
                     end
+                    close()
                 end,
             },
         },
