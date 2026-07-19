@@ -406,6 +406,14 @@ M.init_entity_list = function(
                 return nil
             end,
         }
+        -- The INITIAL selection's file, resolved HERE (the panel's cursor isn't set until it opens, so `item()`
+        -- can't be used pre-open) so open_panel can pre-size the preview and reserve its full height on the first
+        -- pass — no async grow, no zone bounce on the way back. A file entity's id IS its absolute path.
+        local init_ent = entities_list[actual_cursor_line]
+        local init_path = init_ent and (init_ent.id or init_ent.path or init_ent.filePath)
+        if type(init_path) == "string" and init_path ~= "" then
+            preview_spec.initial_path = init_path
+        end
     end
 
     -- The header counter shows the REAL entity total (0 on the empty-state placeholder row), not #display_lines.

@@ -144,6 +144,8 @@ end
 ---@field width number|nil  Its share of the editor width (side = left/right; default 0.5)
 ---@field numbers boolean|nil  Line numbers in the preview (default true)
 ---@field empty string|nil  The "nothing to preview" placeholder text
+---@field initial_path string|nil  The INITIAL selection's file path — pre-sizes the preview so the panel
+--- reserves its full height on the first pass (no async grow / zone bounce). Resolved by the caller pre-open.
 
 ---@class LvimSpacePanelSpec
 ---@field title string|nil  Panel title (float border-title / docked header bar)
@@ -305,6 +307,17 @@ local function open_panel(spec)
         -- such wiring — and a panel preview should not be editable anyway.
         local shown -- the path currently rendered (re-read only when the selection changes)
         local shown_h = 1 -- its line count — the preview's natural height (see `size`)
+        -- PRE-SIZE the preview from the INITIAL selection BEFORE the surface reserves the zone: else the panel
+        -- reserves list-only height, then the first `update` reads the file and RELAYOUTS to grow — bouncing the
+        -- zone (a `cmdheight` shudder of the editor above) on the way back from search. Read only the line count
+        -- here (leave `shown` nil so the first `update` still renders the file — but with `shown_h` already
+        -- correct, so it does NOT relayout). The picker sizes its preview synchronously the same way.
+        if spec.preview.initial_path then
+            local ok_pre, pre_lines = pcall(picker_source.read_preview, spec.preview.initial_path, preview_lines())
+            if ok_pre and type(pre_lines) == "table" and #pre_lines > 0 then
+                shown_h = #pre_lines
+            end
+        end
         blocks[#blocks + 1] = {
             id = "preview",
             -- When the stack does not fit the cap, the PREVIEW is the panel that gives up rows — the chassis'
