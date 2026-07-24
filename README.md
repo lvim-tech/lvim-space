@@ -22,36 +22,6 @@ Install and manage it from the LVIM package manager — open the **Plugins** tab
 
 lvim-installer installs plugins through Neovim's built-in `vim.pack`, so no external plugin manager is needed.
 
-### lazy.nvim
-
-```lua
-return {
-    "lvim-tech/lvim-space",
-    dependencies = {
-        "kkharji/sqlite.lua",
-        "lvim-tech/lvim-utils",
-    },
-    config = function()
-        require("lvim-space").setup({})
-    end,
-}
-```
-
-### packer.nvim
-
-```lua
-use({
-    "lvim-tech/lvim-space",
-    requires = {
-        "kkharji/sqlite.lua",
-        "lvim-tech/lvim-utils",
-    },
-    config = function()
-        require("lvim-space").setup({})
-    end,
-})
-```
-
 ### Native (vim.pack)
 
 ```lua
