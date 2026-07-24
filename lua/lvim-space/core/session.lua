@@ -159,6 +159,49 @@ local function is_valid_file_path(file_path)
     return is_valid
 end
 
+--- Self-repair: drop every tab entry whose file no longer exists on disk and PERSIST the cleaned tab
+--- data. A tab's file list has a single source of truth — `sd.buffers` (|data.find_files| derives from
+--- it) — so pruning there is the whole fix; `sd.windows[*].file_path` layout refs to the same vanished
+--- paths are cleared too, or they would be written straight back on the next save and the entry would
+--- resurrect. Called on restore, BEFORE any buffer is created, so a deleted/renamed file silently leaves
+--- the database instead of warning on every project load.
+---@param sd table       Decoded tab session data (mutated in place).
+---@param tab_id any     Tab whose data is rewritten when anything was removed.
+---@return integer removed  Count of pruned entries.
+local function prune_missing_files(sd, tab_id)
+    if type(sd) ~= "table" or type(sd.buffers) ~= "table" then
+        return 0
+    end
+    local kept, gone, removed = {}, {}, 0
+    for _, bi in ipairs(sd.buffers) do
+        local p = type(bi) == "table" and bi.filePath or nil
+        if type(p) == "string" and p ~= "" and is_valid_file_path(p) then
+            kept[#kept + 1] = bi
+        else
+            removed = removed + 1
+            if type(p) == "string" then
+                gone[p] = true
+            end
+        end
+    end
+    if removed == 0 then
+        return 0
+    end
+    sd.buffers = kept
+    if type(sd.windows) == "table" then
+        for _, wi in pairs(sd.windows) do
+            if type(wi) == "table" and type(wi.file_path) == "string" and gone[wi.file_path] then
+                wi.file_path = nil
+            end
+        end
+    end
+    local ok, js = pcall(vim.json.encode, sd)
+    if ok and js and tab_id and state.workspace_id then
+        data.update_tab_data(tab_id, js, state.workspace_id)
+    end
+    return removed
+end
+
 --- Return a valid buffer for `file_path`, creating one with `bufadd` if needed.
 --- Caches the result in `cache.buffer_cache`. Returns nil on any error.
 ---@param file_path string Absolute path to the file.
@@ -742,6 +785,15 @@ M.restore_state = function(tab_id, force, on_done)
         return true
     end
     local ok, sd = pcall(vim.json.decode, te.data)
+    -- Repair BEFORE the emptiness guard below: entries whose file vanished (deleted / renamed / moved) are
+    -- pruned from the database instead of warning once per file on every project load. A tab left with no
+    -- surviving file then falls through the same `#sd.buffers == 0` path as a genuinely empty one.
+    if ok and sd then
+        local pruned = prune_missing_files(sd, tab_id)
+        if pruned > 0 then
+            notify.info(("Removed %d missing file%s from this tab"):format(pruned, pruned == 1 and "" or "s"))
+        end
+    end
     if not ok or not sd or not sd.buffers or #sd.buffers == 0 then
         M.clear_current_state()
         finish()
