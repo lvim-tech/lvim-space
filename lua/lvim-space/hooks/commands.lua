@@ -1,5 +1,8 @@
 -- lvim-space.hooks.commands: the single :LvimSpace dispatcher with hierarchical subcommands — every former
--- :LvimSpace* command is routed through `:LvimSpace <sub> [args]`. Panels/session/data are pulled in via lazy
+-- :LvimSpace* command is routed through `:LvimSpace <sub> [args]`. Any invocation may additionally carry a
+-- LAYOUT token (`area` | `bottom` | `float`) anywhere in its arguments: it is stripped by `take_layout`,
+-- applies to whatever the command opens, and STICKS for the rest of the session (see `ui.set_mode`), so
+-- `:LvimSpace tabs float` and then a plain `:LvimSpace` both open floating. Panels/session/data are pulled in via lazy
 -- loaders (not top-level requires) on purpose: the command layer registers at setup() time, before those
 -- heavier subsystems are needed, so deferring their load keeps startup cheap and avoids load-order cycles.
 --
@@ -23,6 +26,34 @@ end
 ---@return table
 local function get_data()
     return require("lvim-space.api.data")
+end
+
+-- ---------------------------------------------------------------------------
+-- Layout token (`:LvimSpace <sub> [area|bottom|float]`)
+-- ---------------------------------------------------------------------------
+
+---The three dock layouts the panel can open in, as command tokens.
+---@type table<string, boolean>
+local LAYOUTS = { area = true, bottom = true, float = true }
+
+---Pull a LAYOUT token out of a command's arguments and make it the session's panel layout.
+---
+---The token is recognised ANYWHERE in the args (`:LvimSpace files float`, `:LvimSpace float`,
+---`:LvimSpace tab new float`) and removed before the rest is dispatched, so no subcommand has to know
+---about it. It is STICKY: the override lives on the runtime state for the rest of the session (the panel
+---keeps opening there until another token changes it), and a fresh session falls back to `config.ui.mode`.
+---@param args string[]  the raw argument tokens
+---@return string[] rest  the arguments with the layout token removed
+local function take_layout(args)
+    local rest = {}
+    for _, tok in ipairs(args) do
+        if LAYOUTS[tok] then
+            require("lvim-space.ui").set_mode(tok)
+        elseif tok ~= "" then
+            rest[#rest + 1] = tok
+        end
+    end
+    return rest
 end
 
 -- ---------------------------------------------------------------------------
@@ -472,7 +503,8 @@ end
 --- Register the single :LvimSpace dispatcher command and the main keymap.
 function M.init()
     vim.api.nvim_create_user_command("LvimSpace", function(opts)
-        local parts = vim.split(vim.trim(opts.args or ""), "%s+", { plain = false })
+        -- The LAYOUT token is stripped first, wherever it sits, and applies to whatever opens next.
+        local parts = take_layout(vim.split(vim.trim(opts.args or ""), "%s+", { plain = false }))
         local sub = parts[1] or ""
 
         -- No subcommand → open panel (context-aware)
@@ -496,9 +528,7 @@ function M.init()
         -- Remove the subcommand name; pass remaining tokens to the handler
         local rest = {}
         for i = 2, #parts do
-            if parts[i] ~= "" then
-                table.insert(rest, parts[i])
-            end
+            table.insert(rest, parts[i])
         end
         def.impl(rest)
     end, {
@@ -520,19 +550,28 @@ function M.init()
                 for _, p in ipairs({ "projects", "workspaces", "tabs", "files", "search" }) do
                     table.insert(top, p)
                 end
+                -- …and the layout tokens, which are valid on their own (`:LvimSpace float`) as well as
+                -- after any subcommand.
+                for layout in pairs(LAYOUTS) do
+                    table.insert(top, layout)
+                end
                 table.sort(top)
                 return filter_prefix(lead, top)
             end
 
-            -- Completing a sub-argument (e.g. tab op, open panel, metrics live)
+            -- Completing a sub-argument (e.g. tab op, open panel, metrics live) — plus the layout token,
+            -- which is accepted after every subcommand.
             local sub = parts[2]
             local def = COMMANDS[sub]
+            local items = {}
             if def and def.complete then
-                local items = def.complete()
-                return filter_prefix(lead, items)
+                items = vim.deepcopy(def.complete())
             end
-
-            return {}
+            for layout in pairs(LAYOUTS) do
+                table.insert(items, layout)
+            end
+            table.sort(items)
+            return filter_prefix(lead, items)
         end,
         desc = "LVIM Space – open panel or run subcommand",
     })

@@ -325,23 +325,13 @@ local function save_cursor_position()
     end
 end
 
---- Registers a CursorMoved autocmd on the panel buffer to keep `cache.last_cursor_position` up to date.
+--- Tracks the panel cursor into `cache.last_cursor_position` through the SHARED view tracker
+--- (`common.track_cursor` — one augroup for all four views, since they share the list buffer).
 ---@param ctx table Panel context with `win` and `buf` fields.
 local function setup_cursor_tracking(ctx)
-    if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
-        return
-    end
-
-    vim.api.nvim_create_autocmd("CursorMoved", {
-        buffer = ctx.buf,
-        callback = function()
-            if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-                local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
-                cache.last_cursor_position = cursor_pos[1]
-            end
-        end,
-        group = vim.api.nvim_create_augroup("LvimSpaceFilesCursor", { clear = true }),
-    })
+    common.track_cursor(ctx, function(line)
+        cache.last_cursor_position = line
+    end)
 end
 
 --- Refreshes the file list in the panel in-place without re-creating the window. NO-OP when no live panel
@@ -496,24 +486,22 @@ function M.handle_split_horizontal()
     M._split_file_horizontal()
 end
 
---- Closes all plugin panels and opens the projects panel.
+--- Switches this panel to the PROJECTS view — refreshed in place (see `ui.open_main`), no teardown.
 function M.navigate_to_projects()
-    ui.close_all()
     require("lvim-space.ui.projects").init()
 end
 
---- Closes all plugin panels and opens the workspaces panel.
+--- Switches this panel to the WORKSPACES view — refreshed in place (see `ui.open_main`), no teardown.
 --- Shows a notification when no project is active.
 function M.navigate_to_workspaces()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE or "No active project. Please select or add a project first.")
         return
     end
-    ui.close_all()
     require("lvim-space.ui.workspaces").init()
 end
 
---- Closes all plugin panels and opens the tabs panel.
+--- Switches this panel to the TABS view — refreshed in place (see `ui.open_main`), no teardown.
 --- Shows a notification when no project or workspace is active.
 function M.navigate_to_tabs()
     if not state.project_id then
@@ -524,7 +512,6 @@ function M.navigate_to_tabs()
         notify.info(state.lang.WORKSPACE_NOT_ACTIVE or "No active workspace. Please select or add a workspace first.")
         return
     end
-    ui.close_all()
     require("lvim-space.ui.tabs").init()
 end
 

@@ -205,6 +205,32 @@ NOTE: in "area" mode without the msgarea zone enabled the panel grows
 'cmdheight' instead of floating above the messages — |lvim-space-health|
 warns about this. Use "float" or "bottom" if you do not run the msgarea zone.
 
+                                                     *lvim-space-layout-token*
+The mode is also selectable PER COMMAND: any :LvimSpace invocation may carry a
+LAYOUT TOKEN — `area`, `bottom` or `float` — anywhere in its arguments. It
+applies to whatever the command opens and STICKS for the rest of the session
+(the panel keeps opening there until another token changes it); a fresh
+session falls back to `ui.mode`. The resolution order is therefore:
+
+  per-command token  →  session override  →  `ui.mode`  →  "area"
+>lua
+  :LvimSpace tabs float    -- the tabs panel as a centred modal…
+  :LvimSpace               -- …and this one is a modal too (sticky)
+  :LvimSpace files area    -- back to the minibuffer dock
+<
+|lvim-space-health| reports the configured `ui.mode` AND the active session
+override.
+
+                                                     *lvim-space-view-switch*
+Switching between the four panels never rebuilds the window: projects,
+workspaces, tabs and files are four sets of CONTENT on one surface, so a
+switch swaps the rows, the title, the counter, the footer bar, the panel keys
+and (for the files view) the preview IN PLACE — same window, same buffer, one
+repaint. That is why a switch neither flickers nor flashes the hardware cursor
+(the panel never stops being the current window, so |lvim-utils.cursor| sees
+no transition). Only a first open, a closed panel, or a layout token that
+CHANGES the dock mode opens a new surface.
+
 ==============================================================================
 7. PANEL KEYMAPS                                          *lvim-space-keymaps*
 
@@ -282,6 +308,10 @@ subcommands and tab-completion.
   :LvimSpace open [panel]       Open a specific panel: projects | workspaces |
                                 tabs | files | search.
   :LvimSpace save               Manually save the full session state.
+
+  Any of the above also accepts a LAYOUT TOKEN — area | bottom | float — in
+  any argument position (`:LvimSpace tabs float`); it is session-sticky.
+  See |lvim-space-layout-token|.
 
   :LvimSpace tab                Print project/workspace/tab state to |messages|.
   :LvimSpace tab info           Same as above.

@@ -65,23 +65,13 @@ local function save_cursor_position()
     end
 end
 
---- Registers a CursorMoved autocmd that keeps `cache.last_cursor_position` up to date.
+--- Tracks the panel cursor into `cache.last_cursor_position` through the SHARED view tracker
+--- (`common.track_cursor` — one augroup for all four views, since they share the list buffer).
 ---@param ctx table Panel context with `win` and `buf` fields
 local function setup_cursor_tracking(ctx)
-    if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
-        return
-    end
-
-    vim.api.nvim_create_autocmd("CursorMoved", {
-        buffer = ctx.buf,
-        callback = function()
-            if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-                local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
-                cache.last_cursor_position = cursor_pos[1]
-            end
-        end,
-        group = vim.api.nvim_create_augroup("LvimSpaceProjectsCursor", { clear = true }),
-    })
+    common.track_cursor(ctx, function(line)
+        cache.last_cursor_position = line
+    end)
 end
 
 --- Re-renders the project list in the existing panel window without reopening it.
@@ -573,7 +563,7 @@ function M.handle_move_down(ctx)
     handle_move_operation(ctx, "down")
 end
 
---- Closes the current panel and opens the workspaces panel for the active project.
+--- Switches this panel to the WORKSPACES view of the active project — refreshed in place, no teardown.
 --- Shows an error state if no project is currently active.
 function M.navigate_to_workspaces()
     if not state.project_id then
@@ -582,11 +572,10 @@ function M.navigate_to_workspaces()
         common.setup_error_navigation("PROJECT_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
-    ui.close_all()
     require("lvim-space.ui.workspaces").init(nil, { select_workspace = true })
 end
 
---- Closes the current panel and opens the tabs panel for the active workspace.
+--- Switches this panel to the TABS view of the active workspace — refreshed in place, no teardown.
 --- Shows an error state if no project or workspace is currently active.
 function M.navigate_to_tabs()
     if not state.project_id then
@@ -601,11 +590,10 @@ function M.navigate_to_tabs()
         common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
-    ui.close_all()
     require("lvim-space.ui.tabs").init()
 end
 
---- Closes the current panel and opens the files panel for the active tab.
+--- Switches this panel to the FILES view of the active tab — refreshed in place, no teardown.
 --- Shows an error state if no project, workspace, or active tab exists.
 function M.navigate_to_files()
     if not state.project_id then
@@ -626,7 +614,6 @@ function M.navigate_to_files()
         common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
-    ui.close_all()
     require("lvim-space.ui.files").init()
 end
 

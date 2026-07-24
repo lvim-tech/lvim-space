@@ -208,6 +208,25 @@ Everything is routed through a single `:LvimSpace` command with subcommands and 
 | `:LvimSpace`              | Open context-aware panel (projects → workspaces → tabs → files)             |
 | `:LvimSpace open [panel]` | Open a specific panel (`projects`, `workspaces`, `tabs`, `files`, `search`) |
 
+#### Layout token
+
+Any `:LvimSpace` invocation may carry a **layout token** — `area`, `bottom` or `float` — anywhere in its
+arguments. It applies to whatever the command opens and **sticks for the rest of the session**, so the panel
+keeps opening there until another token changes it. A fresh session falls back to `ui.mode` (default `area`).
+
+```vim
+:LvimSpace tabs float     " open the tabs panel as a centred modal…
+:LvimSpace                " …and this one is a modal too (sticky)
+:LvimSpace files area     " back to the minibuffer dock
+```
+
+`:checkhealth lvim-space` reports both the configured `ui.mode` and the active session override.
+
+**Switching panels never rebuilds the surface.** Projects · workspaces · tabs · files are four sets of
+content on ONE panel: a switch swaps the content, the title, the footer bar, the keys and (for files) the
+preview in place — same window, same buffer, no flicker and no hardware-cursor flash. Only a first open or a
+layout token that CHANGES the dock mode opens a new surface.
+
 ### Session
 
 | Command           | Description                          |

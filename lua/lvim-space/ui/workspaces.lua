@@ -98,23 +98,13 @@ local function save_cursor_position()
     end
 end
 
---- Registers a CursorMoved autocmd that keeps `cache.last_cursor_position` up to date.
+--- Tracks the panel cursor into `cache.last_cursor_position` through the SHARED view tracker
+--- (`common.track_cursor` — one augroup for all four views, since they share the list buffer).
 ---@param ctx table Panel context with `win` and `buf` fields
 local function setup_cursor_tracking(ctx)
-    if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
-        return
-    end
-
-    vim.api.nvim_create_autocmd("CursorMoved", {
-        buffer = ctx.buf,
-        callback = function()
-            if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-                local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
-                cache.last_cursor_position = cursor_pos[1]
-            end
-        end,
-        group = vim.api.nvim_create_augroup("LvimSpaceWorkspacesCursor", { clear = true }),
-    })
+    common.track_cursor(ctx, function(line)
+        cache.last_cursor_position = line
+    end)
 end
 
 --- Re-renders the workspace list in the existing panel window without reopening it.
@@ -402,7 +392,6 @@ local function enter_navigate_to_last_panel(workspace_id)
     if config.autosave then
         update_workspace_state_in_db()
     end
-    ui.close_all()
     local ws_def = get_entity_def()
     local switched_to_msg = (ws_def and ws_def.switched_to and state.lang[ws_def.switched_to])
         or "Switched to workspace: "
@@ -592,9 +581,8 @@ M.handle_workspace_go = function(opts)
         or "Switched to workspace: "
     local ws_name_for_notify = (workspace and workspace.name) or "Selected Workspace"
     notify.info(switched_to_msg .. ws_name_for_notify)
-    if opts and opts.close_panel then
-        ui.close_all()
-    end
+    -- The tabs list takes over THIS panel (a view switch refreshed in place) — `close_panel` used to tear
+    -- the surface down first and rebuild it, which is the flicker; the panel is never left open either way.
     tabs_ui_module().init()
 end
 
@@ -610,13 +598,12 @@ M.handle_move_down = function(ctx)
     handle_move_operation(ctx, "down")
 end
 
---- Closes the current panel and opens the projects panel.
+--- Switches this panel to the PROJECTS view — refreshed in place (see `ui.open_main`), no teardown.
 M.navigate_to_projects = function()
-    ui.close_all()
     require("lvim-space.ui.projects").init()
 end
 
---- Closes the current panel and opens the tabs panel for the active workspace.
+--- Switches this panel to the TABS view of the active workspace — refreshed in place, no teardown.
 --- Shows an error state if no project, workspace, or active tab is set.
 M.navigate_to_tabs = function()
     if not state.project_id then
@@ -631,11 +618,10 @@ M.navigate_to_tabs = function()
         common.setup_error_navigation("WORKSPACE_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
-    ui.close_all()
     tabs_ui_module().init()
 end
 
---- Closes the current panel and opens the files panel for the active tab.
+--- Switches this panel to the FILES view of the active tab — refreshed in place, no teardown.
 --- Shows an error state if no project, workspace, or active tab is set.
 M.navigate_to_files = function()
     if not state.project_id then
@@ -656,7 +642,6 @@ M.navigate_to_files = function()
         common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
-    ui.close_all()
     files_ui_module().init()
 end
 
@@ -955,7 +940,6 @@ M.switch_to_workspace_by_name = function(workspace_name, project_id_context)
             if config.autosave then
                 update_workspace_state_in_db()
             end
-            ui.close_all()
             if state.tab_active then
                 session.restore_state(state.tab_active, true)
                 files_ui_module().init()

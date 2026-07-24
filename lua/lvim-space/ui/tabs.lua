@@ -91,23 +91,13 @@ local function save_cursor_position()
     end
 end
 
---- Registers a CursorMoved autocmd on the panel buffer to keep `cache.last_cursor_position` up to date.
+--- Tracks the panel cursor into `cache.last_cursor_position` through the SHARED view tracker
+--- (`common.track_cursor` — one augroup for all four views, since they share the list buffer).
 ---@param ctx table Panel context with `win` and `buf` fields.
 local function setup_cursor_tracking(ctx)
-    if not ctx.win or not vim.api.nvim_win_is_valid(ctx.win) then
-        return
-    end
-
-    vim.api.nvim_create_autocmd("CursorMoved", {
-        buffer = ctx.buf,
-        callback = function()
-            if cache.ctx and cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
-                local cursor_pos = vim.api.nvim_win_get_cursor(cache.ctx.win)
-                cache.last_cursor_position = cursor_pos[1]
-            end
-        end,
-        group = vim.api.nvim_create_augroup("LvimSpaceTabsCursor", { clear = true }),
-    })
+    common.track_cursor(ctx, function(line)
+        cache.last_cursor_position = line
+    end)
 end
 
 --- Refreshes the tab panel in-place without re-initialising the full window.
@@ -513,11 +503,13 @@ function M.handle_tab_go(opts)
     end
     if tostring(state.tab_active) == tostring(tab_id_selected) then
         if opts.close_panel then
-            ui.close_all()
+            -- Going ON to the files view is a VIEW SWITCH, not a close: `files.init` refreshes this very
+            -- panel in place (ui.open_main → swap_view). Closing first would tear the surface down and
+            -- rebuild it one tick later — the flicker. Only a switch that ends OUTSIDE lvim-space closes.
             if opts.go_to_files then
-                vim.schedule(function()
-                    require("lvim-space.ui.files").init()
-                end)
+                require("lvim-space.ui.files").init()
+            else
+                ui.close_all()
             end
         end
         return
@@ -543,9 +535,11 @@ function M.handle_tab_go(opts)
             or "Switched to tab: "
         notify.info(switched_to_msg .. (selected_tab.name or "Selected Tab"))
         if opts.close_panel then
-            ui.close_all()
+            -- Same rule as above: on to the files VIEW (in place), or genuinely close.
             if opts.go_to_files then
                 require("lvim-space.ui.files").init()
+            else
+                ui.close_all()
             end
         else
             -- Refresh the SAME panel IN PLACE (only the active-tab marker moves) instead of rebuilding the
@@ -579,19 +573,17 @@ function M.handle_move_down(ctx)
     handle_move_operation(ctx, "down")
 end
 
---- Closes all plugin panels and opens the projects panel.
+--- Switches this panel to the PROJECTS view — refreshed in place (see `ui.open_main`), no teardown.
 function M.navigate_to_projects()
-    ui.close_all()
     require("lvim-space.ui.projects").init()
 end
 
---- Closes all plugin panels and opens the workspaces panel.
+--- Switches this panel to the WORKSPACES view — refreshed in place (see `ui.open_main`), no teardown.
 function M.navigate_to_workspaces()
-    ui.close_all()
     require("lvim-space.ui.workspaces").init()
 end
 
---- Closes all plugin panels and opens the files panel, guarding against missing project/workspace/tab state.
+--- Switches this panel to the FILES view (refreshed in place), guarding against missing project/workspace/tab state.
 function M.navigate_to_files()
     if not state.project_id then
         notify.info(state.lang.PROJECT_NOT_ACTIVE)
@@ -611,7 +603,6 @@ function M.navigate_to_files()
         common.setup_error_navigation("TAB_NOT_ACTIVE", last_real_win, _err_buf)
         return
     end
-    ui.close_all()
     require("lvim-space.ui.files").init()
 end
 
@@ -879,7 +870,7 @@ M.switch_to_tab_by_name = function(tab_name, workspace_id_context)
         local success = session.switch_tab(found_tab.id)
         if success then
             update_tabs_state_in_db()
-            ui.close_all()
+            -- A VIEW switch onto the files list: refreshed in place by `ui.open_main` (no teardown).
             require("lvim-space.ui.files").init()
             return true
         else

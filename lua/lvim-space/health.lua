@@ -2,13 +2,15 @@
 --
 -- Validates the runtime lvim-space depends on: a recent Neovim, the sqlite.lua persistence backend
 -- (hard requirement — it is the session store), the lvim-utils chassis the UI renders through
--- (ui.surface / picker / cursor), a writable save directory, and a coherent `ui.mode`. The area dock
+-- (ui.surface / picker / cursor), a writable save directory, and a coherent `ui.mode`
+-- (config default + the session layout token). The area dock
 -- additionally wants the lvim-utils msgarea zone enabled — without it the panel falls back to growing
 -- 'cmdheight', so we warn rather than fail.
 --
 ---@module "lvim-space.health"
 
 local config = require("lvim-space.config")
+local state = require("lvim-space.api.state")
 
 local M = {}
 
@@ -79,10 +81,22 @@ function M.check()
     end
 
     -- UI mode + area-zone coherence ----------------------------------------
+    -- The EFFECTIVE layout is what the panel actually opens in: the session override (the `:LvimSpace …
+    -- area|bottom|float` token) wins over `config.ui.mode`. Report both, so a user who typed a token once
+    -- and forgot can see why the panel is not where the config says.
     local mode = config.ui and config.ui.mode or nil
+    local override = state.ui_mode_override
     local valid = { area = true, float = true, bottom = true }
     if valid[mode] then
         health.ok("ui.mode = '" .. mode .. "'")
+        if override then
+            if valid[override] then
+                health.ok("session layout override = '" .. override .. "' (from a :LvimSpace layout token)")
+            else
+                health.warn("session layout override = '" .. tostring(override) .. "' is invalid — ignored")
+            end
+        end
+        mode = (valid[override] and override) or mode
         if mode == "area" then
             local ok_msg, msgarea = pcall(require, "lvim-msgarea")
             if ok_msg and msgarea.is_enabled and msgarea.is_enabled() then

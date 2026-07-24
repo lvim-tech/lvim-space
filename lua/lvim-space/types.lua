@@ -132,6 +132,8 @@
 --- @field disable_auto_close boolean?         Temporarily disables UI auto-close
 --- @field file_active        string?          Active file path (FileEntry.id)
 --- @field ui                 LvimSpace.UIState? UI window/buffer handles
+--- @field ui_mode_override   ("area"|"float"|"bottom")? SESSION panel layout, set by the `:LvimSpace …
+---                                             area|bottom|float` token; wins over `config.ui.mode`
 
 --- Handles to the floating windows created by the UI layer.
 --- @class LvimSpace.UIState

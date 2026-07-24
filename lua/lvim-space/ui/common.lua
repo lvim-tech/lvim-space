@@ -283,6 +283,32 @@ local function format_error_message(message)
     return error_icon .. message
 end
 
+---Track the panel cursor for the CURRENT view: fire `on_move(line)` on every CursorMoved in the list
+---buffer, so a panel can remember the row the user left it on.
+---
+---ONE augroup for all four panels, cleared on every registration, because there is only ever ONE live view:
+---the panels now SHARE the list buffer across a view switch (the surface is refreshed in place, never
+---rebuilt), so a per-panel group would leave the outgoing panel's tracker attached to the buffer and it
+---would keep recording the INCOMING view's rows into the wrong panel's cache.
+---@param ctx EntityListState  The live panel context (its `win`/`buf` are the list block's)
+---@param on_move fun(line: integer)  Called with the 1-based cursor row after every move
+M.track_cursor = function(ctx, on_move)
+    if not (ctx and ctx.win and vim.api.nvim_win_is_valid(ctx.win) and ctx.buf) then
+        return
+    end
+    local win = ctx.win
+    vim.api.nvim_create_autocmd("CursorMoved", {
+        buffer = ctx.buf,
+        group = vim.api.nvim_create_augroup("LvimSpaceViewCursor", { clear = true }),
+        callback = function()
+            if not vim.api.nvim_win_is_valid(win) then
+                return
+            end
+            on_move(vim.api.nvim_win_get_cursor(win)[1])
+        end,
+    })
+end
+
 ---Return the entity ID mapped to the current cursor line in the content window.
 ---@param id_list_map table<integer, any>  Map of 1-based line numbers to entity IDs
 ---@return any|nil  Entity ID at the cursor line, or nil if the map is invalid
