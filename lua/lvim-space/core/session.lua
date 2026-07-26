@@ -472,7 +472,7 @@ M.save_current_state = function(tab_id, force)
         vim.fn.timer_stop(cache.pending_save)
         cache.pending_save = nil
     end
-    local now = (vim.uv or vim.loop).now()
+    local now = vim.uv.now()
     if not force and not cache.is_restoring and now - cache.last_save < SESSION_CONFIG.save_interval then
         -- Re-schedule for the remainder of the throttle window and re-evaluate (force=false) when it fires,
         -- so an idle CursorHold storm collapses to a SINGLE save at the end of each interval — not a save

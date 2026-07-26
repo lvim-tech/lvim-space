@@ -188,7 +188,7 @@ function M.file_mtime(path)
         return nil, "Invalid path"
     end
 
-    local uv = vim.uv or vim.loop
+    local uv = vim.uv
     local stat = uv.fs_stat(path)
     if not stat then
         return nil, "Failed to stat file"
@@ -429,7 +429,7 @@ end
 ---@param path string Directory path
 ---@return boolean
 function M.has_permission(path)
-    local uv = vim.uv or vim.loop
+    local uv = vim.uv
     local stat = uv.fs_stat(path)
     if not stat or stat.type ~= "directory" then
         return false

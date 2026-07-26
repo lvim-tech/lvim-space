@@ -70,7 +70,7 @@ local function load_context()
     -- Descended into a subdir of the already-active project (exact cwd lookup misses it): stay attached.
     if not current_project and state.project_id then
         local active = data.find_project_by_id(state.project_id)
-        if active and cwd_within_project(active.path, (vim.uv or vim.loop).cwd()) then
+        if active and cwd_within_project(active.path, vim.uv.cwd()) then
             return
         end
     end

@@ -62,7 +62,7 @@ local math_min = math.min
 local math_max = math.max
 local table_concat = table.concat
 local str_format = string.format
-local vim_uv = vim.uv or vim.loop
+local vim_uv = vim.uv
 
 -- ============================================================================
 -- Module table

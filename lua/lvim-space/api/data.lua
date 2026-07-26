@@ -47,7 +47,7 @@ end
 ---Find the project whose path matches the current working directory.
 ---@return table|nil  Project record, or nil if not found
 M.find_project_by_cwd = function()
-    local cwd = (vim.uv or vim.loop).cwd()
+    local cwd = vim.uv.cwd()
     if cwd ~= nil and not cwd:match("/$") then
         cwd = cwd .. "/"
     end
