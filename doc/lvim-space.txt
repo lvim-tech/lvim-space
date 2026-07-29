@@ -317,12 +317,19 @@ subcommands and tab-completion.
   :LvimSpace tab info           Same as above.
   :LvimSpace tab next           Switch to the next tab (wraps).
   :LvimSpace tab prev           Switch to the previous tab (wraps).
-  :LvimSpace tab new [name]     Create a new tab (auto-named if omitted).
+  :LvimSpace tab new [name]     Create a new tab. With no name it ASKS for
+                                one (an empty answer auto-names it).
   :LvimSpace tab close [id]     Close a tab (defaults to the active tab).
   :LvimSpace tab move-next      Move the active tab one position forward.
   :LvimSpace tab move-prev      Move the active tab one position backward.
-  :LvimSpace tab goto {n}       Switch to the tab at 1-based position {n}.
-  :LvimSpace tab rename {name}  Rename the active tab.
+  :LvimSpace tab goto [n]       Switch to the tab at 1-based position {n}.
+                                With no argument it ASKS for the position.
+  :LvimSpace tab rename [name]  Rename the active tab. With no name it ASKS,
+                                pre-filled with the current one.
+
+  An operation that needs a value asks for it THROUGH `vim.ui.input`, so the
+  prompt appears wherever the editor puts its input surface — a keymap stays a
+  plain `<Cmd>LvimSpace tab rename<CR>` instead of growing its own prompt.
 
   :LvimSpace metrics            Show the metrics report.
   :LvimSpace metrics live       Show an auto-refreshing live metrics window.

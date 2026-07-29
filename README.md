@@ -211,12 +211,12 @@ layout token that CHANGES the dock mode opens a new surface.
 | `:LvimSpace tab info`          | Same as above                                                |
 | `:LvimSpace tab next`          | Switch to the next tab (wraps around)                        |
 | `:LvimSpace tab prev`          | Switch to the previous tab (wraps around)                    |
-| `:LvimSpace tab new [name]`    | Create a new tab with an optional name                       |
+| `:LvimSpace tab new [name]`    | Create a new tab; **asks** for the name when omitted (empty = auto-named) |
 | `:LvimSpace tab close [id]`    | Close the specified tab (defaults to active tab)             |
 | `:LvimSpace tab move-next`     | Move active tab one position forward                         |
 | `:LvimSpace tab move-prev`     | Move active tab one position backward                        |
-| `:LvimSpace tab goto <n>`      | Switch to tab at 1-based position `n`                        |
-| `:LvimSpace tab rename <name>` | Rename the active tab                                        |
+| `:LvimSpace tab goto [n]`      | Switch to tab at 1-based position `n`; **asks** when omitted  |
+| `:LvimSpace tab rename [name]` | Rename the active tab; **asks** when omitted, pre-filled with the current name |
 
 ### Diagnostics
 

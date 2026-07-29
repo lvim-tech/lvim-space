@@ -428,7 +428,20 @@ local COMMANDS = {
             elseif op == "prev" then
                 tab_navigate(-1)
             elseif op == "new" then
-                tab_new(arg)
+                -- ASKED FOR HERE, NOT BY THE CALLER. An operation that needs a value is the one
+                -- that knows what value it needs, what it defaults to and what makes it invalid —
+                -- so a keymap stays `<Cmd>LvimSpace tab new<CR>` instead of every consumer growing
+                -- its own prompt. Through `vim.ui.input`, so the prompt appears wherever the editor
+                -- puts its input surface.
+                if arg ~= nil then
+                    tab_new(arg)
+                else
+                    vim.ui.input({ prompt = "New tab name (empty = auto): " }, function(name)
+                        if name ~= nil then
+                            tab_new(name)
+                        end
+                    end)
+                end
             elseif op == "close" then
                 tab_close(arg ~= nil and tonumber(arg) or nil)
             elseif op == "move-next" then
@@ -436,18 +449,46 @@ local COMMANDS = {
             elseif op == "move-prev" then
                 tab_move(-1)
             elseif op == "goto" then
-                if not arg then
-                    notify.warn("Provide a tab position (number).")
-                    return
+                if arg ~= nil then
+                    local idx = tonumber(arg)
+                    if not idx then
+                        notify.warn("Tab index must be a number.")
+                        return
+                    end
+                    tab_goto(idx)
+                else
+                    vim.ui.input({ prompt = "Tab index: " }, function(value)
+                        if value == nil or vim.trim(value) == "" then
+                            return
+                        end
+                        local idx = tonumber(value)
+                        if not idx then
+                            notify.warn("Tab index must be a number.")
+                            return
+                        end
+                        tab_goto(idx)
+                    end)
                 end
-                local idx = tonumber(arg)
-                if not idx then
-                    notify.warn("Tab index must be a number.")
-                    return
-                end
-                tab_goto(idx)
             elseif op == "rename" then
-                tab_rename(arg)
+                if arg ~= nil then
+                    tab_rename(arg)
+                else
+                    -- Pre-filled with the CURRENT name: a rename is almost always an edit of what
+                    -- is there, not a fresh name typed from nothing. `tab_get_info()` returns the
+                    -- whole workspace, so the active row is the one to read it from.
+                    local current
+                    for _, t in ipairs((tab_get_info() or {}).tabs or {}) do
+                        if t.active then
+                            current = t.name
+                            break
+                        end
+                    end
+                    vim.ui.input({ prompt = "Rename tab: ", default = current }, function(name)
+                        if name ~= nil then
+                            tab_rename(name)
+                        end
+                    end)
+                end
             elseif op == "info" then
                 vim.print(tab_get_info())
             else
