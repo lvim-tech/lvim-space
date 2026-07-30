@@ -892,7 +892,12 @@ end
 ---@param prompt string Label shown in the command-line prompt / popup title (a trailing colon is normalised away)
 ---@param default_value string|nil Pre-filled text
 ---@param callback fun(value: string, input_line: integer|nil) Called on confirm with the entered text and saved cursor line
-function M.create_input_field(prompt, default_value, callback)
+---@param completion string|nil A `getcompletion()` kind ("dir", "file", …) enabling <Tab> completion in the
+---       field. A prompt that asks for a PATH is unusable without it — you would have to type the whole thing
+---       by hand, in the one place in the editor where <Tab> does nothing. Both input modes take it: the
+---       lvim-ui popup completes in place (longest common prefix, then lists), and the cmdline prompt gets
+---       Neovim's own path completion.
+function M.create_input_field(prompt, default_value, callback, completion)
     -- Remember the list cursor row so the callback can restore selection after a CRUD op.
     local input_line
     if panel and is_valid_win(panel.win) then
@@ -928,6 +933,7 @@ function M.create_input_field(prompt, default_value, callback)
         lvim_ui.input({
             title = label,
             default = default_value,
+            completion = completion,
             callback = function(confirmed, value)
                 if confirmed then
                     resolve(value or "")
@@ -937,7 +943,12 @@ function M.create_input_field(prompt, default_value, callback)
     else
         -- Neovim's command-line prompt. `ui = "cmdline"` pins it to the lvim-hud external cmdline explicitly,
         -- so the mode is deterministic regardless of the hud's own `input.default` (which may be "popup").
-        vim.ui.input({ prompt = label .. ": ", default = default_value, ui = "cmdline" }, function(val)
+        vim.ui.input({
+            prompt = label .. ": ",
+            default = default_value,
+            completion = completion,
+            ui = "cmdline",
+        }, function(val)
             if val ~= nil then
                 resolve(val)
             end

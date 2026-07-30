@@ -862,7 +862,7 @@ M.add_project = function()
             end
             M.refresh()
         end)
-    end)
+    end, "dir")
 end
 
 --- Clears the path-validation result cache so subsequent calls re-validate paths.

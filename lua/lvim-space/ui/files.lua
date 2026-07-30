@@ -930,7 +930,7 @@ M.add_file = function()
             notify.info(state.lang.FILE_ADDED_SUCCESS or "File added successfully to tab.")
         end
         M.refresh()
-    end)
+    end, "file")
 end
 
 --- Adds the currently focused buffer's file to the active tab.
