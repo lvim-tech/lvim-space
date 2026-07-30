@@ -547,18 +547,20 @@ function M._switch_file(path, skip_refresh)
         return
     end
 
-    -- Load the buffer in a NORMAL context (not inside `nvim_win_call`): the file's open autocmds — a filetype's
-    -- ftplugin, an on-open formatter, orgmode's own hooks — may run a SYNCHRONOUS external command / job, which
-    -- DEADLOCKS if fired inside `nvim_win_call` (the callback can't spin the event loop the job needs → nvim hangs
-    -- on the pipe, unblockable except by a stray keypress). `bufload` here fires them in the normal main loop, then
-    -- `nvim_win_set_buf` just DISPLAYS the already-loaded buffer (no re-trigger). Orgmode is set up eagerly now, so
-    -- `bufload` no longer errors on an org ftplugin.
+    -- `bufadd` only, then let `nvim_win_set_buf` below load it. NO `bufload` here: pre-loading a buffer and
+    -- THEN displaying it leaves it flagged `modified` even though nothing was edited — `changedtick` does not
+    -- move, the text still matches the file on disk, but `&modified` is set and the buffer's `filetype` /
+    -- `fileencoding` are reset. Every file opened from this panel then showed as changed in the statusline,
+    -- and quitting Neovim asked about "unsaved" buffers that were never touched. Measured against
+    -- `nvim --clean` in a real TUI, so it is the load-then-display sequence itself, not this configuration:
+    --   bufadd + bufload + display  → modified = true,  ft = "",    fenc = ""
+    --   bufadd + display            → modified = false, ft = "lua", fenc = "utf-8"
+    -- The `bufload` was originally here to keep a file's open autocmds — an ftplugin, an on-open formatter,
+    -- orgmode's hooks — out of `nvim_win_call`, where a SYNCHRONOUS external command deadlocks (the callback
+    -- cannot spin the event loop the job needs). That reason is gone: this path uses `nvim_win_set_buf`, not
+    -- `nvim_win_call`, so the autocmds already run in the normal main loop and the LSP / treesitter attach
+    -- exactly as they do for `:edit` (verified: 2 clients attached, parser created, buffer clean).
     local bufnr = vim.fn.bufadd(file_path_to_open)
-    local ok_load, load_err = pcall(vim.fn.bufload, bufnr)
-    if not ok_load then
-        notify.error("Failed to load file: " .. tostring(load_err))
-        return
-    end
 
     local target_win = last_real_win
 

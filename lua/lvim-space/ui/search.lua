@@ -34,12 +34,9 @@ local function select_file(path)
         return
     end
 
+    -- `bufadd` only — the window below loads it. Pre-loading with `bufload` and then displaying the buffer
+    -- flags it `modified` without a single edit (see the note in ui/files.lua's open path).
     local bufnr = vim.fn.bufadd(path)
-    local ok_load, load_err = pcall(vim.fn.bufload, bufnr)
-    if not ok_load then
-        notify.error("Failed to load file: " .. tostring(load_err))
-        return
-    end
 
     -- Pick a real (non-plugin, non-floating) editor window to load the file into; fall back to `:edit`.
     local target = vim.api.nvim_get_current_win()
