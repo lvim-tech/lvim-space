@@ -44,14 +44,20 @@ function M.setup(user_config)
 
     local ok, hl = pcall(require, "lvim-utils.highlight")
     if ok then
-        hl.register(config.build(), config.highlights_force)
-        hl.setup()
-        local colors_ok, colors = pcall(require, "lvim-utils.colors")
-        if colors_ok then
-            colors.on_change(function()
-                hl.register(config.build(), config.highlights_force)
-            end)
+        -- `bind` is the canonical self-theming seam: it applies the factory now and RE-applies it FORCED on
+        -- every palette sync. The hand-rolled `colors.on_change` that used to sit here re-registered the same
+        -- table unforced, and an unforced `register` is `define_if_missing` — the groups exist by then, so it
+        -- was a no-op. `LvimSpace*` therefore kept the palette they were first built with: switch to a dark
+        -- theme and this panel stayed light (measured: `LvimSpaceNormal.bg = #dadada` under a dark theme).
+        hl.bind(function()
+            return config.build()
+        end)
+        -- `highlights_force` is the user's "these groups win over whatever the colorscheme says" switch, which
+        -- `bind`'s first, overwritable apply deliberately does not do — so honour it with one real apply on top.
+        if config.highlights_force then
+            hl.register(config.build(), true)
         end
+        hl.setup()
     end
 end
 
