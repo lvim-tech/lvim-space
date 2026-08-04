@@ -300,9 +300,9 @@ end
 -- ============================================================================
 
 --- Record an error with an optional error-type classification.
----@param _manager_type? string  Reserved for future per-subsystem breakdowns
----@param error_type?    string  One of the ERROR_TYPES constants
-function M.record_error(_manager_type, error_type)
+---@param _           string?  Reserved for future per-subsystem breakdowns (unused)
+---@param error_type?  string   One of the ERROR_TYPES constants
+function M.record_error(_, error_type)
     if not M.stats then
         return
     end
@@ -783,7 +783,7 @@ function M.show_live(refresh_interval)
     refresh_interval = refresh_interval or mcfg("default_refresh_interval", 2)
 
     local buf, win, st = open_float("LvimSpace Metrics (live)", M.report())
-    if not buf or not vim.api.nvim_win_is_valid(win) then
+    if not buf or not win or not vim.api.nvim_win_is_valid(win) then
         return buf, win
     end
 

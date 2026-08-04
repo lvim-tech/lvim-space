@@ -520,8 +520,7 @@ function M.handle_tab_go(opts)
         return
     end
     local panel_win = state.ui and state.ui.content and state.ui.content.win
-    local panel_is_valid = panel_win and vim.api.nvim_win_is_valid(panel_win)
-    local cursor_pos = panel_is_valid and vim.api.nvim_win_get_cursor(panel_win)
+    local cursor_pos = panel_win and vim.api.nvim_win_is_valid(panel_win) and vim.api.nvim_win_get_cursor(panel_win)
     local current_line_in_ui = cursor_pos and cursor_pos[1] or nil
     local prev_disable_state = state.disable_auto_close
     state.disable_auto_close = true

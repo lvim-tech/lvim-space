@@ -885,7 +885,7 @@ end
 ---@return boolean success true if a matching project was found and activated, false otherwise
 M.switch_to_project_by_name = function(project_name)
     local projects = data.find_projects() or {}
-    for i, project in ipairs(projects) do
+    for _, project in ipairs(projects) do
         if project.name == project_name then
             M.handle_project_go({ space_mode = true, id = project.id })
             return true

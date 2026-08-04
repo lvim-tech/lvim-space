@@ -303,7 +303,7 @@ end
 ---@param selected integer  1-based row to select
 ---@param total integer  row count of the list
 local function set_view(win, selected, total)
-    if not is_valid_win(win) then
+    if not win or not is_valid_win(win) then
         return
     end
     selected = math.max(1, math.min(selected, math.max(1, total)))

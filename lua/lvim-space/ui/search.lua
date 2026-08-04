@@ -39,8 +39,10 @@ local function select_file(path)
     local bufnr = vim.fn.bufadd(path)
 
     -- Pick a real (non-plugin, non-floating) editor window to load the file into; fall back to `:edit`.
-    local target = vim.api.nvim_get_current_win()
-    if ui.is_plugin_window(target) or vim.api.nvim_win_get_config(target).relative ~= "" then
+    local cur_win = vim.api.nvim_get_current_win()
+    ---@type integer?
+    local target = cur_win
+    if ui.is_plugin_window(cur_win) or vim.api.nvim_win_get_config(cur_win).relative ~= "" then
         target = nil
         for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
             if vim.api.nvim_win_get_config(w).relative == "" and not ui.is_plugin_window(w) then
@@ -52,7 +54,10 @@ local function select_file(path)
     if target and vim.api.nvim_win_is_valid(target) then
         vim.api.nvim_win_set_buf(target, bufnr)
     else
-        pcall(vim.cmd, "edit " .. vim.fn.fnameescape(path))
+        -- Wrapped: `vim.cmd` is a callable TABLE, which `pcall`'s `fun` parameter does not accept.
+        pcall(function()
+            vim.cmd("edit " .. vim.fn.fnameescape(path))
+        end)
     end
     -- (the former `session.save_window_context` guard was dead — the core session module exports no such
     -- function; the real-window selection above already covers the "load into the right window" intent.)
@@ -93,7 +98,10 @@ local function open_in_split(split_cmd, path)
         notify.error(state.lang.FILE_NOT_READABLE or "File is not readable")
         return
     end
-    local ok = pcall(vim.cmd, split_cmd .. " " .. vim.fn.fnameescape(path))
+    -- Wrapped: `vim.cmd` is a callable TABLE, which `pcall`'s `fun` parameter does not accept.
+    local ok = pcall(function()
+        vim.cmd(split_cmd .. " " .. vim.fn.fnameescape(path))
+    end)
     if split_cmd == "vsplit" then
         if ok then
             notify.info(state.lang.FILE_OPENED_VERTICAL or "File opened in vertical split")
