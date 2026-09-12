@@ -536,6 +536,18 @@ If `autosave = false`, persist the full state manually:
 - For debug logging, set `debug.enabled = true` in your config — logs are written to `debug.file`.
 - For bugs or feature requests, please open an issue on the GitHub repository.
 
+### Schema migration (older databases)
+
+`lua/lvim-space/persistence/migration.lua` is a one-off tool, not part of the plugin's startup: it brings a
+`lvimspace.db` created by an older release up to the current table shape through the `sqlite3` command-line
+client and prints its progress. Run it once, by hand, with Neovim closed elsewhere:
+
+```vim
+:lua require("lvim-space.persistence.migration").run()
+```
+
+It refuses to run when the data directory or the database file does not exist, and it never deletes rows.
+
 ---
 
 ## License
