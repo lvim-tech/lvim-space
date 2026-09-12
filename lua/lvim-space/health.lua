@@ -1,8 +1,8 @@
 -- lvim-space.health: :checkhealth lvim-space
 --
 -- Validates the runtime lvim-space depends on: a recent Neovim, the sqlite.lua persistence backend
--- (hard requirement — it is the session store), the lvim-utils chassis the UI renders through
--- (ui.surface / picker / cursor), a writable save directory, and a coherent `ui.mode`
+-- (hard requirement — it is the session store), the three chassis plugins the UI renders through
+-- (lvim-utils cursor/palette, lvim-ui surface, lvim-picker), a writable save directory, and a coherent `ui.mode`
 -- (config default + the session layout token). The area dock
 -- additionally wants the lvim-utils msgarea zone enabled — without it the panel falls back to growing
 -- 'cmdheight', so we warn rather than fail.
@@ -20,10 +20,11 @@ function M.check()
     health.start("lvim-space")
 
     -- Neovim version --------------------------------------------------------
-    if vim.fn.has("nvim-0.11") == 1 then
-        health.ok("Neovim >= 0.11")
+    -- 0.12: what the chassis this plugin renders through (lvim-utils, lvim-ui, lvim-picker) requires.
+    if vim.fn.has("nvim-0.12") == 1 then
+        health.ok("Neovim >= 0.12")
     else
-        health.error("Neovim >= 0.11 is required (vim.pack, ui.surface, msgarea host)")
+        health.error("Neovim >= 0.12 is required (lvim-utils / lvim-ui / lvim-picker need it)")
     end
 
     -- Persistence backend (hard requirement) --------------------------------
@@ -35,28 +36,23 @@ function M.check()
         health.error("sqlite.lua not found — install kkharji/sqlite.lua; without it no state can be stored")
     end
 
-    -- lvim-utils chassis ----------------------------------------------------
-    local ok_surface = pcall(require, "lvim-ui.surface")
-    local ok_picker = pcall(require, "lvim-picker")
-    local ok_cursor = pcall(require, "lvim-utils.cursor")
-    if ok_surface and ok_picker and ok_cursor then
-        health.ok("lvim-utils found (ui.surface + picker + cursor)")
-    else
-        local missing = {}
-        if not ok_surface then
-            missing[#missing + 1] = "ui.surface"
+    -- The UI chassis: THREE plugins, each reported under its own name so a missing one is named as the
+    -- thing to install (the surface is lvim-ui's, the finder is lvim-picker's, the cursor/palette are
+    -- lvim-utils'). `lvim-picker` pulls `lvim-fuzzy`; a load error there is reported as the picker's.
+    for _, dep in ipairs({
+        { "lvim-utils.cursor", "lvim-utils", "palette, highlight, cursor hiding" },
+        { "lvim-ui.surface", "lvim-ui", "the panel surface, preview, input" },
+        { "lvim-picker", "lvim-picker", "the file search and the / filter (needs lvim-fuzzy)" },
+    }) do
+        local ok, err = pcall(require, dep[1])
+        if ok then
+            health.ok(("%s found (%s)"):format(dep[2], dep[3]))
+        else
+            local why = tostring(err):match("^[^\n]*") or ""
+            health.error(
+                ("%s not loadable — %s; install lvim-tech/%s (%s)"):format(dep[2], dep[3], dep[2], why)
+            )
         end
-        if not ok_picker then
-            missing[#missing + 1] = "picker"
-        end
-        if not ok_cursor then
-            missing[#missing + 1] = "cursor"
-        end
-        health.error(
-            "lvim-utils incomplete — missing { "
-                .. table.concat(missing, ", ")
-                .. " }; install lvim-tech/lvim-utils (the UI renders through it)"
-        )
     end
 
     -- Save directory writable ----------------------------------------------
