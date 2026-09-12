@@ -52,13 +52,13 @@ return {
             active = "LvimSpaceActiveRow",
         },
     },
-    -- The PREVIEW panel beside the FILES list — the file under the cursor, shown through the shared
-    -- `lvim-ui.preview` (the picker's preview: the file's REAL buffer, so it is editable and in two-way sync).
-    -- It follows the cursor as you move through the list. Only the files view has one (it is the only entity
-    -- that names a file); `enabled = false` turns it off.
+    -- The PREVIEW panel beside the FILES list — the file under the cursor, rendered as a READ-ONLY scratch copy
+    -- (the picker's file preview — deliberately NOT the file's own buffer: see ui/init.lua, a real buffer drags
+    -- the file's autocmds into the docked panel). It follows the cursor as you move through the list. Only the
+    -- files view has one (it is the only entity that names a file); `enabled = false` turns it off.
     preview = {
         enabled = true,
-        side = "right", -- "right" | "left" | "dynamic" (a peek float above the list)
+        side = "right", -- "right" | "left" (anything else docks right)
         width = 0.5, -- the preview's share of the panel width (side = left/right)
         numbers = true, -- line numbers in the preview
         empty = "Nothing to preview",

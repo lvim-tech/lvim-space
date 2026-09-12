@@ -17,8 +17,8 @@
 --
 -- Display
 -- =======
--- :LvimSpaceMetrics       – static report window  (keymaps: r R y s l q)
--- :LvimSpaceMetrics live  – auto-refreshing window (keymaps: r s q)
+-- :LvimSpace metrics       – static report window  (keymaps: r R y s l q)
+-- :LvimSpace metrics live  – auto-refreshing window (keymaps: r s q)
 
 local events = require("lvim-space.core.events")
 local levels = require("lvim-space.utils.levels")

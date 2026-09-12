@@ -22,11 +22,11 @@ CONTENTS                                                          *lvim-space*
 lvim-space manages a four-level hierarchy — Projects, Workspaces, Tabs and
 Files — and persists the whole session (window layout, buffers, cursor
 positions) to a SQLite database. Each level is browsed and edited through a
-panel that renders on the shared lvim-utils surface chassis: by default in the
+panel that renders on the shared lvim-ui surface chassis: by default in the
 "area" zone (the Emacs-style minibuffer/cmdline space, with the editor and the
 statusline staying above it), optionally as a centred float or a bottom dock.
 
-File search is the shared lvim-utils picker: a fuzzy finder that filters as you
+File search is the shared lvim-picker finder: a fuzzy finder that filters as you
 type, shows coloured filetype devicons, and opens the chosen file (recording it
 in the active tab) or in a split. Every entity panel also gains a `/` key that
 opens that same picker over the current list.
@@ -34,12 +34,15 @@ opens that same picker over the current list.
 ==============================================================================
 2. REQUIREMENTS                                     *lvim-space-requirements*
 
-  - Neovim >= 0.11
+  - Neovim >= 0.12 (what lvim-utils, lvim-ui and lvim-picker require)
   - sqlite.lua (kkharji/sqlite.lua) — the session persistence backend; lvim-
     space cannot store any state without it. REQUIRED.
-  - lvim-utils (lvim-tech/lvim-utils) — the UI renders through its `ui.surface`,
-    `picker` and `cursor` modules, and self-themes from its colour palette.
-    REQUIRED.
+  - lvim-utils (lvim-tech/lvim-utils) — the colour palette, the highlight
+    binding and the cursor hiding. REQUIRED.
+  - lvim-ui (lvim-tech/lvim-ui) — the panel surface, the file preview and the
+    input popup. REQUIRED.
+  - lvim-picker (lvim-tech/lvim-picker) — the file search and the `/` filter;
+    it pulls lvim-fuzzy. REQUIRED.
   - A NerdFont-enabled terminal, for the entity icons.
   - fd (sharkdp/fd) — the default file-search command. Only needed for
     |lvim-space-search|; everything else works without it.
@@ -113,11 +116,13 @@ UI ~
                             are the pickers' own list groups, so a theme moves
                             lvim-space and the pickers together.
   ui.preview      (table)   The PREVIEW panel beside the FILES list — the file
-                            under the cursor, through the shared lvim-ui
-                            preview (its REAL buffer: editable, two-way
-                            synced), following the cursor as it moves.
-                            `enabled` (true), `side` ("right"), `width` (0.5),
-                            `numbers` (true), `empty` (placeholder text).
+                            under the cursor as a READ-ONLY scratch copy (the
+                            picker's file preview, not the file's own buffer,
+                            so none of its autocmds run in the panel),
+                            following the cursor as it moves.
+                            `enabled` (true), `side` ("right" | "left"),
+                            `width` (0.5), `numbers` (true), `empty`
+                            (placeholder text).
   ui.filetype     (string)  Panel buffer 'filetype'. Default: "lvim-space".
   ui.title        (string)  Panel title text. Default: "LVIM SPACE".
   ui.title_pos    (string)  Title alignment. Default: nil, which INHERITS the
@@ -188,7 +193,7 @@ are tracked in the session and restored on startup when `autorestore` is set.
 6. UI MODES                                                *lvim-space-modes*
 
 `ui.mode` selects where every panel, input prompt and the search picker dock.
-All three render through lvim-utils.ui.surface.
+All three render through lvim-ui.surface.
 
   "area"    (default) The Emacs-minibuffer cmdline zone. When the lvim-utils
             msgarea zone is enabled the panel is hosted ABOVE the messages
@@ -358,24 +363,31 @@ Built from the lvim-utils palette and re-applied on |ColorScheme| change.
 Panel backgrounds drop to NONE when the active theme is transparent.
 
   LvimSpaceNormal           Panel background
-  LvimSpaceCursorLine       Selected row
+  LvimSpaceActiveRow        The active entity's row (bold only; the stripe
+                            colour shows through)
+  LvimSpaceCursorLine       Selected row (only with `ui.rows.stripes = false`)
   LvimSpaceTitle            Panel / section title
   LvimSpaceInfo             Status / info line
-  LvimSpacePrompt           Input prompt label
-  LvimSpaceInput            Input field text
   LvimSpaceSign             Sign column glyph
   LvimSpaceCursor           Hidden-cursor cell
   LvimSpaceFuzzyPrimary     Primary fuzzy-match accent
   LvimSpaceFuzzySecondary   Secondary fuzzy-match accent
+  LvimSpaceFooterKey        Footer bar: a button's key box
+  LvimSpaceFooterLabel      Footer bar: a button's label box
+  LvimSpaceFooterKeyHover   Footer bar: the focused button's key box
+  LvimSpaceFooterLabelHover Footer bar: the focused button's label box
+  LvimSpaceFooterSep        Footer bar: the group separator and the overflow
+                            chevrons
 
 ==============================================================================
 12. HEALTH                                                *lvim-space-health*
 
 `:checkhealth lvim-space` validates the runtime:
 
-  - Neovim >= 0.11.
+  - Neovim >= 0.12.
   - sqlite.lua present (ERROR if missing — it is the persistence backend).
-  - lvim-utils present with ui.surface / picker / cursor (ERROR if missing).
+  - lvim-utils, lvim-ui and lvim-picker loadable, each reported under its own
+    name (ERROR naming the missing one).
   - The save directory (or its parent) is writable.
   - `ui.mode` is one of area | float | bottom; in "area" mode, whether the
     msgarea zone is enabled (WARN if off — panels fall back to 'cmdheight').

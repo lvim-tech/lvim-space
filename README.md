@@ -10,7 +10,9 @@ https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
 
 ## Installation
 
-Requires Neovim >= 0.11 and [lvim-utils](https://github.com/lvim-tech/lvim-utils) and [sqlite.lua](https://github.com/kkharji/sqlite.lua).
+Requires Neovim >= 0.12, [sqlite.lua](https://github.com/kkharji/sqlite.lua), [lvim-utils](https://github.com/lvim-tech/lvim-utils),
+[lvim-ui](https://github.com/lvim-tech/lvim-ui) and [lvim-picker](https://github.com/lvim-tech/lvim-picker) (which pulls
+[lvim-fuzzy](https://github.com/lvim-tech/lvim-fuzzy)).
 
 ### lvim-installer (recommended)
 
@@ -28,6 +30,9 @@ lvim-installer installs plugins through Neovim's built-in `vim.pack`, so no exte
 vim.pack.add({
     { src = "https://github.com/kkharji/sqlite.lua" },
     { src = "https://github.com/lvim-tech/lvim-utils" },
+    { src = "https://github.com/lvim-tech/lvim-ui" },
+    { src = "https://github.com/lvim-tech/lvim-fuzzy" },
+    { src = "https://github.com/lvim-tech/lvim-picker" },
     { src = "https://github.com/lvim-tech/lvim-space" },
 })
 require("lvim-space").setup({})
@@ -42,9 +47,9 @@ require("lvim-space").setup({})
 - **Tabs**: Each workspace supports multiple tabs, each with its own window/buffer layout.
 - **Files**: Tabs remember their files, window layout, and cursor positions.
 - **Reordering**: Move projects, workspaces, and tabs up/down to organize them exactly how you want.
-- **Picker Search**: File search is the shared lvim-utils picker — fuzzy filter as you type, coloured filetype devicons, `<CR>` to open + add to the tab, `<C-v>`/`<C-x>` to open in a split. Every entity panel also gets a `/` key that opens the picker over its current list.
+- **Picker Search**: File search is the shared lvim-picker finder — fuzzy filter as you type, coloured filetype devicons, `<CR>` to open + add to the tab, `<C-v>`/`<C-x>` to open in a split. Every entity panel also gets a `/` key that opens the picker over its current list.
 - **Session Management**: Automatically or manually save and restore the state of your workspaces, tabs, and files.
-- **Dockable UI**: The panels, prompts and search render on the lvim-utils surface in one of three modes — `area` (the Emacs-style cmdline zone, default), `float` (a centred modal), or `bottom` (a bottom dock).
+- **Dockable UI**: The panels, prompts and search render on the lvim-ui surface in one of three modes — `area` (the Emacs-style cmdline zone, default), `float` (a centred modal), or `bottom` (a bottom dock).
 - **NerdFont Icons**: Visual indicators for all entities (project, workspace, tab, file, empty, etc).
 - **Autosave**: Choose between automatic or manual session saving.
 - **User Commands**: Full suite of commands for tab management, session control, and diagnostics.
@@ -255,7 +260,21 @@ require("lvim-space").setup({
         .. " --exclude node_modules"
         .. " --exclude target"
         .. " --exclude build"
-        .. " --exclude dist",
+        .. " --exclude dist"
+        .. " --exclude .next"
+        .. " --exclude .nuxt"
+        .. " --exclude coverage"
+        .. " --exclude __pycache__"
+        .. " --exclude .pytest_cache"
+        .. " --exclude .venv"
+        .. " --exclude venv"
+        .. " --exclude .env"
+        .. " --exclude .idea"
+        .. " --exclude .vscode"
+        .. " --exclude .egg-info"
+        .. " --exclude .mypy_cache"
+        .. " --exclude vendor"
+        .. " --exclude .svn",
 
     -- -------------------------------------------------------------------------
     -- UI appearance
@@ -269,7 +288,7 @@ require("lvim-space").setup({
         title_pos = nil,
 
         -- Where every panel, prompt and the search picker docks. Rendered
-        -- through lvim-utils.ui.surface:
+        -- through lvim-ui.surface:
         --   "area"   (default) the Emacs-style cmdline/minibuffer zone —
         --            hosted above the messages when the lvim-utils msgarea
         --            zone is enabled, otherwise it grows 'cmdheight'; the
@@ -331,13 +350,13 @@ require("lvim-space").setup({
         },
 
         -- The PREVIEW panel beside the FILES list: the file under the cursor,
-        -- shown through the shared lvim-ui preview (the picker's preview — the
-        -- file's REAL buffer, so it is editable and two-way synced). It follows
-        -- the cursor through the list. Files is the only entity that names a
-        -- file, so it is the only view with one.
+        -- rendered as a READ-ONLY scratch copy (the picker's file preview —
+        -- not the file's own buffer, so none of its autocmds run inside the
+        -- panel). It follows the cursor through the list. Files is the only
+        -- entity that names a file, so it is the only view with one.
         preview = {
             enabled = true,
-            side = "right", -- "right" | "left" | "below" | "above"
+            side = "right", -- "right" | "left"
             width = 0.5, -- the preview's share of the editor width
             numbers = true, -- line numbers in the preview
             empty = "Nothing to preview",
@@ -347,14 +366,18 @@ require("lvim-space").setup({
             error = " ",
             warn = " ",
             info = " ",
-            project = " ",
-            project_active = " ",
-            workspace = " ",
-            workspace_active = " ",
-            tab = " ",
-            tab_active = " ",
-            file = " ",
-            file_active = " ",
+            -- No per-entity glyph by default: an EMPTY icon keeps the row's
+            -- leading air to the single space the row renderer adds (a " "
+            -- here would double it). A file row shows its filetype devicon
+            -- instead (`devicons`), so these only matter with devicons = false.
+            project = "",
+            project_active = "",
+            workspace = "",
+            workspace_active = "",
+            tab = "",
+            tab_active = "",
+            file = "",
+            file_active = "",
             empty = "󰇘 ",
             pre = "➤ ",
         },
@@ -445,7 +468,7 @@ require("lvim-space").setup({
             "<Up>",
             "<Down>",
             "<Space>",
-            "BS",
+            "<BS>",
         },
         disable_categories = {
             lowercase_letters = true,
@@ -460,7 +483,7 @@ require("lvim-space").setup({
 
 ## UI & Appearance
 
-- The UI renders on the shared **lvim-utils surface**. `ui.mode` selects where it docks:
+- The UI renders on the shared **lvim-ui surface**. `ui.mode` selects where it docks:
   - **`area`** (default) — the Emacs-style cmdline/minibuffer zone. When the lvim-utils
     msgarea zone is enabled the panel is hosted **above** the messages (the editor and
     statusline stay in place); otherwise it falls back to growing `cmdheight`.
@@ -491,9 +514,11 @@ If `autosave = false`, persist the full state manually:
 
 ## Requirements
 
-- **Neovim 0.11+**
+- **Neovim 0.12+** (what lvim-utils, lvim-ui and lvim-picker require)
 - **[sqlite.lua](https://github.com/kkharji/sqlite.lua)** — the session persistence backend (**required**; no state can be stored without it)
-- **[lvim-utils](https://github.com/lvim-tech/lvim-utils)** — the UI renders through its `ui.surface`, `picker` and `cursor` modules and self-themes from its colour palette (**required**)
+- **[lvim-utils](https://github.com/lvim-tech/lvim-utils)** — the colour palette, highlight binding and cursor hiding (**required**)
+- **[lvim-ui](https://github.com/lvim-tech/lvim-ui)** — the panel surface, the file preview and the input popup (**required**)
+- **[lvim-picker](https://github.com/lvim-tech/lvim-picker)** — the file search and the `/` filter; it pulls **[lvim-fuzzy](https://github.com/lvim-tech/lvim-fuzzy)** (**required**)
 - **NerdFont** enabled terminal (for icons)
 - **[fd](https://github.com/sharkdp/fd)** — the default file-search command (only needed for search; everything else works without it)
 
@@ -503,7 +528,7 @@ If `autosave = false`, persist the full state manually:
 
 ## Troubleshooting
 
-- Run `:checkhealth lvim-space` first — it reports a missing sqlite.lua / lvim-utils, an unwritable save dir, an invalid `ui.mode`, an `area` mode without the msgarea zone, or a missing search command.
+- Run `:checkhealth lvim-space` first — it reports a missing sqlite.lua / lvim-utils / lvim-ui / lvim-picker, an unwritable save dir, an invalid `ui.mode`, an `area` mode without the msgarea zone, or a missing search command.
 - If icons do not display, ensure your terminal uses a NerdFont.
 - If state is not saved/restored, check your `autosave` / `autorestore` setting or run `:LvimSpace save`.
 - If the area panel grows `cmdheight` instead of floating above the messages, enable the lvim-utils msgarea zone, or set `ui.mode = "float"` / `"bottom"`.
