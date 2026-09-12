@@ -50,7 +50,7 @@ return {
             "<Up>",
             "<Down>",
             "<Space>",
-            "BS",
+            "<BS>",
         },
         disable_categories = {
             lowercase_letters = true,
