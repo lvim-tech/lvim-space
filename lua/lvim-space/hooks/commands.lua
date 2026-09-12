@@ -117,27 +117,65 @@ local function get_next_tab_name(tabs_list)
     return "Tab " .. tostring(i)
 end
 
-local function open_empty_window()
+--- The windows a new tab's empty layout closes: every REAL window other than the current one. Plugin-owned
+--- and FLOATING windows (docked msgarea zones, lvim-term/hud floats, an open lvim-space panel) are kept —
+--- matching the session engine's force_single_window, which force-closing every other window would tear down.
+---@return integer[]
+local function windows_to_close()
     local ui = require("lvim-space.ui")
     local keep = vim.api.nvim_get_current_win()
-    local wins = vim.api.nvim_list_wins()
-    if #wins > 1 then
-        for _, win in ipairs(wins) do
-            -- Keep the current window AND any plugin-owned or FLOATING windows (docked msgarea zones,
-            -- lvim-term/hud floats, an open lvim-space panel) — matching the session engine's
-            -- force_single_window, which force-closing every other window would otherwise tear down.
-            if
-                win ~= keep
-                and vim.api.nvim_win_is_valid(win)
-                and not ui.is_plugin_window(win)
-                and vim.api.nvim_win_get_config(win).relative == ""
-            then
-                vim.api.nvim_win_close(win, true)
-            end
+    local out = {}
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if
+            win ~= keep
+            and vim.api.nvim_win_is_valid(win)
+            and not ui.is_plugin_window(win)
+            and vim.api.nvim_win_get_config(win).relative == ""
+        then
+            out[#out + 1] = win
         end
+    end
+    return out
+end
+
+local function open_empty_window()
+    local keep = vim.api.nvim_get_current_win()
+    for _, win in ipairs(windows_to_close()) do
+        vim.api.nvim_win_close(win, true)
     end
     vim.api.nvim_set_current_win(keep)
     vim.cmd("enew")
+end
+
+--- Ask before a new tab throws away windows whose buffers hold UNSAVED changes; with nothing at risk `cb`
+--- runs at once. The empty layout used to close every other window without a word — a modified buffer in
+--- one of them was silently hidden away.
+---@param cb fun()
+local function confirm_new_tab(cb)
+    local modified = 0
+    for _, win in ipairs(windows_to_close()) do
+        if vim.bo[vim.api.nvim_win_get_buf(win)].modified then
+            modified = modified + 1
+        end
+    end
+    if modified == 0 then
+        return cb()
+    end
+    local prompt = ("%d window(s) with unsaved changes will be closed — create the new tab?"):format(modified)
+    local ok_ui, ui = pcall(require, "lvim-ui")
+    if ok_ui and type(ui.confirm) == "function" then
+        ui.confirm({
+            prompt = prompt,
+            default_no = true,
+            callback = function(yes)
+                if yes then
+                    cb()
+                end
+            end,
+        })
+    elseif vim.fn.confirm(prompt, "&Yes\n&No", 2) == 1 then
+        cb()
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -196,36 +234,38 @@ local function tab_new(tab_name)
         notify.warn("No active workspace.")
         return
     end
-    local tabs = data.find_tabs and data.find_tabs(ws_id) or {}
-    if not tab_name or vim.trim(tab_name) == "" then
-        tab_name = get_next_tab_name(tabs)
-    end
-    local orig, try = tab_name, 0
-    while data.is_tab_name_exist and data.is_tab_name_exist(tab_name, ws_id) do
-        try = try + 1
-        tab_name = orig .. "_" .. tostring(try)
-    end
-    local json = vim.json.encode({ buffers = {}, created_at = os.time(), modified_at = os.time() })
-    local newid = data.add_tab(tab_name, json, ws_id)
-    if not newid or type(newid) ~= "number" or newid <= 0 then
-        notify.error("Failed to create tab.")
-        return
-    end
-    state.tab_ids = state.tab_ids or {}
-    table.insert(state.tab_ids, newid)
-    data.update_workspace_tabs(
-        vim.json.encode({ tab_ids = state.tab_ids, tab_active = newid, updated_at = os.time() }),
-        ws_id
-    )
-    -- Persist the OUTGOING tab's live layout/cursor BEFORE repointing active: the debounced autosave may not
-    -- have fired since the last change, and moving away without a forced save loses it (the panel switch_tab
-    -- path force-saves for exactly this reason).
-    if state.tab_active then
-        get_session().save_current_state(state.tab_active, true)
-    end
-    state.tab_active = newid
-    notify.info("Created new tab: " .. tab_name)
-    open_empty_window()
+    confirm_new_tab(function()
+        local tabs = data.find_tabs and data.find_tabs(ws_id) or {}
+        if not tab_name or vim.trim(tab_name) == "" then
+            tab_name = get_next_tab_name(tabs)
+        end
+        local orig, try = tab_name, 0
+        while data.is_tab_name_exist and data.is_tab_name_exist(tab_name, ws_id) do
+            try = try + 1
+            tab_name = orig .. "_" .. tostring(try)
+        end
+        local json = vim.json.encode({ buffers = {}, created_at = os.time(), modified_at = os.time() })
+        local newid = data.add_tab(tab_name, json, ws_id)
+        if not newid or type(newid) ~= "number" or newid <= 0 then
+            notify.error("Failed to create tab.")
+            return
+        end
+        state.tab_ids = state.tab_ids or {}
+        table.insert(state.tab_ids, newid)
+        data.update_workspace_tabs(
+            vim.json.encode({ tab_ids = state.tab_ids, tab_active = newid, updated_at = os.time() }),
+            ws_id
+        )
+        -- Persist the OUTGOING tab's live layout/cursor BEFORE repointing active: the debounced autosave may not
+        -- have fired since the last change, and moving away without a forced save loses it (the panel switch_tab
+        -- path force-saves for exactly this reason).
+        if state.tab_active then
+            get_session().save_current_state(state.tab_active, true)
+        end
+        state.tab_active = newid
+        notify.info("Created new tab: " .. tab_name)
+        open_empty_window()
+    end)
 end
 
 ---@param tab_id integer|nil
