@@ -240,20 +240,27 @@
 --- @field empty            string  Icon shown when a list is empty
 --- @field pre              string  Prefix icon shown before the active item
 
---- @class LvimSpace.HighlightConfig
---- @field bg                 string  Background hex colour for the panel
---- @field bg_line            string  Background hex colour for the selected line
---- @field fg                 string  Foreground hex colour for regular items
---- @field fg_line            string  Foreground hex colour for the selected line
---- @field bg_fuzzy           string  Background hex colour for the fuzzy-search panel
---- @field fg_fuzzy_primary   string  Foreground hex colour for primary fuzzy matches
---- @field fg_fuzzy_secondary string  Foreground hex colour for secondary fuzzy matches
+--- vim.notify output (config/messages.lua `notify`).
+--- @class LvimSpace.NotifyConfig
+--- @field enabled   boolean  Master switch: false silences every plugin notification
+--- @field min_level integer  Minimum vim.log.levels value shown (lower levels are dropped)
+--- @field title     string   Title of the notification popup
+--- @field timeout   integer  How long (ms) a notification stays visible
 
+--- Panel appearance (config/ui.lua). Colours are NOT configured here: the highlight groups are built from
+--- the lvim-utils palette (config/highlights.lua) — the old `highlight` colour table no longer exists.
 --- @class LvimSpace.UIConfig
---- @field mode       "area"|"float"|"bottom"   Where the panel docks (lvim-ui.surface)
---- @field title_line "border"|"statusline"     In area mode, where the panel title goes
---- @field icons      LvimSpace.IconsConfig      Icon strings
---- @field highlight  LvimSpace.HighlightConfig  Highlight colours
+--- @field mode            "area"|"float"|"bottom"           Where the panel docks (lvim-ui.surface)
+--- @field title_line      "row"|"border"|"statusline"|nil   Where the panel title goes (nil = inherit the central lvim-utils setting)
+--- @field title_pos       "left"|"center"|"right"|nil       Title alignment (nil = inherit)
+--- @field input           string                            Where prompts are asked (config/ui.lua `input`)
+--- @field spacing         integer                           Padding spaces in the status line
+--- @field devicons        boolean                           Show file devicons in the lists
+--- @field icon_provider   string|nil                        Icon provider override (nil = the shared default)
+--- @field icon_color_mode string|nil                        Icon colouring mode override (nil = the shared default)
+--- @field rows            table                             Row rendering options
+--- @field preview         table                             Preview panel options
+--- @field icons           LvimSpace.IconsConfig             Icon strings
 
 --- @class LvimSpace.GlobalKeymappings
 --- @field projects   string  Key to open the projects panel
@@ -292,7 +299,8 @@
 --- @class LvimSpace.Config
 --- @field save                    string                     Absolute path to the data directory
 --- @field lang                    string                     Language code (e.g. "en")
---- @field notify                  boolean                    Enable vim.notify messages
+--- @field notify                  LvimSpace.NotifyConfig     vim.notify output (enabled / min_level / title / timeout)
+--- @field highlights_force        boolean                    Re-apply the plugin highlight groups over a colorscheme's own
 --- @field filetype                string                     Filetype set on plugin buffers
 --- @field title                   string                     Panel window title text
 --- @field title_pos               string                     Title alignment: "left" | "center" | "right" (nil = inherit central)
