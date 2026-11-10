@@ -81,6 +81,8 @@ return {
     SSH_SYNCING = "Mirroring plugins to ",
     SSH_SYNC_FAILED = "Could not mirror the plugins to the server; not connected",
     SSH_SYNC_HELD = "Built files the server cannot run were not sent: ",
+    SSH_SYNC_IMPORTED = "Copied (the server has no toolchain to build them): ",
+    SSH_SYNC_IMPORT_HELD = "The server can neither build nor run these, install them there by hand: ",
     SSH_PROBE_FAILED = "Could not check the server before connecting; not connected",
     SSH_REMOTE_PLATFORM = "The server's platform is not one remote-ssh supports (Linux or macOS, x86_64 or arm64)",
     SSH_REMOTE_TMP = "The server's /tmp is not writable; remote-ssh puts its socket there",

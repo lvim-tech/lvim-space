@@ -398,6 +398,12 @@ local function plugin_sync(ssh_config)
             if done and report and #report.held > 0 then
                 notify.warn(state.lang.SSH_SYNC_HELD .. table.concat(report.held, ", "))
             end
+            if done and report and report.imported and #report.imported > 0 then
+                notify.info(state.lang.SSH_SYNC_IMPORTED .. table.concat(report.imported, ", "))
+            end
+            if done and report and report.import_held and #report.import_held > 0 then
+                notify.warn(state.lang.SSH_SYNC_IMPORT_HELD .. table.concat(report.import_held, ", "))
+            end
             cb(done, err)
         end)
     end
