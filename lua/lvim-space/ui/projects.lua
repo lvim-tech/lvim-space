@@ -81,9 +81,14 @@ end
 --- Tracks the panel cursor into `cache.last_cursor_position` through the SHARED view tracker
 --- (`common.track_cursor` — one augroup for all four views, since they share the list buffer).
 ---@param ctx table Panel context with `win` and `buf` fields
+--- Rebuilds the footer when the cursor crosses between a local and a remote project (defined with the footer).
+---@type fun(line: integer)
+local sync_footer
+
 local function setup_cursor_tracking(ctx)
     common.track_cursor(ctx, function(line)
         cache.last_cursor_position = line
+        sync_footer(line)
     end)
 end
 
@@ -155,6 +160,9 @@ M.refresh = function()
     cache.ctx.is_empty = #new_lines == 0
     cache.ctx.entities = cache.projects_from_db
     cache.ctx.id_list_map = cache.project_ids_map
+    if cache.ctx.win and vim.api.nvim_win_is_valid(cache.ctx.win) then
+        sync_footer(vim.api.nvim_win_get_cursor(cache.ctx.win)[1])
+    end
 
     ui.set_title(state.lang.PROJECTS or "Projects", #cache.projects_from_db)
 end
@@ -749,6 +757,89 @@ function M.navigate_to_search()
     require("lvim-space.ui.search").init({ on_back = M.init })
 end
 
+--- The server of the project on `line` of the list when it is a remote (ssh://) one, else false. Projects
+--- of one list may live on different servers, so the footer names the one the button would update.
+---@param line integer|nil
+---@return string|false
+local function remote_at(line)
+    local entry = line and cache.projects_from_db[line]
+    if not (entry and ssh.is_remote(entry.path)) then
+        return false
+    end
+    local t = ssh.parse(entry.path)
+    return t and t.host or false
+end
+
+--- Build the panel's navigable footer bar: each button reuses the same action functions the keymaps fire. The
+--- "update nvim" button is there only while the cursor is on a remote project (see `sync_footer`).
+---@param ctx table
+local function set_footer(ctx)
+    local line = ctx.win and vim.api.nvim_win_is_valid(ctx.win) and vim.api.nvim_win_get_cursor(ctx.win)[1] or nil
+    local remote = remote_at(line)
+    cache.footer_remote = remote
+    common.set_action_footer(ctx, {
+        reorder = true,
+        load = function()
+            M.handle_project_go({ space_mode = true })
+        end,
+        enter = function()
+            M.handle_project_go({ enter_mode = true })
+        end,
+        -- Only while the project under the cursor is a remote one: there is nothing to update on a local one.
+        update_nvim = remote and function()
+            M.handle_project_update_nvim()
+        end or nil,
+        update_nvim_host = remote or nil,
+        add = function()
+            M.handle_project_add()
+        end,
+        rename = function()
+            M.handle_project_rename(ctx)
+        end,
+        delete = function()
+            M.handle_project_delete(ctx)
+        end,
+        panels = {
+            {
+                key = config.keymappings.global.workspaces,
+                name = "workspaces",
+                run = function()
+                    M.navigate_to_workspaces()
+                end,
+            },
+            {
+                key = config.keymappings.global.tabs,
+                name = "tabs",
+                run = function()
+                    M.navigate_to_tabs()
+                end,
+            },
+            {
+                key = config.keymappings.global.files,
+                name = "files",
+                run = function()
+                    M.navigate_to_files()
+                end,
+            },
+            {
+                key = config.keymappings.global.search,
+                name = "search",
+                run = function()
+                    M.navigate_to_search()
+                end,
+            },
+        },
+    })
+end
+
+--- Rebuild the footer when the cursor moves to a project on another server (or between local and remote), and only then.
+---@param line integer
+sync_footer = function(line)
+    if cache.ctx and remote_at(line) ~= cache.footer_remote then
+        set_footer(cache.ctx)
+    end
+end
+
 --- Registers all buffer-local keymaps for the projects panel.
 ---@param ctx table Panel context containing `buf` and `entities` fields
 local function setup_keymaps(ctx)
@@ -814,58 +905,7 @@ local function setup_keymaps(ctx)
         end
     end, keymap_opts)
 
-    -- The navigable footer bar: each button reuses the same action functions the keymaps above fire.
-    common.set_action_footer(ctx, {
-        reorder = true,
-        load = function()
-            M.handle_project_go({ space_mode = true })
-        end,
-        enter = function()
-            M.handle_project_go({ enter_mode = true })
-        end,
-        update_nvim = function()
-            M.handle_project_update_nvim()
-        end,
-        add = function()
-            M.handle_project_add()
-        end,
-        rename = function()
-            M.handle_project_rename(ctx)
-        end,
-        delete = function()
-            M.handle_project_delete(ctx)
-        end,
-        panels = {
-            {
-                key = config.keymappings.global.workspaces,
-                name = "workspaces",
-                run = function()
-                    M.navigate_to_workspaces()
-                end,
-            },
-            {
-                key = config.keymappings.global.tabs,
-                name = "tabs",
-                run = function()
-                    M.navigate_to_tabs()
-                end,
-            },
-            {
-                key = config.keymappings.global.files,
-                name = "files",
-                run = function()
-                    M.navigate_to_files()
-                end,
-            },
-            {
-                key = config.keymappings.global.search,
-                name = "search",
-                run = function()
-                    M.navigate_to_search()
-                end,
-            },
-        },
-    })
+    set_footer(ctx)
 end
 
 --- Initialises (or re-initialises) the projects panel window.

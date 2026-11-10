@@ -695,7 +695,7 @@ local FOOTER_SEP = "LvimSpaceFooterSep"
 ---its hotkey does. Selection-dependent actions (move / load / enter / rename / delete / splits) are omitted on
 ---an empty list, mirroring the per-panel keymap guards; `add` and the panel-nav buttons always show.
 ---@param ctx EntityListState  The open list context (`is_empty` decides which buttons appear)
----@param handlers table  `{ load, enter, update_nvim, add, rename, delete, split_v, split_h, reorder, panels }`; any nil entry is skipped, `panels` is a ready list of `{ key, name, run }`
+---@param handlers table  `{ load, enter, update_nvim, update_nvim_host, add, rename, delete, split_v, split_h, reorder, panels }`; any nil entry is skipped, `panels` is a ready list of `{ key, name, run }`
 M.set_action_footer = function(ctx, handlers)
     handlers = handlers or {}
     local akeys = (config.keymappings and config.keymappings.action) or {}
@@ -728,7 +728,11 @@ M.set_action_footer = function(ctx, handlers)
         },
         load = { name = "load", key = key_badge(akeys.switch), run = handlers.load },
         enter = { name = "enter", key = key_badge(akeys.enter), run = handlers.enter },
-        update_nvim = { name = "update nvim", key = key_badge(akeys.update_nvim), run = handlers.update_nvim },
+        update_nvim = {
+            name = handlers.update_nvim_host and ("update nvim · " .. handlers.update_nvim_host) or "update nvim",
+            key = key_badge(akeys.update_nvim),
+            run = handlers.update_nvim,
+        },
         add = { name = "add", key = key_badge(akeys.add), run = handlers.add },
         rename = { name = "rename", key = key_badge(akeys.rename), run = handlers.rename },
         delete = { name = "delete", key = key_badge(akeys.delete), run = handlers.delete },
