@@ -373,7 +373,8 @@ end
 --- project state is left alone — the UI simply moves to the remote Neovim. A failure connects nothing and is
 --- reported with its reason.
 ---@param selected_project table Project record whose `path` is an `ssh://` URI
-local function open_remote_project(selected_project)
+---@param update_nvim boolean|nil  connect with Neovim's "Update Nvim" answer instead of "Yes"
+local function open_remote_project(selected_project, update_nvim)
     if not ssh.supported() then
         notify.error(state.lang.SSH_UNSUPPORTED)
         return
@@ -390,6 +391,8 @@ local function open_remote_project(selected_project)
         auth = ssh_config.auth,
         timeout = (timeout and timeout > 0) and timeout or nil,
         fix_environment = ssh_config.fix_environment or ssh_config.fix_runtime_dir,
+        confirm_connect = ssh_config.confirm_connect,
+        update_nvim = update_nvim,
         sync = plugin_sync(ssh_config),
         on_warn = function(code, detail)
             notify.warn((state.lang[code] or code) .. (detail and detail ~= "" and (": " .. detail) or ""))
@@ -638,6 +641,21 @@ function M.handle_project_go(opts)
     space_load_project(project_id_selected, selected_line_in_ui)
 end
 
+--- Opens the REMOTE project under the cursor, answering Neovim's "Connect?" with "Update Nvim": the nightly on
+--- the server is refreshed, the project opens as on any load. A local project has nothing to update.
+function M.handle_project_update_nvim()
+    local id = common.get_id_at_cursor(cache.project_ids_map)
+    local project = id and data.find_project_by_id(id)
+    if not project then
+        return
+    end
+    if not ssh.is_remote(project.path) then
+        notify.info(state.lang.SSH_UPDATE_NVIM_LOCAL)
+        return
+    end
+    open_remote_project(project, true)
+end
+
 --- Moves the project under the cursor one position up in the sort order.
 ---@param ctx table Panel context with a valid `win` field
 function M.handle_move_up(ctx)
@@ -768,6 +786,13 @@ local function setup_keymaps(ctx)
             M.handle_project_go({ enter_mode = true })
         end
     end, keymap_opts)
+    if config.keymappings.action.update_nvim and config.keymappings.action.update_nvim ~= "" then
+        vim.keymap.set("n", config.keymappings.action.update_nvim, function()
+            if next(ctx.entities) ~= nil then
+                M.handle_project_update_nvim()
+            end
+        end, keymap_opts)
+    end
     vim.keymap.set("n", config.keymappings.global.workspaces, function()
         if next(ctx.entities) ~= nil then
             M.navigate_to_workspaces()
@@ -797,6 +822,9 @@ local function setup_keymaps(ctx)
         end,
         enter = function()
             M.handle_project_go({ enter_mode = true })
+        end,
+        update_nvim = function()
+            M.handle_project_update_nvim()
         end,
         add = function()
             M.handle_project_add()

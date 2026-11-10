@@ -15,6 +15,7 @@ local M = {}
 local ACTIONS = {
     { "switch", "load the entity (stay in the panel)" },
     { "enter", "enter the entity (close the panels)" },
+    { "update_nvim", "remote project: connect and update Nvim on the server" },
     { "add", "add" },
     { "rename", "rename" },
     { "delete", "delete" },

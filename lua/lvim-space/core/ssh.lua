@@ -637,6 +637,86 @@ function M.fix_argv(t, rc)
     return argv
 end
 
+-- ---------------------------------------------------------------------------
+-- Neovim's own "Connect?" question
+-- ---------------------------------------------------------------------------
+
+--- Hosts `:connect` has already succeeded to, from here: `stdpath("state")/lvim-space/ssh-hosts.json`.
+---@return string
+local function hosts_file()
+    return vim.fs.joinpath(vim.fn.stdpath("state"), "lvim-space", "ssh-hosts.json")
+end
+
+---@return table<string, boolean>
+local function read_hosts()
+    local fd = io.open(hosts_file(), "r")
+    if not fd then
+        return {}
+    end
+    local raw = fd:read("*a")
+    fd:close()
+    local ok, data = pcall(vim.json.decode, raw or "")
+    return (ok and type(data) == "table") and data or {}
+end
+
+--- Whether `:connect` has succeeded to this address before.
+---@param addr string  ssh://[user@]host[:port]
+---@return boolean
+function M.known_host(addr)
+    return read_hosts()[addr] == true
+end
+
+--- Remember that `:connect` succeeded to this address.
+---@param addr string
+function M.remember_host(addr)
+    local hosts = read_hosts()
+    if hosts[addr] then
+        return
+    end
+    hosts[addr] = true
+    pcall(vim.fn.mkdir, vim.fs.dirname(hosts_file()), "p")
+    local fd = io.open(hosts_file(), "w")
+    if fd then
+        fd:write(vim.json.encode(hosts))
+        fd:close()
+    end
+end
+
+--- Run `:connect addr`. With `answer`, Neovim's own "Connect? Yes / Update Nvim / No" question (remote-ssh asks
+--- it on EVERY connect: it installs Nvim there and overwrites ~/.config/nvim-remote) is answered "Yes" — that
+--- question only, and only for this call. `vim.fn.confirm` is replaced while `:connect` runs, which is where
+--- remote-ssh asks, synchronously, before it starts anything; it is restored before this returns. A question
+--- worded differently (a later Neovim) is not recognised and is asked as usual.
+---@param addr string
+---@param answer boolean|"update"  true = "Yes", "update" = "Update Nvim" (Yes where it is not offered), false = ask
+---@return boolean ok
+---@return any err
+---@return boolean accepted  the remote-ssh question was answered Yes / Update Nvim (here or by the user)
+function M.run_connect(addr, answer)
+    local cmd = { cmd = "connect", args = { addr } }
+    local real = vim.fn.confirm
+    local choice -- what the remote-ssh question got: answered here, or picked by the user
+    vim.fn.confirm = function(msg, choices, ...)
+        if type(choices) == "string" and choices:find("^Connect%?") and choices:find("&Yes", 1, true) then
+            if answer == "update" then
+                -- "Update Nvim" is offered only by a nightly (prerelease) Neovim; without it, plain Yes.
+                choice = choices:find("&Update", 1, true) and 2 or 1
+            elseif answer then
+                choice = 1
+            else
+                choice = real(msg, choices, ...)
+            end
+            return choice
+        end
+        return real(msg, choices, ...)
+    end
+    local ok, err = pcall(vim.api.nvim_cmd, cmd, {})
+    vim.fn.confirm = real
+    -- "Yes" (1) or "Update Nvim" (2) connected; "No", or a question never asked (not recognised), did not
+    -- prove anything worth remembering.
+    return ok, err, choice == 1 or choice == 2
+end
+
 --- Ask the user a yes/no question. THE one place lvim-space asks during a connect; tests replace it.
 ---@param message string
 ---@return boolean
@@ -756,6 +836,8 @@ end
 ---@field auth "auto"|"key"|"password"|nil  How to authenticate (default "auto").
 ---@field timeout integer|nil               Timeout (ms) for each non-interactive ssh call.
 ---@field fix_environment "ask"|"always"|"never"|nil  The environment block on the server (default "ask").
+---@field update_nvim boolean|nil  answer Neovim's "Connect?" with "Update Nvim" (the project panel's update action)
+---@field confirm_connect "first"|"always"|"never"|nil  Neovim's own "Connect?" question: asked the first time per address (default), every time, or never
 ---@field sync (fun(uri: string, cb: fun(ok: boolean, err: string|nil)))|nil  Mirror the plugins to the
 ---      server before connecting (lvim-pack's `remote_sync`). A failure stops the connection.
 ---@field on_warn (fun(code: string, detail: string|nil))|nil  A finding that does not stop the connection.
@@ -792,8 +874,18 @@ function M.open(project, opts)
     local payload = vim.json.encode({ version = 1, path = t.path, name = project.name or M.default_name(project.path) })
 
     local function connect()
-        local ok, err = pcall(vim.api.nvim_cmd, { cmd = "connect", args = { M.address(t) } }, {})
+        local addr = M.address(t)
+        local policy = opts.confirm_connect or "first"
+        local answer = policy == "never" or (policy == "first" and M.known_host(addr))
+        if opts.update_nvim then
+            answer = "update"
+        end
+        local ok, err, accepted = M.run_connect(addr, answer)
         if ok then
+            -- Remembered only when the question was accepted: a "No" there must not turn into a "Yes" later.
+            if accepted then
+                M.remember_host(addr)
+            end
             return done(true, nil, nil)
         end
         -- Nothing will read the request now: withdraw it, so a LATER plain `:connect` does not act on it.

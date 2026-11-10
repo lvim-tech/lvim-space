@@ -70,6 +70,7 @@ return {
     SSH_PATH_NOT_ABSOLUTE = "Remote project path must be absolute (no '~', '.' or '..'): ssh://host/absolute/path",
     SSH_UNSUPPORTED = "This Neovim has no ':connect ssh://' (remote-ssh); a recent nightly is required",
     SSH_CONNECTING = "Connecting to remote project: ",
+    SSH_UPDATE_NVIM_LOCAL = "Update Nvim is for a remote (ssh://) project; this one is local",
     SSH_AUTH_FAILED = "SSH authentication was cancelled or failed; not connected",
     SSH_WRITE_FAILED = "Could not hand the project over to the server; not connected",
     SSH_CONNECT_FAILED = "':connect' failed",

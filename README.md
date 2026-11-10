@@ -150,6 +150,7 @@ Below are the default keybindings. You can customize these in the `keymappings` 
 | Action  | Move Up          | `K`         | Move selected entity up in order               |
 | Action  | Move Down        | `J`         | Move selected entity down in order             |
 | Action  | Filter           | `/`         | Open the picker over the current list to filter and jump |
+| Action  | Update Nvim      | `u`         | Remote project: connect and pick Neovim's "Update Nvim" on the server (projects panel) |
 | Action  | Help             | `g?`        | The keymap **cheatsheet** (also a `help` chip on the footer bar) |
 | Nav     | Sector Down      | `<C-j>`     | Descend the focus sector (list → footer bar → messages) |
 | Nav     | Sector Up        | `<C-k>`     | Ascend the focus sector (footer bar → list → editor)    |
@@ -273,6 +274,11 @@ require("lvim-space").setup({
         --   "never"  only report it
         -- (`fix_runtime_dir`, the earlier name, is still read.)
         fix_environment = "ask",
+        -- Neovim asks "Connect? Yes / Update Nvim / No" on every :connect ssh://.
+        --   "first"  ask until a connect to that address is accepted, then answer Yes (default)
+        --   "always" let it ask every time (`u` on a remote project picks "Update Nvim" anyway)
+        --   "never"  always answer Yes
+        confirm_connect = "first",
         -- Mirror every dir= plugin checkout to the server first (lvim-pack's remote_sync), so the
         -- remote Neovim runs the same code as this one. A failed mirror stops the connection.
         sync_plugins = true,
@@ -469,6 +475,7 @@ require("lvim-space").setup({
             rename = "r",
             switch = "<Space>",
             enter = "<CR>",
+            update_nvim = "u", -- remote project: connect and update Nvim on the server
             split_v = "v",
             split_h = "h",
             move_down = "J",

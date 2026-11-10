@@ -98,6 +98,14 @@ Core ~
                             "always" writes it unasked, "never" only
                             reports. `fix_runtime_dir` is the earlier name.
                             See |lvim-space-ssh-check|.
+  ssh.confirm_connect (string)
+                            Neovim's own "Connect? Yes / Update Nvim / No"
+                            question, asked on every :connect ssh://.
+                            "first" (default) lets it ask until a connect to
+                            that address is accepted, then answers Yes;
+                            "always" lets it ask every time. To update Nvim
+                            on the server, press `u` on the remote project;
+                            "never" always answers Yes.
   ssh.sync_plugins (boolean)
                             Mirror the dir= plugin checkouts to the server
                             before connecting, through lvim-pack

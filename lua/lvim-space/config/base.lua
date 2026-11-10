@@ -32,6 +32,10 @@ return {
         -- (~/.bashrc, ~/.zshenv); "always" writes it unasked; "never" only reports. (`fix_runtime_dir`, the
         -- earlier name, is still read.)
         fix_environment = "ask",
+        -- Neovim asks "Connect? Yes / Update Nvim / No" on every :connect ssh:// (it installs Nvim there and
+        -- overwrites ~/.config/nvim-remote). "first" lets it ask until a connect to that address succeeds, then
+        -- answers Yes; "always" lets it ask every time (the way to pick "Update Nvim"); "never" always answers Yes.
+        confirm_connect = "first",
         -- Mirror every dir= plugin checkout to the server before connecting (through lvim-pack's
         -- remote_sync, when lvim-pack is the plugin manager), so the remote Neovim runs the same code.
         sync_plugins = true,

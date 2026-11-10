@@ -1220,3 +1220,100 @@ it("after a mirror, the server's lvim-space is this one: no warning about an old
     eq({}, warnings)
     eq(true, outcome.ok)
 end)
+
+describe("lvim-space ssh: Neovim's own Connect? question")
+
+--- run_connect with `vim.fn.confirm` and `:connect` replaced: returns what :connect saw `confirm` answer,
+--- for the remote-ssh question and for another one, and what `confirm` is afterwards.
+local function connect_with(answer)
+    local saved_confirm, saved_cmd = vim.fn.confirm, vim.api.nvim_cmd
+    local stub = function()
+        return 3 -- what a user would pick
+    end
+    vim.fn.confirm = stub
+    local seen = {}
+    vim.api.nvim_cmd = function(cmd)
+        eq("connect", cmd.cmd)
+        seen.remote = vim.fn.confirm("This will install Nvim…", "Connect? &Yes\n&Update Nvim\n&No", 1, "Question")
+        seen.other = vim.fn.confirm("Save changes?", "&Yes\n&No", 2)
+        return ""
+    end
+    local ok, _, accepted = ssh.run_connect("ssh://box", answer)
+    seen.accepted = accepted
+    seen.after = vim.fn.confirm
+    vim.fn.confirm, vim.api.nvim_cmd = saved_confirm, saved_cmd
+    return ok, seen, stub
+end
+
+it("answered Yes only when asked to, and only that question, only during :connect", function()
+    local ok, seen, stub = connect_with(true)
+    eq(true, ok)
+    eq(1, seen.remote, "remote-ssh's question: Yes")
+    eq(3, seen.other, "any other question is the user's")
+    eq(stub, seen.after, "confirm is restored")
+    eq(true, seen.accepted)
+    ok, seen = connect_with(false)
+    eq(3, seen.remote, "not answering: the user is asked")
+    eq(false, seen.accepted, "the user picked No (3): not accepted, so not remembered")
+end)
+
+it("the first successful connect to an address is remembered, so the next one is answered", function()
+    local addr = "ssh://lvim-test-" .. vim.uv.hrtime()
+    eq(false, ssh.known_host(addr))
+    ssh.remember_host(addr)
+    eq(true, ssh.known_host(addr))
+    eq(false, ssh.known_host(addr .. "x"))
+end)
+
+it("open: confirm_connect decides whether :connect is answered", function()
+    local saved = ssh.run_connect
+    local answered = {}
+    ssh.run_connect = function(addr, answer)
+        answered[#answered + 1] = answer
+        return true, nil, true
+    end
+    local ok, err = pcall(function()
+        local proj = { name = "p", path = "ssh://lvim-fresh-" .. vim.uv.hrtime() .. "/srv" }
+        open(proj, "key", { run = always_ok }, { confirm_connect = "first" })
+        open(proj, "key", { run = always_ok }, { confirm_connect = "first" })
+        open(proj, "key", { run = always_ok }, { confirm_connect = "always" })
+        open(proj, "key", { run = always_ok }, { confirm_connect = "never" })
+    end)
+    ssh.run_connect = saved
+    if not ok then
+        error(err, 0)
+    end
+    eq({ false, true, false, true }, answered, "first: asked once; always: asked; never: answered")
+end)
+
+it("update_nvim answers Update Nvim, and plain Yes where a stable Neovim does not offer it", function()
+    local saved_confirm, saved_cmd = vim.fn.confirm, vim.api.nvim_cmd
+    local got = {}
+    vim.fn.confirm = function()
+        return 3
+    end
+    vim.api.nvim_cmd = function()
+        got[#got + 1] = vim.fn.confirm("…", "Connect? &Yes\n&Update Nvim\n&No", 1)
+        got[#got + 1] = vim.fn.confirm("…", "Connect? &Yes\n&No", 1)
+        return ""
+    end
+    local _, _, accepted = ssh.run_connect("ssh://box", "update")
+    vim.fn.confirm, vim.api.nvim_cmd = saved_confirm, saved_cmd
+    eq({ 2, 1 }, got)
+    eq(true, accepted)
+end)
+
+it("open with update_nvim connects with the update answer, whatever confirm_connect says", function()
+    local saved = ssh.run_connect
+    local answered
+    ssh.run_connect = function(_, answer)
+        answered = answer
+        return true, nil, true
+    end
+    local ok, err = pcall(open, PROJECT, "key", { run = always_ok }, { update_nvim = true, confirm_connect = "always" })
+    ssh.run_connect = saved
+    if not ok then
+        error(err, 0)
+    end
+    eq("update", answered)
+end)

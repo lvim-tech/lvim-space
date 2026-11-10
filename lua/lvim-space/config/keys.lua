@@ -22,6 +22,8 @@ return {
             rename = "r",
             switch = "<Space>",
             enter = "<CR>",
+            -- Projects panel, a REMOTE project: connect and pick Neovim's "Update Nvim" on the server.
+            update_nvim = "u",
             split_v = "v",
             split_h = "h",
             move_down = "J",
