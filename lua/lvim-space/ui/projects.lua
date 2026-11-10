@@ -350,13 +350,16 @@ local function plugin_sync(ssh_config)
     if ssh_config.sync_plugins == false then
         return nil
     end
-    local ok, pack = pcall(require, "lvim-pack")
-    if not ok or type(pack.remote_sync) ~= "function" then
+    -- The MODULE, not `require("lvim-pack").remote_sync`: the loader that answers `require("lvim-pack")`
+    -- may be an older installed copy without it, while a newer lvim-pack checkout on the runtimepath (a
+    -- dev `dir=` entry) still provides `lvim-pack.remote` — and shares the loader's live plugin state.
+    local ok, remote = pcall(require, "lvim-pack.remote")
+    if not ok or type(remote) ~= "table" or type(remote.sync) ~= "function" then
         return nil
     end
     return function(uri, cb)
         notify.info(state.lang.SSH_SYNCING .. uri)
-        pack.remote_sync(uri, nil, function(done, err, report)
+        remote.sync(uri, nil, function(done, err, report)
             if done and report and #report.held > 0 then
                 notify.warn(state.lang.SSH_SYNC_HELD .. table.concat(report.held, ", "))
             end
@@ -386,7 +389,7 @@ local function open_remote_project(selected_project)
     ssh.open(selected_project, {
         auth = ssh_config.auth,
         timeout = (timeout and timeout > 0) and timeout or nil,
-        fix_runtime_dir = ssh_config.fix_runtime_dir,
+        fix_environment = ssh_config.fix_environment or ssh_config.fix_runtime_dir,
         sync = plugin_sync(ssh_config),
         on_warn = function(code, detail)
             notify.warn((state.lang[code] or code) .. (detail and detail ~= "" and (": " .. detail) or ""))

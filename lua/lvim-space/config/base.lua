@@ -25,11 +25,13 @@ return {
     ssh = {
         auth = "auto",
         timeout = 30000,
-        -- A server that exports XDG_RUNTIME_DIR without creating the directory (a CageFS jail on shared
-        -- hosting) stops a newer remote Nvim from starting. "ask" offers to add a guarded unset to the top
-        -- of the login shell's startup file there (~/.bashrc, ~/.zshenv); "always" does it unasked; "never"
-        -- only reports it.
-        fix_runtime_dir = "ask",
+        -- What the server's environment lacks for remote Neovim and for the tools installed there: an
+        -- XDG_RUNTIME_DIR exported without its directory (a CageFS jail on shared hosting), and node / npm or
+        -- python3 present on the host but not on PATH (CloudLinux alt-nodejs / alt-python, nvm, mise).
+        -- "ask" offers to write one marked block at the top of the login shell's startup file there
+        -- (~/.bashrc, ~/.zshenv); "always" writes it unasked; "never" only reports. (`fix_runtime_dir`, the
+        -- earlier name, is still read.)
+        fix_environment = "ask",
         -- Mirror every dir= plugin checkout to the server before connecting (through lvim-pack's
         -- remote_sync, when lvim-pack is the plugin manager), so the remote Neovim runs the same code.
         sync_plugins = true,

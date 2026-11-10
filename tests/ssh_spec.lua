@@ -54,6 +54,10 @@ local HEALTHY = table.concat({
     "has_curl=1",
     "has_tar=1",
     "has_sha256sum=1",
+    "has_node=1",
+    "has_npm=1",
+    "has_python3=1",
+    "has_venv=1",
     "plugin=ssh",
 }, "\n") .. "\n"
 
@@ -771,6 +775,7 @@ describe("lvim-space ssh: checking the server before :connect")
 ---@param changes table<string, string|false>  key -> new value, or false to drop the line
 ---@return table
 local function probe_with(changes)
+    changes = vim.deepcopy(changes) -- it is consumed below; the caller's table stays as it was
     local lines = {}
     for line in HEALTHY:gmatch("[^\n]+") do
         local key = line:match("^([%w_]+)=")
@@ -796,7 +801,7 @@ end
 it("assess: a healthy server blocks nothing and warns about nothing", function()
     local v = ssh.assess(ssh.parse_facts(HEALTHY))
     eq(nil, v.blocking)
-    eq(nil, v.fixable)
+    eq(nil, v.env)
     eq({}, v.warnings)
 end)
 
@@ -818,11 +823,87 @@ it("assess: each blocking finding, in the order remote-ssh would trip over it", 
     eq("curl, tar, sha256sum", v.blocking.detail, "every missing tool is named")
 end)
 
-it("assess: a missing runtime dir under bash or zsh is fixable, in that shell's own startup file", function()
+it("assess: a missing runtime dir under bash or zsh goes into that shell's own startup file", function()
     local v = ssh.assess(ssh.parse_facts(probe_with({ runtime_dir_missing = "/run/user/2018" }).stdout))
-    eq({ rc = ".bashrc", dir = "/run/user/2018" }, v.fixable)
+    eq(".bashrc", v.env.rc)
+    eq({ { kind = "runtime_dir", what = "/run/user/2018", lines = { ssh.RUNTIME_DIR_LINE } } }, v.env.changes)
     v = ssh.assess(ssh.parse_facts(probe_with({ runtime_dir_missing = "/run/user/2018", shell = "zsh" }).stdout))
-    eq(".zshenv", v.fixable.rc)
+    eq(".zshenv", v.env.rc)
+end)
+
+--- The node / python lines of a CloudLinux host: every alt version, on PATH none of them.
+local ALT = {
+    has_node = false,
+    has_npm = false,
+    has_python3 = false,
+    has_venv = false,
+}
+local ALT_LINES = table.concat({
+    "node_candidate=v16.20.2 /opt/alt/alt-nodejs16/root/usr/bin",
+    "node_candidate=v22.23.4 /opt/alt/alt-nodejs22/root/usr/bin",
+    "node_candidate=v23.1.0 /opt/alt/alt-nodejs23/root/usr/bin",
+    "node_candidate=v24.22.2 /opt/alt/alt-nodejs24/root/usr/bin",
+    "python_candidate=3.8.18 /opt/alt/python38/bin",
+    "python_candidate=3.11.9 /opt/alt/python311/bin",
+    "python_candidate=3.9.21 /opt/alt/python39/bin",
+}, "\n")
+
+--- `probe_with(changes)` plus the candidate lines.
+local function alt_probe(changes)
+    local p = probe_with(vim.tbl_extend("force", vim.deepcopy(ALT), changes or {}))
+    p.stdout = p.stdout .. ALT_LINES .. "\n"
+    return p
+end
+
+it("assess: runtimes off PATH are found and the newest suitable one is put on it", function()
+    local v = ssh.assess(ssh.parse_facts(alt_probe().stdout))
+    eq(nil, v.blocking)
+    eq(".bashrc", v.env.rc)
+    eq(
+        { "node", "python" },
+        vim.tbl_map(function(c)
+            return c.kind
+        end, v.env.changes)
+    )
+    eq({ ssh.path_line("/opt/alt/alt-nodejs24/root/usr/bin"), "export PATH" }, v.env.changes[1].lines, "newest LTS")
+    eq({ ssh.path_line("/opt/alt/python311/bin"), "export PATH" }, v.env.changes[2].lines, "newest 3.x from 3.9")
+end)
+
+it("assess: picking runtimes", function()
+    local function c(v, dir)
+        return { version = v, dir = dir }
+    end
+    eq(
+        "/b",
+        ssh.pick_node({ c({ 22, 1 }, "/a"), c({ 24, 0 }, "/b"), c({ 25, 3 }, "/c") }).dir,
+        "an LTS over a newer odd line"
+    )
+    eq("/c", ssh.pick_node({ c({ 19, 0 }, "/c"), c({ 16, 9 }, "/d") }).dir, "no LTS from 18 up: the newest from 18 up")
+    eq(nil, ssh.pick_node({ c({ 16, 0 }, "/d") }), "nothing new enough")
+    eq(nil, ssh.pick_python({ c({ 3, 8, 1 }, "/p") }), "3.8 is too old")
+    eq("/q", ssh.pick_python({ c({ 3, 9, 1 }, "/p"), c({ 3, 12, 0 }, "/q") }).dir)
+end)
+
+it("assess: a missing runtime with nothing to offer only warns", function()
+    local v = ssh.assess(ssh.parse_facts(probe_with(ALT).stdout))
+    eq(nil, v.blocking)
+    eq(nil, v.env)
+    eq({ { code = "SSH_REMOTE_NO_NODE" }, { code = "SSH_REMOTE_NO_PYTHON" } }, v.warnings)
+end)
+
+it("assess: a runtime off PATH under a shell lvim-space cannot configure is named, not changed", function()
+    local v = ssh.assess(ssh.parse_facts(alt_probe({ shell = "fish" }).stdout))
+    eq(nil, v.env)
+    eq("SSH_REMOTE_ENV_MANUAL", v.warnings[1].code)
+    truthy(v.warnings[1].detail:find("/opt/alt/alt-nodejs24/root/usr/bin", 1, true))
+end)
+
+it("parse_facts: a candidate whose directory is not plain is ignored", function()
+    local f = ssh.parse_facts(
+        "node_candidate=v22.1.0 /opt/x;rm -rf ~\nnode_candidate=v22.1.0 /opt/a'b\n"
+            .. "node_candidate=v22.1.0 relative/bin\nnode_candidate=v22.1.0 /ok/bin\n"
+    )
+    eq({ { version = { 22, 1, 0 }, dir = "/ok/bin" } }, f.node_candidates)
 end)
 
 it("a healthy server: write, probe, connect", function()
@@ -855,19 +936,28 @@ it("a probe that fails is reported, and the request withdrawn", function()
     eq({ ok = false, code = "SSH_PROBE_FAILED", detail = "sh: not found" }, outcome)
 end)
 
-it("missing runtime dir, user agrees: fix, probe again, connect", function()
+it("environment needed, user agrees: one question, one block, probe again, connect", function()
     local _, outcome, f = open(PROJECT, "key", {
         run = always_ok,
         confirm = true,
         probe = function(n)
-            return n == 1 and probe_with({ runtime_dir_missing = "/run/user/2018" }) or probe_with({})
+            return n == 1 and alt_probe({ runtime_dir_missing = "/run/user/2018" }) or probe_with({})
         end,
     })
     eq({ "write", "probe", "confirm", "fix", "probe", "connect" }, f.log)
-    truthy(f.questions[1]:find("/run/user/2018", 1, true), "the question names the directory")
-    truthy(f.questions[1]:find("~/.bashrc", 1, true), "and the file it would change")
+    local q = f.questions[1]
+    truthy(q:find("/run/user/2018", 1, true), "the question names the runtime dir")
+    truthy(q:find("node 24.22.2", 1, true), "the node it puts on PATH")
+    truthy(q:find("python 3.11.9", 1, true), "and the python")
+    truthy(q:find("~/.bashrc", 1, true), "and the file it changes")
     eq(batch({ "-p", "2222", "--", "deploy@box.example", "sh -s lvim-space-fix .bashrc" }), f.fixes[1].argv)
-    eq(ssh.FIX_SCRIPT, f.fixes[1].stdin)
+    eq(ssh.FIX_SCRIPT .. table.concat({
+        ssh.RUNTIME_DIR_LINE,
+        ssh.path_line("/opt/alt/alt-nodejs24/root/usr/bin"),
+        "export PATH",
+        ssh.path_line("/opt/alt/python311/bin"),
+        "export PATH",
+    }, "\n") .. "\n", f.fixes[1].stdin, "the script, then the lines as data")
     eq({ ok = true }, outcome)
 end)
 
@@ -883,24 +973,42 @@ it("missing runtime dir, user declines: nothing on the server changes, nothing c
     eq({ ok = false, code = "SSH_REMOTE_RUNTIME_DIR", detail = "/run/user/2018" }, outcome)
 end)
 
-it("fix_runtime_dir = always fixes without asking; never reports without asking", function()
+it("only runtimes needed, user declines: it connects anyway, and warns what will not install", function()
+    local _, outcome, f, warnings = open(PROJECT, "key", {
+        run = always_ok,
+        confirm = false,
+        probe = function()
+            return alt_probe()
+        end,
+    })
+    eq({ "write", "probe", "confirm", "connect" }, f.log)
+    eq(
+        { "SSH_REMOTE_NO_NODE", "SSH_REMOTE_NO_PYTHON" },
+        vim.tbl_map(function(w)
+            return w.code
+        end, warnings)
+    )
+    eq(true, outcome.ok)
+end)
+
+it("fix_environment = always writes without asking; never reports without asking", function()
     local probe = function(n)
         return n == 1 and probe_with({ runtime_dir_missing = "/run/user/2018" }) or probe_with({})
     end
-    local _, outcome, f = open(PROJECT, "key", { run = always_ok, probe = probe }, { fix_runtime_dir = "always" })
+    local _, outcome, f = open(PROJECT, "key", { run = always_ok, probe = probe }, { fix_environment = "always" })
     eq({ "write", "probe", "fix", "probe", "connect" }, f.log)
     eq(true, outcome.ok)
-    _, outcome, f = open(PROJECT, "key", { run = always_ok, probe = probe }, { fix_runtime_dir = "never" })
+    _, outcome, f = open(PROJECT, "key", { run = always_ok, probe = probe }, { fix_environment = "never" })
     eq({ "write", "probe", "clear" }, f.log)
     eq("SSH_REMOTE_RUNTIME_DIR", outcome.code)
 end)
 
-it("a fix the shell does not read stops after the second probe instead of looping", function()
+it("a block the shell does not read stops after the second probe instead of looping", function()
     local _, outcome, f = open(PROJECT, "key", {
         run = always_ok,
         confirm = true,
         probe = function()
-            return probe_with({ runtime_dir_missing = "/run/user/2018" })
+            return alt_probe()
         end,
     })
     eq({ "write", "probe", "confirm", "fix", "probe", "clear" }, f.log)
@@ -978,35 +1086,101 @@ it("the probe reports what it sees and changes nothing", function()
     eq(nil, present.runtime_dir_missing, "an existing runtime dir is not reported")
 end)
 
-it("the fix prepends the guard once, keeps the file, and the guard does what it says", function()
+it("the probe finds a runtime off PATH where nvm keeps it", function()
+    local home = vim.fn.tempname()
+    local bin = home .. "/.nvm/versions/node/v22.4.1/bin"
+    vim.fn.mkdir(bin, "p")
+    for _, tool in ipairs({ "node", "npm" }) do
+        vim.fn.writefile({ "#!/bin/sh", "echo v22.4.1" }, bin .. "/" .. tool)
+        vim.uv.fs_chmod(bin .. "/" .. tool, tonumber("755", 8))
+    end
+    local f = ssh.parse_facts((sh(ssh.PROBE_SCRIPT, { "x" }, { PATH = "/usr/bin:/bin" }, home)))
+    eq({ { version = { 22, 4, 1 }, dir = bin } }, f.node_candidates)
+end)
+
+--- Run the fix as the local side sends it: the script, then `lines` as data.
+local function fix(home, rc, lines)
+    local _, code = sh(ssh.FIX_SCRIPT .. table.concat(lines, "\n") .. "\n", { "lvim-space-fix", rc }, {
+        PATH = vim.env.PATH,
+    }, home)
+    return code
+end
+
+it("the fix writes one block at the top, merges later lines into it, keeps the file", function()
     local home = vim.fn.tempname()
     vim.fn.mkdir(home, "p")
     local rc = home .. "/.bashrc"
     vim.fn.writefile({ "# existing", '[ -z "$PS1" ] && return', "alias ll='ls -l'" }, rc)
     vim.uv.fs_chmod(rc, tonumber("640", 8))
-    local _, code = sh(ssh.FIX_SCRIPT, { "lvim-space-fix", ".bashrc" }, { PATH = vim.env.PATH }, home)
-    eq(0, code)
-    local _, again = sh(ssh.FIX_SCRIPT, { "lvim-space-fix", ".bashrc" }, { PATH = vim.env.PATH }, home)
-    eq(0, again)
+    local nodebin = home .. "/node/bin"
+    vim.fn.mkdir(nodebin, "p")
+    vim.fn.writefile({ "#!/bin/sh", "echo node-here" }, nodebin .. "/node")
+    vim.uv.fs_chmod(nodebin .. "/node", tonumber("755", 8))
+
+    eq(0, fix(home, ".bashrc", { ssh.RUNTIME_DIR_LINE }))
+    eq(0, fix(home, ".bashrc", { ssh.path_line(nodebin), "export PATH" }))
+    eq(0, fix(home, ".bashrc", { ssh.RUNTIME_DIR_LINE, ssh.path_line(nodebin), "export PATH" }), "again: no change")
+
     local lines = vim.fn.readfile(rc)
-    eq(ssh.FIX_MARKER, lines[1], "the guard is at the very top, before any early return")
-    eq(1, #vim.tbl_filter(function(l)
-        return l == ssh.FIX_MARKER
-    end, lines), "added once")
+    eq(ssh.ENV_MARKER, lines[1], "at the very top, before any early return")
+    local count = function(text)
+        return #vim.tbl_filter(function(l)
+            return l == text
+        end, lines)
+    end
+    eq(1, count(ssh.ENV_MARKER), "one block")
+    eq(1, count(ssh.RUNTIME_DIR_LINE), "each line once")
+    eq(1, count(ssh.path_line(nodebin)))
     eq({ "# existing", '[ -z "$PS1" ] && return', "alias ll='ls -l'" }, vim.list_slice(lines, #lines - 2))
     eq("640", ("%o"):format(vim.uv.fs_stat(rc).mode % 512), "the mode is kept")
-    eq({ ".bashrc" }, vim.fn.readdir(home), "no temporary file left behind")
+    eq(
+        {},
+        vim.tbl_filter(function(n)
+            return n:find("^%.lvim%-space%-rc") ~= nil
+        end, vim.fn.readdir(home)),
+        "no temporary file left behind"
+    )
 
-    -- Sourcing the result: a missing dir is unset, an existing one is kept.
-    local probe = 'set +e; . "$HOME/.bashrc" 2>/dev/null; echo "x=${XDG_RUNTIME_DIR-unset}"'
-    eq("x=unset\n", (sh(probe, {}, { PATH = vim.env.PATH, XDG_RUNTIME_DIR = "/nonexistent/x" }, home)))
-    eq("x=" .. home .. "\n", (sh(probe, {}, { PATH = vim.env.PATH, XDG_RUNTIME_DIR = home }, home)))
+    -- Sourcing the result, as a non-interactive login shell would.
+    local probe = 'set +e; . "$HOME/.bashrc" 2>/dev/null; echo "x=${XDG_RUNTIME_DIR-unset}"; node; '
+        .. '. "$HOME/.bashrc" 2>/dev/null; echo "$PATH" | tr ":" "\\n" | grep -c node/bin'
+    local out = sh(probe, {}, { PATH = "/usr/bin:/bin", XDG_RUNTIME_DIR = "/nonexistent/x" }, home)
+    eq("x=unset\nnode-here\n1\n", out, "dir unset, node found, PATH not grown by a second source")
+    eq("x=" .. home .. "\n", (sh('set +e; . "$HOME/.bashrc" 2>/dev/null; echo "x=${XDG_RUNTIME_DIR-unset}"', {}, {
+        PATH = "/usr/bin:/bin",
+        XDG_RUNTIME_DIR = home,
+    }, home)), "an existing runtime dir is kept")
+end)
+
+it("the fix folds the block an earlier version wrote into the current one", function()
+    local home = vim.fn.tempname()
+    vim.fn.mkdir(home, "p")
+    vim.fn.writefile({
+        ssh.FIX_MARKER,
+        "# The jail exports XDG_RUNTIME_DIR without the directory; Neovim remote-ssh then cannot listen.",
+        ssh.RUNTIME_DIR_LINE,
+        "# <<< lvim-space <<<",
+        "",
+        "# user stuff",
+    }, home .. "/.bashrc")
+    eq(0, fix(home, ".bashrc", { ssh.path_line("/opt/alt/alt-nodejs24/root/usr/bin"), "export PATH" }))
+    eq({
+        ssh.ENV_MARKER,
+        "# What Neovim remote-ssh, and the tools installed for it, need here. Managed by lvim-space.",
+        ssh.RUNTIME_DIR_LINE,
+        ssh.path_line("/opt/alt/alt-nodejs24/root/usr/bin"),
+        "export PATH",
+        "# <<< lvim-space <<<",
+        "",
+        "# user stuff",
+    }, vim.fn.readfile(home .. "/.bashrc"))
 end)
 
 it("the fix creates the startup file when there is none", function()
-    local _, code, home = sh(ssh.FIX_SCRIPT, { "lvim-space-fix", ".zshenv" }, { PATH = vim.env.PATH })
-    eq(0, code)
-    eq(ssh.FIX_MARKER, vim.fn.readfile(home .. "/.zshenv")[1])
+    local home = vim.fn.tempname()
+    vim.fn.mkdir(home, "p")
+    eq(0, fix(home, ".zshenv", { ssh.RUNTIME_DIR_LINE }))
+    eq(ssh.ENV_MARKER, vim.fn.readfile(home .. "/.zshenv")[1])
 end)
 
 describe("lvim-space ssh: mirroring the plugins before :connect")

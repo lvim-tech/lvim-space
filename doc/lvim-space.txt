@@ -90,12 +90,14 @@ Core ~
                             See |lvim-space-ssh-auth|.
   ssh.timeout     (number)  Timeout in ms for each non-interactive ssh call;
                             0 disables it. Default: 30000.
-  ssh.fix_runtime_dir (string)
-                            A server that exports XDG_RUNTIME_DIR without
-                            the directory: "ask" (default) offers to add a
-                            guarded unset to its ~/.bashrc or ~/.zshenv,
-                            "always" adds it unasked, "never" only reports
-                            it. See |lvim-space-ssh-check|.
+  ssh.fix_environment (string)
+                            What the server's environment lacks (an
+                            XDG_RUNTIME_DIR without its directory; node or
+                            python3 off PATH): "ask" (default) offers to
+                            write one block in its ~/.bashrc or ~/.zshenv,
+                            "always" writes it unasked, "never" only
+                            reports. `fix_runtime_dir` is the earlier name.
+                            See |lvim-space-ssh-check|.
   ssh.sync_plugins (boolean)
                             Mirror the dir= plugin checkouts to the server
                             before connecting, through lvim-pack
@@ -473,16 +475,21 @@ cannot start on is named in one message instead of a remote stack trace:
   - without a Neovim already installed there: `curl`, `tar` and `sha256sum`
     (or `shasum`), which it installs one with;
   - `XDG_RUNTIME_DIR` exported without the directory. A newer remote Neovim
-    listens there and cannot start; shared hosting in a CageFS jail does
-    this. With `ssh.fix_runtime_dir` "ask" lvim-space offers to add >
-        [ -n "$XDG_RUNTIME_DIR" ] && [ ! -d "$XDG_RUNTIME_DIR" ] &&
-            unset XDG_RUNTIME_DIR
-<    at the top of the login shell's startup file on the server (~/.bashrc
-    for bash, ~/.zshenv for zsh), between
-    `# >>> lvim-space: remote-ssh runtime dir >>>` markers, once. A second
-    check confirms the shell reads that file for a remote command; if not,
-    nothing connects and the message says so. Other shells are reported,
-    not changed;
+    listens there and cannot start; a CageFS jail on shared hosting does
+    this;
+  - `node` / `npm` and `python3` with `venv`, which the plugin manager there
+    installs language tools with. One off PATH that the host has elsewhere
+    (CloudLinux alt-nodejs / alt-python, nvm, mise) is picked: the newest
+    LTS Node.js from 18, the newest Python from 3.9. One the host lacks only
+    warns.
+
+  What the environment needs goes into ONE block, asked first
+  (`ssh.fix_environment`), at the top of ~/.bashrc (bash) or ~/.zshenv
+  (zsh) on the server, between
+  `# >>> lvim-space: remote-ssh environment >>>` markers. Later needs merge
+  into it, each line once; an earlier version's block is folded in. A
+  second check confirms the shell reads the file; if not, nothing connects.
+  Declining stops the connection only for the runtime dir.
   - whether lvim-space is installed there, and new enough for remote
     projects. This only warns: the connection still goes ahead.
 

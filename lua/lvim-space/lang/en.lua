@@ -83,8 +83,11 @@ return {
     SSH_REMOTE_TMP = "The server's /tmp is not writable; remote-ssh puts its socket there",
     SSH_REMOTE_TOOLS = "The server has no Neovim yet and lacks what remote-ssh installs it with",
     SSH_REMOTE_RUNTIME_DIR = "The server exports XDG_RUNTIME_DIR without the directory; Neovim cannot start there",
-    SSH_REMOTE_FIX_FAILED = "Could not add the XDG_RUNTIME_DIR fix to the server's shell startup file",
-    SSH_REMOTE_RC_NOT_READ = "The fix is in place, but the server's shell does not read that file for remote commands",
+    SSH_REMOTE_FIX_FAILED = "Could not write the environment block to the server's shell startup file",
+    SSH_REMOTE_RC_NOT_READ = "The environment block is in place, but the server's shell does not read that file for remote commands",
+    SSH_REMOTE_NO_NODE = "The server has no Node.js/npm: tools installed with npm (TypeScript, PHP, ESLint, Prettier…) cannot be installed there",
+    SSH_REMOTE_NO_PYTHON = "The server has no python3 with venv: tools installed with pip cannot be installed there",
+    SSH_REMOTE_ENV_MANUAL = "The server has a runtime off PATH, and its login shell is not one lvim-space can configure; put it on PATH there",
     SSH_REMOTE_PLUGIN_NONE = "lvim-space is not installed on the server yet: you will land in Neovim there, not in the project",
     SSH_REMOTE_PLUGIN_OLD = "lvim-space on the server predates remote projects: you will land in Neovim there, not in the project",
 

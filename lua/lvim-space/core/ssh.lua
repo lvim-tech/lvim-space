@@ -266,9 +266,12 @@ end
 M.PROBE_CMD = "sh -s lvim-space-probe"
 
 --- The probe. Prints `key=value` lines and changes nothing (the temporary directory it makes is removed).
---- Every fact it reports is one remote-ssh depends on: the platform its auto-install supports, a writable
---- `/tmp` (where it puts the socket), the tools it installs with, an already installed release, the
---- runtime directory a newer remote Nvim listens in, and whether the remote config has lvim-space.
+--- Every fact it reports is one remote-ssh, or installing tools there, depends on: the platform its
+--- auto-install supports, a writable `/tmp` (where it puts the socket), the tools it installs with, an
+--- already installed release, the runtime directory a newer remote Nvim listens in, whether the remote
+--- config has lvim-space, and the runtimes the plugin manager there installs language tools WITH — `node` /
+--- `npm` and `python3` (with `venv`). When those are not on PATH it lists installations the host has elsewhere
+--- (`<version> <bin dir>` per line): CloudLinux's alt-nodejs / alt-python, nvm, mise.
 ---@type string
 M.PROBE_SCRIPT = [[
 echo "os=$(uname -s)"
@@ -276,44 +279,78 @@ echo "arch=$(uname -m)"
 echo "shell=${SHELL##*/}"
 if [ -n "$XDG_RUNTIME_DIR" ] && [ ! -d "$XDG_RUNTIME_DIR" ]; then echo "runtime_dir_missing=$XDG_RUNTIME_DIR"; fi
 d=$(mktemp -d /tmp/lvim-space.XXXXXX 2>/dev/null) && rmdir "$d" && echo "tmp_ok=1"
-for c in curl tar sha256sum shasum nvim; do command -v "$c" >/dev/null 2>&1 && echo "has_$c=1"; done
+for c in curl tar sha256sum shasum nvim node npm python3; do command -v "$c" >/dev/null 2>&1 && echo "has_$c=1"; done
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import venv, ensurepip' >/dev/null 2>&1; then echo "has_venv=1"; fi
 for n in "$HOME"/.local/share/nvim-remote/releases/*/bin/nvim; do [ -x "$n" ] && echo "installed=1" && break; done
 p=
 for d in "$HOME"/.local/share/nvim-remote/site/pack/*/*/lvim-space; do [ -d "$d" ] && p=$d && break; done
 if [ -z "$p" ]; then echo "plugin=none"; elif [ -f "$p/lua/lvim-space/core/ssh.lua" ]; then echo "plugin=ssh"; else echo "plugin=old"; fi
+for d in /opt/alt/alt-nodejs*/root/usr/bin "$HOME"/.nvm/versions/node/*/bin "$HOME"/.local/share/mise/installs/node/*/bin; do
+  if [ -x "$d/node" ] && [ -x "$d/npm" ]; then echo "node_candidate=$("$d/node" --version 2>/dev/null) $d"; fi
+done
+for d in /opt/alt/python3*/bin "$HOME"/.local/share/mise/installs/python/*/bin; do
+  if [ -x "$d/python3" ] && "$d/python3" -c 'import venv, ensurepip' >/dev/null 2>&1; then
+    echo "python_candidate=$("$d/python3" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null) $d"
+  fi
+done
 exit 0
 ]]
 
 --- The startup file each login shell reads for a NON-interactive ssh command, which is how remote-ssh's
---- script is run. Only these two can be fixed automatically.
+--- script is run. Only these two can be changed automatically.
 ---@type table<string, string>
 M.RC_FILES = { bash = ".bashrc", zsh = ".zshenv" }
 
---- The marker of the block the fix adds, so it is added once and can be found (and removed) by hand.
+--- The marker of the block lvim-space keeps in that file, so it is found again (and can be removed by hand).
+---@type string
+M.ENV_MARKER = "# >>> lvim-space: remote-ssh environment >>>"
+
+--- The marker an earlier version used for a block holding only the runtime-dir line. Its lines are kept and
+--- the block is folded into the current one.
 ---@type string
 M.FIX_MARKER = "# >>> lvim-space: remote-ssh runtime dir >>>"
 
---- The fix: PREPENDS a guarded `unset XDG_RUNTIME_DIR` to the shell's startup file, once. At the top, so an
---- early `return` for non-interactive shells further down cannot skip it. Written through `cat >` so the
---- file keeps its owner, mode and inode. Run as `sh -s lvim-space-fix <file>`: `$1` only names the call,
---- `$2` is the startup file, relative to `$HOME`.
+--- The fix. Run as `sh -s lvim-space-fix <file>` (`$2` is the startup file, relative to `$HOME`) with the
+--- block's lines on stdin AFTER the script: the script is one function, called on its last line, so the
+--- shell has read exactly the script when `cat` takes the rest — the lines arrive as data, never as code
+--- on the command line. Every earlier lvim-space block is taken out of the file; their lines and the new
+--- ones, without comments and duplicates, become one block at the very TOP, before any early `return` for
+--- non-interactive shells further down. Written through `cat >`, so the file keeps its owner, mode and inode.
 ---@type string
 M.FIX_SCRIPT = [[
-f="$HOME/$2"
-m='# >>> lvim-space: remote-ssh runtime dir >>>'
-if [ -f "$f" ] && grep -qF "$m" "$f"; then exit 0; fi
-t=$(mktemp "$HOME/.lvim-space-rc.XXXXXX") || exit 1
-{
-  printf '%s\n' "$m" \
-    '# The jail exports XDG_RUNTIME_DIR without the directory; Neovim remote-ssh then cannot listen.' \
-    '[ -n "$XDG_RUNTIME_DIR" ] && [ ! -d "$XDG_RUNTIME_DIR" ] && unset XDG_RUNTIME_DIR' \
-    '# <<< lvim-space <<<' ''
-  if [ -f "$f" ]; then cat "$f"; fi
-} > "$t" && cat "$t" > "$f"
-s=$?
-rm -f "$t"
-exit $s
+lvim_space_fix() {
+  f="$HOME/$2"
+  new=$(cat)
+  [ -n "$new" ] || return 0
+  t=$(mktemp "$HOME/.lvim-space-rc.XXXXXX") || return 1
+  old=
+  if [ -f "$f" ]; then
+    old=$(awk '/^# >>> lvim-space: remote-ssh/ { b = 1; next } /^# <<< lvim-space <<</ { b = 0; next } b' "$f")
+  fi
+  {
+    echo '# >>> lvim-space: remote-ssh environment >>>'
+    echo '# What Neovim remote-ssh, and the tools installed for it, need here. Managed by lvim-space.'
+    printf '%s\n%s\n' "$old" "$new" | awk 'NF && $0 !~ /^#/ && !seen[$0]++'
+    echo '# <<< lvim-space <<<'
+    echo
+    if [ -f "$f" ]; then
+      awk '/^# >>> lvim-space: remote-ssh/ { b = 1; next }
+           b && /^# <<< lvim-space <<</ { b = 0; s = 1; next }
+           b { next }
+           s && $0 == "" { s = 0; next }
+           { s = 0; print }' "$f"
+    fi
+  } > "$t" && cat "$t" > "$f"
+  s=$?
+  rm -f "$t"
+  return $s
+}
+lvim_space_fix "$@"
 ]]
+
+---@class LvimSpaceSshCandidate
+---@field version integer[]  { major, minor, patch }
+---@field dir string         the bin directory
 
 ---@class LvimSpaceSshFacts
 ---@field os string|nil
@@ -324,12 +361,37 @@ exit $s
 ---@field has table<string, boolean>
 ---@field installed boolean
 ---@field plugin "none"|"old"|"ssh"|nil
+---@field node_candidates LvimSpaceSshCandidate[]
+---@field python_candidates LvimSpaceSshCandidate[]
+
+--- A directory safe to write into a shell line inside single quotes: absolute, and nothing but letters,
+--- digits, `.`, `_`, `-` and `/`.
+---@param dir string
+---@return boolean
+local function safe_dir(dir)
+    return type(dir) == "string" and dir:match("^/[%w%._%-/]+$") ~= nil and not dir:find("//", 1, true)
+end
+
+--- `v22.23.4 /dir` or `3.11.9 /dir` → candidate, or nil.
+---@param value string
+---@return LvimSpaceSshCandidate|nil
+local function candidate(value)
+    local ver, dir = value:match("^v?([%d%.]+)%s+(%S+)$")
+    if not ver or not safe_dir(dir) then
+        return nil
+    end
+    local v = {}
+    for n in ver:gmatch("%d+") do
+        v[#v + 1] = tonumber(n)
+    end
+    return #v > 0 and { version = v, dir = dir } or nil
+end
 
 --- Parse the probe's output.
 ---@param stdout string|nil
 ---@return LvimSpaceSshFacts
 function M.parse_facts(stdout)
-    local f = { has = {}, tmp_ok = false, installed = false }
+    local f = { has = {}, tmp_ok = false, installed = false, node_candidates = {}, python_candidates = {} }
     for line in (stdout or ""):gmatch("[^\r\n]+") do
         local key, value = line:match("^([%w_]+)=(.*)$")
         if key then
@@ -338,6 +400,11 @@ function M.parse_facts(stdout)
                 f.has[tool] = true
             elseif key == "tmp_ok" or key == "installed" then
                 f[key] = true
+            elseif key == "node_candidate" or key == "python_candidate" then
+                local c = candidate(value)
+                if c then
+                    table.insert(f[key:gsub("_candidate$", "_candidates")], c)
+                end
             elseif value ~= "" then
                 f[key] = value
             end
@@ -346,13 +413,78 @@ function M.parse_facts(stdout)
     return f
 end
 
+---@param a integer[]
+---@param b integer[]
+---@return boolean
+local function newer(a, b)
+    for i = 1, math.max(#a, #b) do
+        local x, y = a[i] or 0, b[i] or 0
+        if x ~= y then
+            return x > y
+        end
+    end
+    return false
+end
+
+--- The Node.js to put on PATH: the newest LTS line (an even major) from 18 up, else the newest from 18 up.
+---@param list LvimSpaceSshCandidate[]
+---@return LvimSpaceSshCandidate|nil
+function M.pick_node(list)
+    local best_lts, best
+    for _, c in ipairs(list) do
+        if c.version[1] >= 18 then
+            if not best or newer(c.version, best.version) then
+                best = c
+            end
+            if c.version[1] % 2 == 0 and (not best_lts or newer(c.version, best_lts.version)) then
+                best_lts = c
+            end
+        end
+    end
+    return best_lts or best
+end
+
+--- The Python to put on PATH: the newest 3.x from 3.9 up (with `venv` and `ensurepip`, which the probe checked).
+---@param list LvimSpaceSshCandidate[]
+---@return LvimSpaceSshCandidate|nil
+function M.pick_python(list)
+    local best
+    for _, c in ipairs(list) do
+        if c.version[1] == 3 and (c.version[2] or 0) >= 9 and (not best or newer(c.version, best.version)) then
+            best = c
+        end
+    end
+    return best
+end
+
+--- The shell line that puts `dir` first on PATH, once.
+---@param dir string  checked by `safe_dir`
+---@return string
+function M.path_line(dir)
+    return ("case \":$PATH:\" in *:'%s':*) ;; *) [ -d '%s' ] && PATH='%s':\"$PATH\" ;; esac"):format(dir, dir, dir)
+end
+
+--- The shell line that drops an XDG_RUNTIME_DIR whose directory does not exist.
+M.RUNTIME_DIR_LINE = '[ -n "$XDG_RUNTIME_DIR" ] && [ ! -d "$XDG_RUNTIME_DIR" ] && unset XDG_RUNTIME_DIR'
+
 local SUPPORTED_OS = { Linux = true, Darwin = true }
 local SUPPORTED_ARCH = { x86_64 = true, aarch64 = true, arm64 = true }
 
+---@class LvimSpaceSshChange
+---@field kind "runtime_dir"|"node"|"python"
+---@field what string   for the question: the directory, and the version for a runtime
+---@field lines string[]
+
 ---@class LvimSpaceSshAssessment
 ---@field blocking { code: string, detail: string|nil }|nil  What stops remote-ssh, if anything.
----@field fixable { rc: string, dir: string }|nil            The runtime-dir problem, when it can be fixed.
+---@field env { rc: string, changes: LvimSpaceSshChange[] }|nil  Environment changes the server needs, when they can be made.
 ---@field warnings { code: string, detail: string|nil }[]   What does not stop the connection.
+
+---@param v integer[]
+---@return string
+local function version_text(v)
+    return table.concat(v, ".")
+end
 
 --- What the facts mean for remote-ssh. Pure, so every case is a table in the spec.
 ---@param f LvimSpaceSshFacts
@@ -383,8 +515,10 @@ function M.assess(f)
             return out
         end
     end
+
+    local rc = M.RC_FILES[f.shell or ""]
+    local changes = {}
     if f.runtime_dir_missing then
-        local rc = M.RC_FILES[f.shell or ""]
         if not rc then
             out.blocking = {
                 code = "SSH_REMOTE_RUNTIME_DIR",
@@ -395,14 +529,91 @@ function M.assess(f)
             }
             return out
         end
-        out.fixable = { rc = rc, dir = f.runtime_dir_missing }
+        changes[#changes + 1] = {
+            kind = "runtime_dir",
+            what = f.runtime_dir_missing,
+            lines = { M.RUNTIME_DIR_LINE },
+        }
     end
+
+    -- The runtimes the plugin manager on the server installs language tools with. Missing ones never stop
+    -- the connection: only the tools that need them cannot be installed there.
+    local runtimes = {
+        {
+            kind = "node",
+            present = f.has.node and f.has.npm,
+            pick = M.pick_node(f.node_candidates or {}),
+            missing = "SSH_REMOTE_NO_NODE",
+        },
+        {
+            kind = "python",
+            present = f.has.python3 and f.has.venv,
+            pick = M.pick_python(f.python_candidates or {}),
+            missing = "SSH_REMOTE_NO_PYTHON",
+        },
+    }
+    for _, r in ipairs(runtimes) do
+        if not r.present then
+            if not r.pick then
+                out.warnings[#out.warnings + 1] = { code = r.missing }
+            elseif not rc then
+                out.warnings[#out.warnings + 1] = {
+                    code = "SSH_REMOTE_ENV_MANUAL",
+                    detail = ("%s %s in %s (login shell %s)"):format(
+                        r.kind,
+                        version_text(r.pick.version),
+                        r.pick.dir,
+                        f.shell or "?"
+                    ),
+                }
+            else
+                changes[#changes + 1] = {
+                    kind = r.kind,
+                    what = ("%s %s (%s)"):format(r.kind, version_text(r.pick.version), r.pick.dir),
+                    lines = { M.path_line(r.pick.dir), "export PATH" },
+                }
+            end
+        end
+    end
+    if #changes > 0 then
+        out.env = { rc = rc, changes = changes }
+    end
+
     if f.plugin == "none" then
         out.warnings[#out.warnings + 1] = { code = "SSH_REMOTE_PLUGIN_NONE" }
     elseif f.plugin == "old" then
         out.warnings[#out.warnings + 1] = { code = "SSH_REMOTE_PLUGIN_OLD" }
     end
     return out
+end
+
+--- The question asked before the environment block is written.
+---@param env { rc: string, changes: LvimSpaceSshChange[] }
+---@return string
+function M.env_question(env)
+    local lines = { ("The server needs these in ~/%s for remote Neovim and the tools installed there:"):format(env.rc) }
+    for _, c in ipairs(env.changes) do
+        if c.kind == "runtime_dir" then
+            lines[#lines + 1] = ("  - unset XDG_RUNTIME_DIR=%s, which does not exist (Neovim cannot start)"):format(
+                c.what
+            )
+        else
+            lines[#lines + 1] = ("  - put %s on PATH"):format(c.what)
+        end
+    end
+    lines[#lines + 1] = "Write them (one marked block at the top of the file)?"
+    return table.concat(lines, "\n")
+end
+
+--- The block's lines, as the fix reads them from stdin.
+---@param env { rc: string, changes: LvimSpaceSshChange[] }
+---@return string
+function M.env_input(env)
+    local out = {}
+    for _, c in ipairs(env.changes) do
+        vim.list_extend(out, c.lines)
+    end
+    return table.concat(out, "\n") .. "\n"
 end
 
 --- The probe as an ssh call (its script goes on stdin).
@@ -544,7 +755,7 @@ end
 ---@class LvimSpaceSshOpenOpts
 ---@field auth "auto"|"key"|"password"|nil  How to authenticate (default "auto").
 ---@field timeout integer|nil               Timeout (ms) for each non-interactive ssh call.
----@field fix_runtime_dir "ask"|"always"|"never"|nil  The runtime-dir fix on the server (default "ask").
+---@field fix_environment "ask"|"always"|"never"|nil  The environment block on the server (default "ask").
 ---@field sync (fun(uri: string, cb: fun(ok: boolean, err: string|nil)))|nil  Mirror the plugins to the
 ---      server before connecting (lvim-pack's `remote_sync`). A failure stops the connection.
 ---@field on_warn (fun(code: string, detail: string|nil))|nil  A finding that does not stop the connection.
@@ -598,7 +809,7 @@ function M.open(project, opts)
         end)
     end
 
-    --- Probe the server; fix the runtime dir when allowed; connect only when nothing blocks remote-ssh.
+    --- Probe the server; write the environment block when allowed; connect only when nothing blocks remote-ssh.
     ---@param fixed boolean  the fix has already run (a second probe that still finds the problem stops)
     ---@param synced boolean  the plugins were just mirrored: the server's lvim-space is this one
     local function preflight(fixed, synced)
@@ -610,33 +821,43 @@ function M.open(project, opts)
             if verdict.blocking then
                 return abort(verdict.blocking.code, verdict.blocking.detail)
             end
-            if verdict.fixable then
-                local fx = verdict.fixable
+            if verdict.env then
+                local env = verdict.env
                 if fixed then
-                    -- The line is in the startup file, yet a fresh session still exports the directory:
-                    -- this shell does not read that file for a non-interactive command.
-                    return abort("SSH_REMOTE_RC_NOT_READ", ("~/%s (%s)"):format(fx.rc, fx.dir))
+                    -- The block is in the startup file, yet a fresh session still needs it: this shell does not
+                    -- read that file for a non-interactive command.
+                    local what = vim.tbl_map(function(c)
+                        return c.what
+                    end, env.changes)
+                    return abort("SSH_REMOTE_RC_NOT_READ", ("~/%s (%s)"):format(env.rc, table.concat(what, "; ")))
                 end
-                local policy = opts.fix_runtime_dir or "ask"
-                local allowed = policy == "always"
-                    or (
-                        policy == "ask"
-                        and M.confirm(
-                            (
-                                "The server exports XDG_RUNTIME_DIR=%s, which does not exist, so Neovim cannot start "
-                                .. "there.\nAdd a guarded `unset XDG_RUNTIME_DIR` to the top of ~/%s on the server?"
-                            ):format(fx.dir, fx.rc)
-                        )
-                    )
+                local policy = opts.fix_environment or "ask"
+                local allowed = policy == "always" or (policy == "ask" and M.confirm(M.env_question(env)))
                 if not allowed then
-                    return abort("SSH_REMOTE_RUNTIME_DIR", fx.dir)
-                end
-                return M.run(M.fix_argv(t, fx.rc), { stdin = M.FIX_SCRIPT, timeout = opts.timeout }, function(fix)
-                    if fix.code ~= 0 then
-                        return abort("SSH_REMOTE_FIX_FAILED", detail(fix))
+                    -- Only the runtime dir stops remote-ssh; a runtime left off PATH just limits what installs there.
+                    for _, c in ipairs(env.changes) do
+                        if c.kind == "runtime_dir" then
+                            return abort("SSH_REMOTE_RUNTIME_DIR", c.what)
+                        end
                     end
-                    preflight(true, synced)
-                end)
+                    for _, c in ipairs(env.changes) do
+                        verdict.warnings[#verdict.warnings + 1] = {
+                            code = c.kind == "node" and "SSH_REMOTE_NO_NODE" or "SSH_REMOTE_NO_PYTHON",
+                            detail = c.what,
+                        }
+                    end
+                else
+                    return M.run(
+                        M.fix_argv(t, env.rc),
+                        { stdin = M.FIX_SCRIPT .. M.env_input(env), timeout = opts.timeout },
+                        function(fix)
+                            if fix.code ~= 0 then
+                                return abort("SSH_REMOTE_FIX_FAILED", detail(fix))
+                            end
+                            preflight(true, synced)
+                        end
+                    )
+                end
             end
             for _, w in ipairs(synced and {} or verdict.warnings) do
                 if opts.on_warn then
