@@ -76,6 +76,19 @@ function M.check()
         end
     end
 
+    -- Remote (SSH) projects --------------------------------------------------
+    -- Optional: only projects whose path is `ssh://…` need it, so its absence is information, not a fault.
+    local ok_ssh, ssh = pcall(require, "lvim-space.core.ssh")
+    if ok_ssh and ssh.supported() then
+        if vim.fn.executable(ssh.exe) == 1 then
+            health.ok("remote projects available (':connect ssh://' and the ssh client found)")
+        else
+            health.warn("':connect ssh://' is available but no `ssh` executable is — remote projects cannot open")
+        end
+    else
+        health.info("this Neovim has no ':connect ssh://' — remote (ssh://) projects cannot be opened")
+    end
+
     -- UI mode + area-zone coherence ----------------------------------------
     -- The EFFECTIVE layout is what the panel actually opens in: the session override (the `:LvimSpace …
     -- area|bottom|float` token) wins over `config.ui.mode`. Report both, so a user who typed a token once

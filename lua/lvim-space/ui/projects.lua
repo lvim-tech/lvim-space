@@ -13,8 +13,21 @@ local rows = require("lvim-space.ui.rows")
 local utils = require("lvim-space.utils")
 local common = require("lvim-space.ui.common")
 local session = require("lvim-space.core.session")
+local ssh = require("lvim-space.core.ssh")
 
 local M = {}
+
+--- The text of one project row. A REMOTE project (path `ssh://…`) carries the `project_remote` icon in front
+--- of its name, so it is told apart at a glance. The ONE formatter every paint of the list goes through.
+---@param project_entry table Project record
+---@return string
+local function format_project(project_entry)
+    local mark = ""
+    if ssh.is_remote(project_entry.path) then
+        mark = (config.ui.icons or {}).project_remote or ""
+    end
+    return string.format("%s%s [%s]", mark, project_entry.name or "???", project_entry.path or "???")
+end
 
 ---Safely decode a JSON string, returning `default` on malformed input or nil.
 ---@param str string|nil JSON string to decode
@@ -108,7 +121,7 @@ M.refresh = function()
     for i, project_entry in ipairs(cache.projects_from_db) do
         cache.project_ids_map[i] = project_entry.id
         local is_active = tostring(project_entry.id) == tostring(state.project_id)
-        local display_text = string.format("%s [%s]", project_entry.name or "???", project_entry.path or "???")
+        local display_text = format_project(project_entry)
         -- Through the ONE row renderer, like the first paint (`common.format_line`) — no second row format.
         new_lines[i], new_spans[i] = rows.line(display_text, "project", is_active, nil)
     end
@@ -188,6 +201,11 @@ end
 local function validate_project_path(project_path, is_new_project)
     if not project_path or vim.trim(project_path) == "" then
         return nil, "PROJECT_PATH_EMPTY"
+    end
+    -- A remote project (`ssh://[user@]host[:port]/abs/path`): only the syntax and the uniqueness can be
+    -- checked from here — the directory lives on a server nobody is connected to yet.
+    if ssh.is_remote(project_path) then
+        return ssh.validate(project_path, is_new_project and data.is_project_path_exist or nil)
     end
     local cache_key = project_path .. tostring(is_new_project)
     if cache.validation_cache[cache_key] then
@@ -323,6 +341,66 @@ local function set_active_workspace_for_project(project_id)
     update_project_state_in_db()
 end
 
+--- The plugin mirror run before `:connect`: lvim-pack's `remote_sync`, when lvim-pack has it and
+--- `ssh.sync_plugins` is not false. It copies every `dir=` checkout to the server so both editors run the
+--- same code (`:h lvim-pack-remote`). nil = no mirror.
+---@param ssh_config table
+---@return (fun(uri: string, cb: fun(ok: boolean, err: string|nil)))|nil
+local function plugin_sync(ssh_config)
+    if ssh_config.sync_plugins == false then
+        return nil
+    end
+    local ok, pack = pcall(require, "lvim-pack")
+    if not ok or type(pack.remote_sync) ~= "function" then
+        return nil
+    end
+    return function(uri, cb)
+        notify.info(state.lang.SSH_SYNCING .. uri)
+        pack.remote_sync(uri, nil, function(done, err, report)
+            if done and report and #report.held > 0 then
+                notify.warn(state.lang.SSH_SYNC_HELD .. table.concat(report.held, ", "))
+            end
+            cb(done, err)
+        end)
+    end
+end
+
+--- Opens a REMOTE project (path `ssh://…`): saves the current session exactly as a local switch does, then
+--- hands over to `lvim-space.core.ssh`, which records the request on the server and runs `:connect`. The local
+--- project state is left alone — the UI simply moves to the remote Neovim. A failure connects nothing and is
+--- reported with its reason.
+---@param selected_project table Project record whose `path` is an `ssh://` URI
+local function open_remote_project(selected_project)
+    if not ssh.supported() then
+        notify.error(state.lang.SSH_UNSUPPORTED)
+        return
+    end
+    if state.tab_active then
+        session.save_current_state(state.tab_active, true)
+    end
+    -- The password terminal (when one is needed) is a float of its own; the docked panel would sit under it.
+    ui.close_all()
+    notify.info(state.lang.SSH_CONNECTING .. selected_project.path)
+    local ssh_config = config.ssh or {}
+    local timeout = tonumber(ssh_config.timeout)
+    ssh.open(selected_project, {
+        auth = ssh_config.auth,
+        timeout = (timeout and timeout > 0) and timeout or nil,
+        fix_runtime_dir = ssh_config.fix_runtime_dir,
+        sync = plugin_sync(ssh_config),
+        on_warn = function(code, detail)
+            notify.warn((state.lang[code] or code) .. (detail and detail ~= "" and (": " .. detail) or ""))
+        end,
+        on_done = function(ok, err_code, detail)
+            if ok then
+                return
+            end
+            local message = state.lang[err_code or ""] or tostring(err_code)
+            notify.error(message .. (detail and detail ~= "" and (": " .. detail) or ""))
+        end,
+    })
+end
+
 --- Switches the active project in "space" mode: validates the path, saves the current
 --- session, changes the working directory, activates the workspace, and restores state.
 --- Triggers UI refresh once the session restore autocmd fires (or immediately if no session).
@@ -332,6 +410,10 @@ local function space_load_project(project_id, selected_line_in_ui)
     local selected_project = data.find_project_by_id(project_id)
     if not selected_project then
         notify.error(state.lang.PROJECT_NOT_FOUND)
+        return
+    end
+    if ssh.is_remote(selected_project.path) then
+        open_remote_project(selected_project)
         return
     end
     local path_to_check = selected_project.path
@@ -400,6 +482,10 @@ local function enter_navigate_next(project_id)
         notify.error(state.lang.PROJECT_NOT_FOUND)
         return
     end
+    if ssh.is_remote(selected_project.path) then
+        open_remote_project(selected_project)
+        return
+    end
     local path_to_check = selected_project.path
     if vim.fn.isdirectory(path_to_check) ~= 1 then
         notify.error((state.lang.DIRECTORY_NOT_FOUND or "Directory not found") .. ": " .. path_to_check)
@@ -464,9 +550,7 @@ local function handle_move_operation(ctx, direction)
         persist = function(order_table)
             return data.reorder_projects(order_table)
         end,
-        formatter = function(project_entry)
-            return string.format("%s [%s]", project_entry.name or "???", project_entry.path or "???")
-        end,
+        formatter = format_project,
     })
 end
 
@@ -792,9 +876,7 @@ M.init = function(selected_line_num)
         state.project_id,
         "id",
         actual_selected_line,
-        function(project_entry)
-            return string.format("%s [%s]", project_entry.name or "???", project_entry.path or "???")
-        end
+        format_project
     )
     if not ctx then
         return
@@ -831,7 +913,8 @@ M.add_project = function()
             end)
             return
         end
-        local default_name = vim.fn.fnamemodify(validated_path:gsub("/$", ""), ":t")
+        local default_name = ssh.is_remote(validated_path) and ssh.default_name(validated_path)
+            or vim.fn.fnamemodify(validated_path:gsub("/$", ""), ":t")
         ui.create_input_field(state.lang.PROJECT_NAME, default_name, function(input_project_name)
             if not input_project_name or vim.trim(input_project_name) == "" then
                 notify.info(state.lang.OPERATION_CANCELLED)

@@ -11,6 +11,7 @@ local session = require("lvim-space.core.session")
 local state = require("lvim-space.api.state")
 local data = require("lvim-space.api.data")
 local notify = require("lvim-space.api.notify")
+local ssh = require("lvim-space.core.ssh")
 
 local M = {}
 
@@ -119,6 +120,31 @@ local function load_context()
 end
 
 -- ---------------------------------------------------------------------------
+-- Remote-ssh hand-off (the REMOTE half of a remote project).
+-- ---------------------------------------------------------------------------
+
+--- When this Neovim was started by `:connect ssh://` and the local lvim-space left a request, change into
+--- the requested project directory (creating the project row when this server has never seen it). The
+--- `load_context()` that follows then resolves the project by cwd and restores it as on any start. Without a
+--- request — every ordinary start — this does nothing.
+local function apply_remote_request()
+    local _, err_code, detail = ssh.apply_request({
+        find_project_by_path = data.find_project_by_path,
+        is_project_name_exist = data.is_project_name_exist,
+        add_project = data.add_project,
+    })
+    if err_code then
+        local lang = state.lang or {}
+        notify.warn(
+            (lang.SSH_REMOTE_REQUEST_FAILED or "Remote project request could not be applied")
+                .. ": "
+                .. (lang[err_code] or err_code)
+                .. (detail and (" (" .. detail .. ")") or "")
+        )
+    end
+end
+
+-- ---------------------------------------------------------------------------
 -- One-time initialization (called on VimEnter).
 -- ---------------------------------------------------------------------------
 
@@ -132,6 +158,10 @@ local function initialize()
     if not db.init() then
         notify.error("Failed to initialize database")
         return
+    end
+    local ok_remote, remote_err = pcall(apply_remote_request)
+    if not ok_remote then
+        notify.warn("LVIM Space remote request skipped: " .. tostring(remote_err))
     end
     load_context()
     pcall(session.init)

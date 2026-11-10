@@ -46,6 +46,7 @@ require("lvim-space").setup({})
 - **Workspaces**: Each project can contain multiple workspaces (contexts). You can add, rename, delete, and switch workspaces.
 - **Tabs**: Each workspace supports multiple tabs, each with its own window/buffer layout.
 - **Files**: Tabs remember their files, window layout, and cursor positions.
+- **Remote (SSH) projects**: A project path may be `ssh://[user@]host[:port]/abs/path`; opening it hands the project over to the server and runs Neovim's `:connect ssh://` (see [Remote (SSH) projects](#remote-ssh-projects)).
 - **Reordering**: Move projects, workspaces, and tabs up/down to organize them exactly how you want.
 - **Picker Search**: File search is the shared lvim-picker finder — fuzzy filter as you type, coloured filetype devicons, `<CR>` to open + add to the tab, `<C-v>`/`<C-x>` to open in a split. Every entity panel also gets a `/` key that opens the picker over its current list.
 - **Session Management**: Automatically or manually save and restore the state of your workspaces, tabs, and files.
@@ -253,6 +254,27 @@ require("lvim-space").setup({
     -- Open the files panel automatically after adding a file.
     open_panel_on_add_file = false,
 
+    -- Remote (SSH) projects — see "Remote (SSH) projects" below.
+    ssh = {
+        -- How to authenticate before `:connect`:
+        --   "auto"     reuse a live shared connection, else try key-based, and only
+        --              when that fails open the password terminal (default)
+        --   "key"      key-based only (an ssh-agent key included); never prompts
+        --   "password" open the password terminal unless a shared connection is alive
+        auth = "auto",
+        -- Timeout (ms) for each non-interactive ssh call (0 = none).
+        timeout = 30000,
+        -- A server that exports XDG_RUNTIME_DIR without the directory (a CageFS jail on
+        -- shared hosting) stops a newer remote Nvim from starting:
+        --   "ask"    offer to add a guarded unset to the server's ~/.bashrc / ~/.zshenv (default)
+        --   "always" add it unasked
+        --   "never"  only report it
+        fix_runtime_dir = "ask",
+        -- Mirror every dir= plugin checkout to the server first (lvim-pack's remote_sync), so the
+        -- remote Neovim runs the same code as this one. A failed mirror stops the connection.
+        sync_plugins = true,
+    },
+
     -- Shell command listing project files for the picker search (run in the
     -- project root). Requires its first token (fd by default) on PATH.
     search = "fd --type f --hidden --follow"
@@ -372,6 +394,7 @@ require("lvim-space").setup({
             -- instead (`devicons`), so these only matter with devicons = false.
             project = "",
             project_active = "",
+            project_remote = "󰣀 ", -- marks a remote (ssh://) project in the list
             workspace = "",
             workspace_active = "",
             tab = "",
@@ -481,6 +504,75 @@ require("lvim-space").setup({
 
 ---
 
+## Remote (SSH) projects
+
+A project whose path is `ssh://[user@]host[:port]/abs/path` is a **remote project**. It lives in the same
+list as local projects (marked with the `ui.icons.project_remote` icon) and is added through the same
+*add* prompt — type the `ssh://…` URI instead of a directory. Only the syntax (a host, an absolute path
+without `~`, `.` or `..`) and the uniqueness are checked when adding; nothing is contacted.
+
+Loading or entering a remote project:
+
+1. saves the current session, as any project switch does;
+2. writes a small request (`path` + project name) to
+   `~/.local/share/nvim-remote/lvim-space/request.json` **on the server**, over ssh;
+3. mirrors the plugins (`ssh.sync_plugins`, through lvim-pack's `:LvimPackRemoteSync`) so the server runs
+   the same plugin code as this editor; a failed mirror withdraws the request and stops;
+4. checks the server (see below), and withdraws the request if something there would stop remote-ssh;
+5. runs `:connect ssh://[user@]host[:port]` (Neovim's built-in *remote-ssh*).
+
+**The check before `:connect`.** One read-only ssh call reports what remote-ssh depends on, so a server it
+cannot start on is named in one sentence instead of a stack trace from the remote Neovim:
+
+- the platform: Linux or macOS, x86_64 or arm64;
+- a writable `/tmp`, where remote-ssh puts its socket;
+- without a Neovim already installed there, `curl`, `tar` and `sha256sum` (or `shasum`), which it installs
+  one with;
+- `XDG_RUNTIME_DIR` exported without the directory. A newer remote Neovim listens there and cannot start.
+  Shared hosting in a CageFS jail does this. With `ssh.fix_runtime_dir = "ask"` lvim-space offers to put a
+  guarded `unset XDG_RUNTIME_DIR` at the top of the login shell's startup file on the server (`~/.bashrc`
+  for bash, `~/.zshenv` for zsh), between `# >>> lvim-space: remote-ssh runtime dir >>>` markers, once.
+  A second check then confirms the shell really reads that file for a remote command; if it does not,
+  nothing connects and the message says so. Other shells are reported, not changed;
+- whether lvim-space is installed there, and new enough for remote projects. This only warns: you are
+  still connected, just not moved into the project.
+
+The Neovim started on the server (it runs with `NVIM_APPNAME=nvim-remote` and
+`v:startreason == "remote-ssh"`) reads that request when lvim-space initialises, changes into the
+directory, opens the matching project from **its own** database (creating it with the requested name the
+first time), restores its session and deletes the request.
+
+**Authentication** (`ssh.auth`):
+
+- `"key"` — key-based login (including a passphrase-protected key held by `ssh-agent`). ssh never prompts;
+  a failure is reported and nothing connects.
+- `"password"` — unless a shared connection is already alive (`ssh -O check`), a floating terminal runs
+  `ssh -o ControlMaster=yes -o ControlPath=… -o ControlPersist=10m -f -N [-p port] -- [user@]host` so you can
+  type the password. Once it is up, the request and `:connect` reuse that connection, so the password is
+  not asked for again.
+- `"auto"` (default) — reuse a live connection; else try key-based; only if ssh itself fails (no
+  connection / no authentication) fall back to the password terminal.
+
+lvim-space's ssh commands use the **same `ControlPath` as Neovim's remote-ssh**
+(`stdpath("cache")/ssh/mux_%C`), which is what lets `:connect` — which itself runs ssh with
+`BatchMode=yes` and can never prompt — ride on a password-authenticated connection.
+
+Requirements and limits:
+
+- A Neovim that has `:connect ssh://` (a recent nightly). On an older Neovim a remote project refuses to
+  open with a clear message; local projects are unaffected.
+- A local `ssh` client (OpenSSH 7.6+), and whatever Neovim's remote-ssh itself needs on the server.
+- remote-ssh copies your **config** to the server but not your **plugins**: lvim-space (and its
+  dependencies, sqlite.lua included) must be installed there by your plugin manager for the remote half to
+  act on the request. Without it you are still connected, just not moved into the project.
+- The first connection to a host whose key is not yet known needs a confirmation: with `"auto"` /
+  `"password"` it is asked in the terminal; with `"key"` the hand-off fails until the host is known.
+- IPv6 literals and `user:password@` in the URI are not accepted.
+- If `:connect` fails after the request was written, the request stays on the server and is applied by the
+  next remote-ssh start on that host.
+
+---
+
 ## UI & Appearance
 
 - The UI renders on the shared **lvim-ui surface**. `ui.mode` selects where it docks:
@@ -520,6 +612,7 @@ If `autosave = false`, persist the full state manually:
 - **[lvim-ui](https://github.com/lvim-tech/lvim-ui)** — the panel surface, the file preview and the input popup (**required**)
 - **[lvim-picker](https://github.com/lvim-tech/lvim-picker)** — the file search and the `/` filter; it pulls **[lvim-fuzzy](https://github.com/lvim-tech/lvim-fuzzy)** (**required**)
 - **NerdFont** enabled terminal (for icons)
+- **Neovim nightly with `:connect ssh://`** and an `ssh` client — only for remote (SSH) projects
 - **[fd](https://github.com/sharkdp/fd)** — the default file-search command (only needed for search; everything else works without it)
 
 > Run `:checkhealth lvim-space` to verify the runtime. The search feature needs the first token of `search` (fd by default) on your `PATH`; all other features work without it.

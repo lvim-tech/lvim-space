@@ -72,6 +72,8 @@ return {
         -- single space `ui.rows` adds itself — a placeholder " " here would double it into a 2-space indent.
         project = "",
         project_active = "",
+        -- Marks a REMOTE project (path `ssh://…`) in the projects list; shown before its name.
+        project_remote = "󰣀 ",
         workspace = "",
         workspace_active = "",
         tab = "",

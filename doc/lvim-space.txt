@@ -15,6 +15,7 @@ CONTENTS                                                          *lvim-space*
  10. API ................................... |lvim-space-api|
  11. Highlights ............................ |lvim-space-highlights|
  12. Health ................................ |lvim-space-health|
+ 13. Remote (SSH) projects ................. |lvim-space-ssh|
 
 ==============================================================================
 1. INTRODUCTION                                            *lvim-space-intro*
@@ -46,6 +47,8 @@ opens that same picker over the current list.
   - A NerdFont-enabled terminal, for the entity icons.
   - fd (sharkdp/fd) — the default file-search command. Only needed for
     |lvim-space-search|; everything else works without it.
+  - A Neovim that has `:connect ssh://` (|remote-ssh|, a recent nightly) and an
+    `ssh` client. Only needed for |lvim-space-ssh|.
 
 Run |lvim-space-health| (`:checkhealth lvim-space`) to verify these.
 
@@ -82,6 +85,21 @@ Core ~
   open_panel_on_add_file (boolean)
                             Reopen the files panel after adding a file.
                             Default: false.
+  ssh.auth        (string)  How a remote project authenticates before
+                            `:connect` — "auto" (default), "key" or "password".
+                            See |lvim-space-ssh-auth|.
+  ssh.timeout     (number)  Timeout in ms for each non-interactive ssh call;
+                            0 disables it. Default: 30000.
+  ssh.fix_runtime_dir (string)
+                            A server that exports XDG_RUNTIME_DIR without
+                            the directory: "ask" (default) offers to add a
+                            guarded unset to its ~/.bashrc or ~/.zshenv,
+                            "always" adds it unasked, "never" only reports
+                            it. See |lvim-space-ssh-check|.
+  ssh.sync_plugins (boolean)
+                            Mirror the dir= plugin checkouts to the server
+                            before connecting, through lvim-pack
+                            (|lvim-pack-remote|). Default: true.
   search          (string)  Shell command listing project files for the picker
                             search, run in the project root. Default: an
                             `fd --type f --hidden --follow` invocation with a
@@ -392,5 +410,94 @@ Panel backgrounds drop to NONE when the active theme is transparent.
   - `ui.mode` is one of area | float | bottom; in "area" mode, whether the
     msgarea zone is enabled (WARN if off — panels fall back to 'cmdheight').
   - The `search` command is available on PATH (WARN if not — search disabled).
+  - Whether remote projects can open: `:connect ssh://` present (INFO if not)
+    and an `ssh` executable on PATH (WARN if not).
+
+==============================================================================
+13. REMOTE (SSH) PROJECTS                                    *lvim-space-ssh*
+
+A project whose path is >
+    ssh://[{user}@]{host}[:{port}]/{absolute/path}
+<is a REMOTE project. It is stored in the same list as local projects, marked
+with the `ui.icons.project_remote` icon, and is added through the same add
+prompt: type the URI instead of a directory. When adding, only the syntax (a
+host, an absolute path without `~`, `.` or `..`, a port in 1-65535) and the
+uniqueness are checked; nothing is contacted.
+
+Loading or entering a remote project:
+
+  1. saves the current session, as any project switch does;
+  2. writes a request (the path and the project name) on the SERVER, to
+     `~/.local/share/nvim-remote/lvim-space/request.json`, over ssh;
+  3. mirrors the plugins through lvim-pack (|lvim-pack-remote|) when
+     `ssh.sync_plugins` is on; a failure withdraws the request and stops;
+  4. checks the server (|lvim-space-ssh-check|) and withdraws the request
+     if something there would stop remote-ssh;
+  5. runs `:connect ssh://[{user}@]{host}[:{port}]` (|remote-ssh|).
+
+The Neovim started on the server runs with `NVIM_APPNAME=nvim-remote` and
+|v:startreason| "remote-ssh". When lvim-space initialises there it reads the
+request, changes into the directory, opens the matching project from ITS OWN
+database (creating it with the requested name the first time), restores its
+session and deletes the request. Without a request it starts as usual.
+
+Authentication ~
+                                                        *lvim-space-ssh-auth*
+`ssh.auth` selects how the connection is authenticated:
+
+  "key"       Key-based login, a passphrase-protected key held by ssh-agent
+              included. ssh never prompts; a failure is reported and nothing
+              connects.
+  "password"  Unless a shared connection is already alive (`ssh -O check`), a
+              floating terminal runs >
+                ssh -o ControlMaster=yes -o ControlPath=... \
+                    -o ControlPersist=10m -f -N [-p port] -- [user@]host
+<              so the password can be typed. Once it is up, the request and
+              `:connect` reuse that connection.
+  "auto"      The default. Reuse a live connection; else try key-based; only
+              when ssh itself fails (no connection or no authentication) fall
+              back to the password terminal.
+
+Every ssh command uses the same ControlPath as Neovim's remote-ssh,
+`stdpath("cache")/ssh/mux_%C`. That is what lets `:connect`, which runs ssh
+with `BatchMode=yes` and never prompts, use a password-authenticated
+connection.
+
+The check before :connect ~
+                                                       *lvim-space-ssh-check*
+One read-only ssh call reports what remote-ssh depends on, and a server it
+cannot start on is named in one message instead of a remote stack trace:
+
+  - the platform: Linux or macOS, x86_64 or arm64;
+  - a writable `/tmp`, where remote-ssh puts its socket;
+  - without a Neovim already installed there: `curl`, `tar` and `sha256sum`
+    (or `shasum`), which it installs one with;
+  - `XDG_RUNTIME_DIR` exported without the directory. A newer remote Neovim
+    listens there and cannot start; shared hosting in a CageFS jail does
+    this. With `ssh.fix_runtime_dir` "ask" lvim-space offers to add >
+        [ -n "$XDG_RUNTIME_DIR" ] && [ ! -d "$XDG_RUNTIME_DIR" ] &&
+            unset XDG_RUNTIME_DIR
+<    at the top of the login shell's startup file on the server (~/.bashrc
+    for bash, ~/.zshenv for zsh), between
+    `# >>> lvim-space: remote-ssh runtime dir >>>` markers, once. A second
+    check confirms the shell reads that file for a remote command; if not,
+    nothing connects and the message says so. Other shells are reported,
+    not changed;
+  - whether lvim-space is installed there, and new enough for remote
+    projects. This only warns: the connection still goes ahead.
+
+Limits ~
+  - Needs a Neovim with `:connect ssh://`. On an older one a remote project
+    refuses to open with a message; local projects are unaffected.
+  - |remote-ssh| copies the config to the server, not the plugins: lvim-space
+    and its dependencies must be installed there by the plugin manager for
+    the request to be acted on. Without it you are connected, but not moved
+    into the project.
+  - The first connection to a host with an unknown key needs a confirmation:
+    "auto" and "password" ask in the terminal, "key" fails until the host is
+    known.
+  - IPv6 literals and `user:password@` are not accepted in the URI.
+  - If `:connect` fails after the request was written, the request stays on
+    the server and is applied by the next remote-ssh start on that host.
 
 vim:tw=78:ts=8:noet:ft=help:norl:
