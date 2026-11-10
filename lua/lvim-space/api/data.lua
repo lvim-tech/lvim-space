@@ -152,6 +152,22 @@ M.update_project_name = function(project_id, project_new_name)
     return db.update("projects", { id = project_id }, { name = project_new_name })
 end
 
+---Move an existing project to another path.
+---@param project_id any  ID of the project to update
+---@param project_new_path string  New normalised path (local, or ssh://)
+---@return boolean  True on success, false if params are invalid or update fails
+M.update_project_path = function(project_id, project_new_path)
+    if
+        not validate_params(
+            { project_id = project_id, project_new_path = project_new_path },
+            { "project_id", "project_new_path" }
+        )
+    then
+        return false
+    end
+    return db.update("projects", { id = project_id }, { path = project_new_path })
+end
+
 ---Update the sort_order of a project.
 ---@param project_id any  ID of the project to update
 ---@param new_order number  New sort position (must be a number)

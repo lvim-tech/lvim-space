@@ -271,6 +271,33 @@ local function rename_project_db(project_id_to_rename, new_validated_name, _, se
     return true
 end
 
+--- Points an existing project at another path. The new path is checked like a new project's (it must exist
+--- locally, or be a well-formed ssh:// address), and no OTHER project may hold it already.
+---@param project_id number Database id of the project
+---@param old_path string|nil The project's current path
+---@param input_path string The path as typed
+---@return string|nil new_path The stored path when it changed, nil when it is the same
+---@return string|nil err_code An error code (lang key) on failure
+local function move_project_db(project_id, old_path, input_path)
+    M.clear_validation_cache()
+    local new_path, err_code = validate_project_path(input_path, false)
+    if not new_path then
+        return nil, err_code
+    end
+    if new_path == old_path then
+        return nil, nil
+    end
+    local holder = data.is_project_path_exist(new_path)
+    if holder and tostring(holder.id) ~= tostring(project_id) then
+        return nil, "PROJECT_PATH_EXIST"
+    end
+    if not data.update_project_path(project_id, new_path) then
+        return nil, "PROJECT_PATH_CHANGE_FAILED"
+    end
+    M.clear_validation_cache()
+    return new_path, nil
+end
+
 --- Deletes a project from the database and resets active state if it was the current project.
 ---@param project_id number Database id of the project to delete
 ---@param _ any Unused context parameter (reserved for future use)
@@ -582,24 +609,46 @@ function M.handle_project_rename(ctx)
             and vim.api.nvim_win_get_cursor(ctx.win)[1]
         or 1
     local project_id_to_rename_val = common.get_id_at_cursor(cache.project_ids_map)
-    local current_name = ""
-    if cache.projects_from_db and cache.projects_from_db[current_line_num] then
-        current_name = cache.projects_from_db[current_line_num].name
+    local entry = cache.projects_from_db and cache.projects_from_db[current_line_num]
+    if not project_id_to_rename_val or not entry then
+        return
     end
-    common.rename_entity(
-        "project",
-        project_id_to_rename_val,
-        current_name,
-        project_id_to_rename_val,
-        function(id_from_common, new_name_from_input, context_project_id)
-            local validated_name, err_code =
-                validate_project_name_for_add_or_rename(new_name_from_input, context_project_id)
-            if not validated_name then
-                return err_code
+    local current_name = entry.name or ""
+
+    local function ask_name()
+        common.rename_entity(
+            "project",
+            project_id_to_rename_val,
+            current_name,
+            project_id_to_rename_val,
+            function(id_from_common, new_name_from_input, context_project_id)
+                local validated_name, err_code =
+                    validate_project_name_for_add_or_rename(new_name_from_input, context_project_id)
+                if not validated_name then
+                    return err_code
+                end
+                return rename_project_db(id_from_common, validated_name, nil, current_line_num)
             end
-            return rename_project_db(id_from_common, validated_name, nil, current_line_num)
+        )
+    end
+
+    -- The path first (as when adding), prefilled: <CR> on it unchanged goes straight on to the name.
+    ui.create_input_field(state.lang.PROJECT_PATH, entry.path or "", function(input_path)
+        if not input_path or vim.trim(input_path) == "" then
+            notify.info(state.lang.OPERATION_CANCELLED)
+            return
         end
-    )
+        local moved, err_code = move_project_db(project_id_to_rename_val, entry.path, vim.trim(input_path))
+        if err_code then
+            notify.error(state.lang[err_code] or ("Invalid project path: " .. err_code))
+            return
+        end
+        if moved then
+            entry.path = moved
+            notify.info(state.lang.PROJECT_PATH_CHANGED or "Project path changed.")
+        end
+        vim.schedule(ask_name)
+    end, "dir")
 end
 
 --- Opens a confirmation/delete flow for the project under the cursor in the panel.

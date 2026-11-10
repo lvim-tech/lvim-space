@@ -37,6 +37,8 @@ return {
     PROJECT_PATH = "➤ Project path",
     PROJECT_PATH_EMPTY = "Project path cannot be empty",
     PROJECT_PATH_EXIST = "Project path already exists",
+    PROJECT_PATH_CHANGED = "Project path changed.",
+    PROJECT_PATH_CHANGE_FAILED = "Failed to change the project path",
     PROJECT_NOT_FOUND = "Project not found",
     PROJECT_NOT_ACTIVE = "No active project",
     PROJECT_PATH_NAME_REQUIRED = "Project path and name are required",
