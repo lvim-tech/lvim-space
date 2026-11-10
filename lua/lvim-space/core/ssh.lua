@@ -871,7 +871,13 @@ function M.open(project, opts)
     end
 
     local run_opts = { timeout = opts.timeout }
-    local payload = vim.json.encode({ version = 1, path = t.path, name = project.name or M.default_name(project.path) })
+    -- `client`: this editor's address, so Quit on the server can hand the UI back here (see `apply_request`).
+    local payload = vim.json.encode({
+        version = 1,
+        path = t.path,
+        name = project.name or M.default_name(project.path),
+        client = vim.v.servername ~= "" and vim.v.servername or nil,
+    })
 
     local function connect()
         local addr = M.address(t)
@@ -1048,7 +1054,7 @@ end
 
 --- Read AND DELETE the pending request, when this Neovim was started by remote-ssh. The file is removed
 --- whether or not it could be understood: a request is good for one start only.
----@return { path: string, name: string|nil }|nil request
+---@return { path: string, name: string|nil, client: string|nil }|nil request
 function M.take_request()
     if M.start_reason() ~= "remote-ssh" then
         return nil
@@ -1067,7 +1073,8 @@ function M.take_request()
         return nil
     end
     local name = type(req.name) == "string" and vim.trim(req.name) or ""
-    return { path = req.path, name = name ~= "" and name or nil }
+    local client = type(req.client) == "string" and req.client ~= "" and req.client or nil
+    return { path = req.path, name = name ~= "" and name or nil, client = client }
 end
 
 ---@class LvimSpaceSshRequestDeps
@@ -1089,6 +1096,10 @@ function M.apply_request(deps)
     local req = M.take_request()
     if not req then
         return false, nil, nil
+    end
+    -- The editor the UI came from: Quit goes back there instead of closing (lvim-common's quit reads it).
+    if req.client then
+        vim.g.lvim_remote_client = req.client
     end
     if vim.fn.isdirectory(req.path) ~= 1 then
         return false, "DIRECTORY_NOT_FOUND", req.path

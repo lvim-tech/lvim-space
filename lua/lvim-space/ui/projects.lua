@@ -440,6 +440,13 @@ local function open_remote_project(selected_project, update_nvim)
         end,
         on_done = function(ok, err_code, detail)
             if ok then
+                -- While the session runs, build here what the server asks for and cannot build itself.
+                if ssh_config.sync_plugins ~= false then
+                    local rok, remote = pcall(require, "lvim-pack.remote")
+                    if rok and type(remote.serve_requests) == "function" then
+                        pcall(remote.serve_requests, selected_project.path)
+                    end
+                end
                 return
             end
             local message = state.lang[err_code or ""] or tostring(err_code)

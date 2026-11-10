@@ -317,11 +317,12 @@ it("a hostile project path or name never reaches the remote shell", function()
     })
     eq(true, outcome.ok)
     eq(batch({ "--", "box", WRITE_CMD }), calls[1].argv, "the remote command is the same constant")
-    eq(
-        { version = 1, path = "/srv/a b/$(reboot)/'q'/`id`;x", name = "x'; rm -rf ~ #" },
-        vim.json.decode(calls[1].stdin),
-        "path and name travel as data on stdin"
-    )
+    eq({
+        version = 1,
+        path = "/srv/a b/$(reboot)/'q'/`id`;x",
+        name = "x'; rm -rf ~ #",
+        client = vim.v.servername ~= "" and vim.v.servername or nil,
+    }, vim.json.decode(calls[1].stdin), "path and name travel as data on stdin")
 end)
 
 describe("lvim-space ssh: opening a remote project (local side)")
@@ -334,7 +335,13 @@ it("auth = key: writes the request, then connects — no check, no terminal", fu
     })
     eq({ "write", "connect" }, kinds(calls))
     eq(batch({ "-p", "2222", "--", "deploy@box.example", WRITE_CMD }), calls[1].argv)
-    eq({ version = 1, path = "/srv/www/site", name = "site" }, vim.json.decode(calls[1].stdin))
+    eq({
+        version = 1,
+        path = "/srv/www/site",
+        name = "site",
+        -- This editor's address: Quit on the server comes back here.
+        client = vim.v.servername ~= "" and vim.v.servername or nil,
+    }, vim.json.decode(calls[1].stdin))
     eq({ "ssh://deploy@box.example:2222" }, calls[2].argv)
     eq({ ok = true }, outcome)
 end)
@@ -679,6 +686,19 @@ it("a request for a directory that is not there changes nothing, says why, and i
             eq(nil, vim.uv.fs_stat(file))
         end
     )
+end)
+
+it("the client's address travels with the request, for Quit to go back there", function()
+    local request = function(project_dir)
+        return vim.json.encode({ version = 1, path = project_dir, name = "site", client = "/run/user/1000/nvim.1.0" })
+    end
+    remote("remote-ssh", request, function()
+        vim.g.lvim_remote_client = nil
+        local s = store()
+        eq({ true }, { ssh.apply_request(s.deps) })
+        eq("/run/user/1000/nvim.1.0", vim.g.lvim_remote_client)
+        vim.g.lvim_remote_client = nil
+    end)
 end)
 
 it("a request that cannot be understood is discarded", function()
