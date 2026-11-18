@@ -947,7 +947,7 @@ M.delete_entity = function(type_name, id, name, parent_context, on_delete)
     if not entity_def or not id then
         return
     end
-    local prompt_tpl = state.lang[entity_def.delete_confirm] or "➤ Delete '%s'? (y/n)"
+    local prompt_tpl = state.lang[entity_def.delete_confirm] or "󰅂 Delete '%s'? (y/n)"
     local prompt = string.format(prompt_tpl, name or "")
     ui.create_input_field(prompt, "", function(value)
         local answer = value and vim.trim(value):lower() or ""

@@ -411,7 +411,7 @@ require("lvim-space").setup({
             file = "",
             file_active = "",
             empty = "󰇘 ",
-            pre = "➤ ",
+            pre = "󰅂 ",
         },
     },
 

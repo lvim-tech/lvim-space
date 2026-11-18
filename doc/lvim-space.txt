@@ -160,7 +160,7 @@ UI ~
   ui.spacing      (number)  Padding in the status/info line. Default: 2.
   ui.icons        (table)   NerdFont glyphs per entity state (project/
                             workspace/tab/file, active variants, error/warn/
-                            info, `empty`, and the `pre` pointer "➤ ").
+                            info, `empty`, and the `pre` pointer "󰅂 ").
 
 Highlights ~
                                                  *lvim-space-config-highlights*

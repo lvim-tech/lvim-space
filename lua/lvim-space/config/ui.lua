@@ -81,6 +81,6 @@ return {
         file = "",
         file_active = "",
         empty = "󰇘 ",
-        pre = "➤ ",
+        pre = "󰅂 ",
     },
 }
