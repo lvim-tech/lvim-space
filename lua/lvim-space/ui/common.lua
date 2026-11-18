@@ -278,9 +278,11 @@ end
 ---Prepend the configured empty/error icon to a message string.
 ---@param message string  Human-readable error description to decorate
 ---@return string  Icon-prefixed error message
+---@return table[]|nil spans  the icon's row span when it is an image (lvim-icons "material")
 local function format_error_message(message)
     local error_icon = (config.ui and config.ui.icons and config.ui.icons.empty) or "󰇘 "
-    return error_icon .. message
+    local icon, img_hl = rows.image_cells(error_icon)
+    return icon .. message, img_hl and { { c0 = 0, c1 = #icon, hl = img_hl, active = false } } or nil
 end
 
 ---Track the panel cursor for the CURRENT view: fire `on_move(line)` on every CursorMoved in the list
@@ -391,11 +393,12 @@ M.init_entity_list = function(
     end
 
     if is_list_empty then
-        table.insert(
-            display_lines,
-            M.get_entity_icon(entity_def.name, false, true)
-                .. (state.lang[entity_def.empty_message] or "List is empty.")
-        )
+        -- the empty icon is a UI glyph: in "material" mode its image, with a span so the image group paints it
+        local icon, img_hl = rows.image_cells(M.get_entity_icon(entity_def.name, false, true))
+        table.insert(display_lines, icon .. (state.lang[entity_def.empty_message] or "List is empty."))
+        if img_hl then
+            row_spans[#display_lines] = { c0 = 0, c1 = #icon, hl = img_hl, active = false }
+        end
     end
     -- NOTE: the active-entity state (state[entity_def.state_id]) is NEVER cleared here — merely opening a
     -- panel whose custom active-check finds no matching row (e.g. the files panel from an unrelated buffer)
@@ -802,7 +805,7 @@ M.set_action_footer = function(ctx, handlers)
         bars = {
             surface.bar(groups, registry, {
                 align = "center",
-                separator = "●",
+                separator = "\u{f09de}",
                 separator_hl = FOOTER_SEP,
                 hl = FOOTER_STYLE,
                 chevrons = surface.chevrons(FOOTER_SEP),
@@ -857,9 +860,10 @@ M.open_entity_error = function(type_name, error_key)
     end
 
     local error_message_text = (error_key and state.lang[error_key]) or error_key or "An unknown error occurred."
-    local formatted_display_message = format_error_message(error_message_text)
+    local formatted_display_message, msg_spans = format_error_message(error_message_text)
 
-    local buf_handle, win_handle = ui.open_main({ formatted_display_message }, title_text, 1)
+    local buf_handle, win_handle =
+        ui.open_main({ formatted_display_message }, title_text, 1, nil, msg_spans and { spans = msg_spans } or nil)
     if buf_handle then
         vim.bo[buf_handle].buftype = "nofile"
         vim.bo[buf_handle].modifiable = false

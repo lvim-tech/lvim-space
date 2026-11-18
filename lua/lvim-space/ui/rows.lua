@@ -42,6 +42,25 @@ local function rowcfg()
     }
 end
 
+--- A UI glyph (`"<glyph>"` + optional blanks) as lvim-icons shows it: in "material" mode its 2-cell image + the
+--- image's group (its fg IS the image id, so it must be painted over the row's own fg); otherwise the glyph
+--- unchanged and nil. `drop_blank`: the image is one cell wider than the glyph, so one blank after it is dropped
+--- where the glyph sits in a column that has to stay aligned.
+---@param icon string
+---@param hl string|nil       the group whose colour the image takes (nil = Normal)
+---@param drop_blank boolean|nil
+---@return string text, string|nil img_hl
+function M.image_cells(icon, hl, drop_blank)
+    local t, h, img = iconlib.ui_text(icon, hl)
+    if not img then
+        return icon, nil
+    end
+    if drop_blank and t:sub(-1) == " " then
+        t = t:sub(1, -2)
+    end
+    return t, h
+end
+
 --- The icon for one row: a filetype DEVICON (with its own highlight) for a file, else the entity glyph.
 --- Returns the glyph plus the highlight to paint it with (nil = inherit the row's stripe colour).
 ---@param type_name string   entity type ("project" | "workspace" | "tab" | "file")
@@ -59,7 +78,16 @@ function M.icon(type_name, active, path)
             return r.glyph .. " ", r.hl
         end
     end
-    return common.get_entity_icon(type_name, active, false), nil
+    local glyph = common.get_entity_icon(type_name, active, false)
+    if type_name ~= "file" then
+        -- the entity glyph is a UI icon: an image in "material" mode, in the row's colour
+        local cfg = rowcfg()
+        local t, img_hl = M.image_cells(glyph, active and cfg.hl.active or cfg.hl.odd, true)
+        if img_hl then
+            return t, img_hl
+        end
+    end
+    return glyph, nil
 end
 
 --- Build ONE list row + the span its icon occupies (byte columns, for the colour extmark).
@@ -70,12 +98,29 @@ end
 ---@return string line, { c0: integer, c1: integer, hl: string|nil } span
 function M.line(text, type_name, active, path)
     local glyph, ghl = M.icon(type_name, active, path)
+    -- A REMOTE project's mark leads its text (`projects.format_project`): a UI icon too, so in "material" mode
+    -- it becomes an image with its own span. Done here, not in the formatter, because the formatter's text
+    -- also feeds the filter picker, which must keep the plain glyph.
+    local mark_span
+    if type_name == "project" then
+        local mark = ((config.ui or {}).icons or {}).project_remote or ""
+        if mark ~= "" and text:sub(1, #mark) == mark then
+            local cfg = rowcfg()
+            local t, img_hl = M.image_cells(mark, active and cfg.hl.active or cfg.hl.odd)
+            if img_hl then
+                text = t .. text:sub(#mark + 1)
+                -- byte span after the leading air + the row glyph (blanks under it only take the bg)
+                mark_span = { 1 + #glyph, 1 + #glyph + #t, img_hl }
+            end
+        end
+    end
     -- 1 space of breathing room at BOTH ends of every row: the leading space keeps the glyph off column 0.
     local lead = 1
     local line = " " .. glyph .. text .. " "
     -- `line_bytes` bounds the ACTIVE accent to the row's own text (see M.hls): a full-row span would take the
     -- stripe's background with it.
-    return line, { c0 = lead, c1 = lead + #glyph, hl = ghl, active = active, line_bytes = #line }
+    return line,
+        { c0 = lead, c1 = lead + #glyph, hl = ghl, active = active, line_bytes = #line, mark = mark_span }
 end
 
 --- The highlight ops for `n` rows, in the CHASSIS format (`{ row0, col0, col_end, group, priority }`, with
@@ -112,6 +157,10 @@ function M.hls(n, spans, sel)
         end
         if sp and sp.hl and sp.c1 > sp.c0 then
             out[#out + 1] = { i - 1, sp.c0, sp.c1, sp.hl, 220 }
+        end
+        if sp and sp.mark then
+            -- an image mark inside the text (a remote project's): its own group above the stripe / accent
+            out[#out + 1] = { i - 1, sp.mark[1], sp.mark[2], sp.mark[3], 220 }
         end
     end
     return out
