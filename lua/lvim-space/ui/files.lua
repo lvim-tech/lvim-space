@@ -338,6 +338,16 @@ end
 --- exists: API flows (delete/switch a file) schedule a refresh, and reopening the panel as a side effect of
 --- those would pop it open unexpectedly. The interactive entry points that genuinely want a (re)open call
 --- `M.init` themselves.
+--- Whether this view's panel is up (a live window and buffer).
+---@return boolean
+M.is_open = function()
+    return cache.ctx ~= nil
+        and cache.ctx.win ~= nil
+        and vim.api.nvim_win_is_valid(cache.ctx.win)
+        and cache.ctx.buf ~= nil
+        and vim.api.nvim_buf_is_valid(cache.ctx.buf)
+end
+
 M.refresh = function()
     if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
         return

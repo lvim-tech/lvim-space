@@ -94,6 +94,16 @@ end
 
 --- Re-renders the project list in the existing panel window without reopening it.
 --- Falls back to `M.init` when the window or buffer is no longer valid.
+--- Whether this view's panel is up (a live window and buffer).
+---@return boolean
+M.is_open = function()
+    return cache.ctx ~= nil
+        and cache.ctx.win ~= nil
+        and vim.api.nvim_win_is_valid(cache.ctx.win)
+        and cache.ctx.buf ~= nil
+        and vim.api.nvim_buf_is_valid(cache.ctx.buf)
+end
+
 M.refresh = function()
     if not cache.ctx or not cache.ctx.win or not vim.api.nvim_win_is_valid(cache.ctx.win) then
         return M.init()

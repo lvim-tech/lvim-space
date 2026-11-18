@@ -24,6 +24,20 @@ local _initialized = false
 ---calls are no-ops.
 ---@param user_config table|nil User-supplied configuration table (partial overrides are accepted)
 function M.setup(user_config)
+    -- A live lvim-icons mode switch: the open view's rows hold the icons resolved when they were drawn, so
+    -- draw them again (only a view that is up — refresh would otherwise open it).
+    vim.api.nvim_create_autocmd("User", {
+        group = vim.api.nvim_create_augroup("LvimSpaceIconsMode", { clear = true }),
+        pattern = "LvimIconsMode",
+        callback = function()
+            for _, v in ipairs({ "files", "projects", "tabs", "workspaces" }) do
+                local ok, view = pcall(require, "lvim-space.ui." .. v)
+                if ok and view.is_open and view.is_open() then
+                    pcall(view.refresh)
+                end
+            end
+        end,
+    })
     if _initialized then
         return
     end
