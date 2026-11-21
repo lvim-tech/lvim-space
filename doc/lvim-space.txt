@@ -42,7 +42,7 @@ opens that same picker over the current list.
     binding and the cursor hiding. REQUIRED.
   - lvim-ui (lvim-tech/lvim-ui) — the panel surface, the file preview and the
     input popup. REQUIRED.
-  - lvim-picker (lvim-tech/lvim-picker) — the file search and the `/` filter;
+  - lvim-picker (lvim-tech/lvim-fuzzy-picker) — the file search and the `/` filter;
     it pulls lvim-fuzzy. REQUIRED.
   - A NerdFont-enabled terminal, for the entity icons.
   - fd (sharkdp/fd) — the default file-search command. Only needed for

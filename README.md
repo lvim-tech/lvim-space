@@ -11,8 +11,8 @@ https://github.com/user-attachments/assets/6c20d82b-abb5-445a-a630-2aca3adb76ae
 ## Installation
 
 Requires Neovim >= 0.12, [sqlite.lua](https://github.com/kkharji/sqlite.lua), [lvim-utils](https://github.com/lvim-tech/lvim-utils),
-[lvim-ui](https://github.com/lvim-tech/lvim-ui) and [lvim-picker](https://github.com/lvim-tech/lvim-picker) (which pulls
-[lvim-fuzzy](https://github.com/lvim-tech/lvim-fuzzy)).
+[lvim-ui](https://github.com/lvim-tech/lvim-ui) and [lvim-picker](https://github.com/lvim-tech/lvim-fuzzy-picker) (which pulls
+[lvim-fuzzy](https://github.com/lvim-tech/lvim-fuzzy-nvim)).
 
 ### lvim-installer (recommended)
 
@@ -31,8 +31,8 @@ vim.pack.add({
     { src = "https://github.com/kkharji/sqlite.lua" },
     { src = "https://github.com/lvim-tech/lvim-utils" },
     { src = "https://github.com/lvim-tech/lvim-ui" },
-    { src = "https://github.com/lvim-tech/lvim-fuzzy" },
-    { src = "https://github.com/lvim-tech/lvim-picker" },
+    { src = "https://github.com/lvim-tech/lvim-fuzzy-nvim" },
+    { src = "https://github.com/lvim-tech/lvim-fuzzy-picker" },
     { src = "https://github.com/lvim-tech/lvim-space" },
 })
 require("lvim-space").setup({})
@@ -628,7 +628,7 @@ If `autosave = false`, persist the full state manually:
 - **[sqlite.lua](https://github.com/kkharji/sqlite.lua)** — the session persistence backend (**required**; no state can be stored without it)
 - **[lvim-utils](https://github.com/lvim-tech/lvim-utils)** — the colour palette, highlight binding and cursor hiding (**required**)
 - **[lvim-ui](https://github.com/lvim-tech/lvim-ui)** — the panel surface, the file preview and the input popup (**required**)
-- **[lvim-picker](https://github.com/lvim-tech/lvim-picker)** — the file search and the `/` filter; it pulls **[lvim-fuzzy](https://github.com/lvim-tech/lvim-fuzzy)** (**required**)
+- **[lvim-picker](https://github.com/lvim-tech/lvim-fuzzy-picker)** — the file search and the `/` filter; it pulls **[lvim-fuzzy](https://github.com/lvim-tech/lvim-fuzzy-nvim)** (**required**)
 - **NerdFont** enabled terminal (for icons)
 - **Neovim nightly with `:connect ssh://`** and an `ssh` client — only for remote (SSH) projects
 - **[fd](https://github.com/sharkdp/fd)** — the default file-search command (only needed for search; everything else works without it)
