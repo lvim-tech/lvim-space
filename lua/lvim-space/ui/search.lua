@@ -18,6 +18,25 @@ local session = require("lvim-space.core.session")
 local ui = require("lvim-space.ui")
 local picker = require("lvim-picker")
 
+--- The badge before the query: the search glyph as an IMAGE where lvim-icons shows its UI icons as images ("material"
+--- mode), on the picker's own prompt tint (an image group carries only the image id, so a group with the id and the
+--- badge's background is made); the plain glyph on the tint otherwise. Then the gap on the input tint.
+---@return table chunks
+local function search_prompt()
+    local glyph = ((config.ui or {}).icons or {}).search or "󰍉"
+    local text, img_hl = require("lvim-space.ui.rows").image_cells(glyph, "LvimUiPickerPrompt")
+    if img_hl then
+        local ig = vim.api.nvim_get_hl(0, { name = img_hl, link = false })
+        local pb = vim.api.nvim_get_hl(0, { name = "LvimUiPickerPrompt", link = false })
+        vim.api.nvim_set_hl(0, "LvimSpaceSearchBadge", { fg = ig.fg, bg = pb.bg })
+        -- space + image (2 cells) + space = 4 cells: the typed text starts where the names of the rows below do
+        -- (their space, their icon of 2 cells, a space) — so NO gap on the input tint after it
+        return { { " ", "LvimUiPickerPrompt" }, { text, "LvimSpaceSearchBadge" }, { " ", "LvimUiPickerPrompt" } }
+    end
+    -- a font glyph is one cell: the badge is 3, and one cell of the input tint makes it the same 4
+    return { { " " .. glyph .. " ", "LvimUiPickerPrompt" }, { " ", "LvimUiPickerInput" } }
+end
+
 local M = {}
 
 ---Open the selected file in the best non-plugin editor window AND add it to the active tab's buffer list,
@@ -151,6 +170,9 @@ M.init = function(opts)
     local picker_opts = {
         title = state.lang.SEARCH or "Search",
         layout = config.ui.mode,
+        -- the badge before the query: a search glyph on the picker's own prompt tint (its default pointer is not shown
+        -- by this finder), then the gap on the input tint
+        prompt = search_prompt(),
         -- ONE-SHOT: our on_confirm/on_cancel step BACK to the launching panel, so the finder MUST close on select.
         -- `area` globally sets `auto_hide = false` (a finder stays open on file-open and restarts in place) — that
         -- fights lvim-space, which reopens its panel in the same zone right after. Force `auto_hide = true` for THIS

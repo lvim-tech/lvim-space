@@ -30,6 +30,9 @@ local function build()
         -- `bold`, every other attribute falls through to the stripe underneath, so the row keeps its place in the
         -- sequence and still reads as active.
         LvimSpaceActiveRow = { bold = true },
+        -- A project row: the name and the path in their own colours (over the row's stripe)
+        LvimSpaceProjectName = { fg = c.blue, bold = true },
+        LvimSpaceProjectPath = { fg = c.yellow },
         LvimSpaceCursorLine = { bg = panel_bg, fg = main_color, bold = true },
         LvimSpaceTitle = { bg = blue_high, fg = main_color, bold = true },
         LvimSpaceInfo = { bg = panel_bg, fg = main_color, bold = true },

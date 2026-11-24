@@ -50,6 +50,8 @@ return {
             sel_odd = "LvimUiMsgAreaSelOdd",
             sel_even = "LvimUiMsgAreaSelEven",
             active = "LvimSpaceActiveRow",
+            project_name = "LvimSpaceProjectName",
+            project_path = "LvimSpaceProjectPath",
         },
     },
     -- The PREVIEW panel beside the FILES list — the file under the cursor, rendered as a READ-ONLY scratch copy

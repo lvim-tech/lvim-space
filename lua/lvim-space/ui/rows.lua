@@ -38,6 +38,8 @@ local function rowcfg()
             sel_odd = h.sel_odd or "LvimUiMsgAreaSelOdd",
             sel_even = h.sel_even or "LvimUiMsgAreaSelEven",
             active = h.active or "LvimSpaceActiveRow",
+            project_name = h.project_name or "LvimSpaceProjectName",
+            project_path = h.project_path or "LvimSpaceProjectPath",
         },
     }
 end
@@ -61,6 +63,161 @@ function M.image_cells(icon, hl, drop_blank)
     return t, h
 end
 
+-- ── project icons ─────────────────────────────────────────────────────────────────────────────────────────
+-- A project row leads with the icon of what the project IS: its main language (read from the files that name it —
+-- `Cargo.toml` is Rust — else from the files that are most of it), else the icon of its folder (by the folder's name),
+-- and an `ssh://` project with the icon of a server. All of them Material icons through the shared icon provider.
+
+--- Files that name a language, the first that is there wins; the value is a file name the provider knows the icon of.
+local LANG_MARKERS = {
+    { "Cargo.toml", "main.rs" },
+    { "go.mod", "main.go" },
+    { "deno.json", "main.ts" },
+    { "tsconfig.json", "main.ts" },
+    { "package.json", "main.js" },
+    { "pyproject.toml", "main.py" },
+    { "requirements.txt", "main.py" },
+    { "setup.py", "main.py" },
+    { "pubspec.yaml", "main.dart" },
+    { "pom.xml", "Main.java" },
+    { "build.gradle", "Main.java" },
+    { "build.gradle.kts", "Main.kt" },
+    { "composer.json", "index.php" },
+    { "Gemfile", "main.rb" },
+    { "mix.exs", "main.ex" },
+    { "build.zig", "main.zig" },
+    { "Package.swift", "main.swift" },
+    { "flake.nix", "flake.nix" },
+    { "CMakeLists.txt", "main.cpp" },
+    { "init.lua", "init.lua" },
+    { ".luarc.json", "init.lua" },
+    { "stylua.toml", "init.lua" },
+    { "lua", "init.lua" },
+}
+
+--- Extensions that count as "the language" when no marker says it (the most frequent one of the top two levels wins).
+local LANG_EXT = {
+    rs = true, go = true, ts = true, tsx = true, js = true, jsx = true, py = true, lua = true, dart = true, java = true,
+    kt = true, php = true, rb = true, ex = true, zig = true, swift = true, c = true, cpp = true, h = true, cs = true,
+    hs = true, nix = true, sh = true, vue = true, svelte = true, scala = true, clj = true, ml = true, sql = true,
+}
+
+local SKIP_DIRS = { [".git"] = true, node_modules = true, target = true, build = true, dist = true, vendor = true, [".venv"] = true }
+
+---@type table<string, { name: string, opts: table|nil }>
+local project_icon_cache = {}
+
+--- What a project's icon is made of: a file name (its language) or a folder (by name), for the provider.
+---@param path string
+---@return { name: string, opts: table|nil }
+local function project_icon_spec(path)
+    if not path or path == "" then
+        return { name = "folder", opts = { kind = "directory" } }
+    end
+    if path:match("^ssh://") then
+        return { name = "server", opts = { kind = "directory" } }
+    end
+    local hit = project_icon_cache[path]
+    if hit then
+        return hit
+    end
+    local spec
+    local uv = vim.uv or vim.loop
+    for _, m in ipairs(LANG_MARKERS) do
+        if uv.fs_stat(path .. "/" .. m[1]) then
+            spec = { name = m[2] }
+            break
+        end
+    end
+    if not spec then
+        -- no marker in the root: a folder of projects (a monorepo) — the languages of the folders under it; two or more
+        -- different ones is a mixed project, one is its language
+        local langs, n = {}, 0
+        local h = uv.fs_scandir(path)
+        while h and n < 80 do
+            local name, kind = uv.fs_scandir_next(h)
+            if not name then
+                break
+            end
+            if kind == "directory" and name:sub(1, 1) ~= "." and not SKIP_DIRS[name] then
+                n = n + 1
+                for _, m in ipairs(LANG_MARKERS) do
+                    if m[1] ~= "lua" and uv.fs_stat(path .. "/" .. name .. "/" .. m[1]) then
+                        langs[m[2]] = true
+                        break
+                    end
+                end
+            end
+        end
+        local found = vim.tbl_keys(langs)
+        if #found >= 2 then
+            spec = { name = "stack", opts = { kind = "directory" } }
+        elseif #found == 1 then
+            spec = { name = found[1] }
+        end
+    end
+    if not spec then
+        -- the language by what most of the files are (two levels, a bounded count)
+        local count, budget = {}, 400
+        local function scan(dir, depth)
+            local h = uv.fs_scandir(dir)
+            while h and budget > 0 do
+                local name, kind = uv.fs_scandir_next(h)
+                if not name then
+                    break
+                end
+                budget = budget - 1
+                if kind == "file" then
+                    local ext = name:match("%.([%w]+)$")
+                    if ext and LANG_EXT[ext] then
+                        count[ext] = (count[ext] or 0) + 1
+                    end
+                elseif kind == "directory" and depth < 2 and not SKIP_DIRS[name] and name:sub(1, 1) ~= "." then
+                    scan(dir .. "/" .. name, depth + 1)
+                end
+            end
+        end
+        scan(path, 1)
+        local best, best_n, second_n = nil, 1, 0
+        for ext, n in pairs(count) do
+            if n > best_n or (n == best_n and best and ext < best) then
+                if best then
+                    second_n = math.max(second_n, best_n)
+                end
+                best, best_n = ext, n
+            else
+                second_n = math.max(second_n, n)
+            end
+        end
+        if best and best_n >= 3 and second_n >= best_n * 0.6 then
+            -- two languages of about the same weight: a mix
+            spec = { name = "stack", opts = { kind = "directory" } }
+        elseif best then
+            spec = { name = "main." .. best }
+        end
+    end
+    -- no language: the folder, by its name (`docs`, `tests`, `src`, … have their own)
+    spec = spec or { name = path:match("([^/]+)/*$") or "folder", opts = { kind = "directory" } }
+    project_icon_cache[path] = spec
+    return spec
+end
+
+--- The row icon of a project (see above), or nil to fall back to the entity glyph.
+---@param path string|nil
+---@return string|nil glyph, string|nil hl
+local function project_icon(path)
+    local spec = project_icon_spec(path)
+    local opts = { provider = (config.ui or {}).icon_provider, color_mode = (config.ui or {}).icon_color_mode }
+    for k, v in pairs(spec.opts or {}) do
+        opts[k] = v
+    end
+    local ok, r = pcall(iconlib.get, spec.name, opts)
+    if ok and r and r.glyph and r.glyph ~= "" then
+        return r.glyph .. " ", r.hl
+    end
+    return nil
+end
+
 --- The icon for one row: a filetype DEVICON (with its own highlight) for a file, else the entity glyph.
 --- Returns the glyph plus the highlight to paint it with (nil = inherit the row's stripe colour).
 ---@param type_name string   entity type ("project" | "workspace" | "tab" | "file")
@@ -76,6 +233,24 @@ function M.icon(type_name, active, path)
         })
         if r and r.glyph and r.glyph ~= "" then
             return r.glyph .. " ", r.hl
+        end
+    end
+    -- a workspace is a desktop, a tab is a layout of windows: the Material folders of those names
+    local kind_icon = ({ workspace = "desktop", tab = "layout" })[type_name]
+    if kind_icon and rowcfg().devicons then
+        local ok, r = pcall(iconlib.get, kind_icon, {
+            provider = (config.ui or {}).icon_provider,
+            color_mode = (config.ui or {}).icon_color_mode,
+            kind = "directory",
+        })
+        if ok and r and r.glyph and r.glyph ~= "" then
+            return r.glyph .. " ", r.hl
+        end
+    end
+    if type_name == "project" and rowcfg().devicons and path and path ~= "" then
+        local g, h = project_icon(path)
+        if g then
+            return g, h
         end
     end
     local glyph = common.get_entity_icon(type_name, active, false)
@@ -104,7 +279,10 @@ function M.line(text, type_name, active, path)
     local mark_span
     if type_name == "project" then
         local mark = ((config.ui or {}).icons or {}).project_remote or ""
-        if mark ~= "" and text:sub(1, #mark) == mark then
+        if mark ~= "" and text:sub(1, #mark) == mark and path and path:match("^ssh://") and rowcfg().devicons then
+            -- the server icon leads the row now: the text mark would say it twice
+            text = text:sub(#mark + 1)
+        elseif mark ~= "" and text:sub(1, #mark) == mark then
             local cfg = rowcfg()
             local t, img_hl = M.image_cells(mark, active and cfg.hl.active or cfg.hl.odd)
             if img_hl then
@@ -119,8 +297,27 @@ function M.line(text, type_name, active, path)
     local line = " " .. glyph .. text .. " "
     -- `line_bytes` bounds the ACTIVE accent to the row's own text (see M.hls): a full-row span would take the
     -- stripe's background with it.
+    -- a project row: the name and the `[path]` after it get their own colours (the byte spans in the line)
+    local name_span, path_span
+    if type_name == "project" then
+        local at = text:find(" %[[^%[]*%]$")
+        if at then
+            local base = lead + #glyph
+            name_span = { base, base + at - 1 }
+            path_span = { base + at - 1, base + #text }
+        end
+    end
     return line,
-        { c0 = lead, c1 = lead + #glyph, hl = ghl, active = active, line_bytes = #line, mark = mark_span }
+        {
+            c0 = lead,
+            c1 = lead + #glyph,
+            hl = ghl,
+            active = active,
+            line_bytes = #line,
+            mark = mark_span,
+            name = name_span,
+            path = path_span,
+        }
 end
 
 --- The highlight ops for `n` rows, in the CHASSIS format (`{ row0, col0, col_end, group, priority }`, with
@@ -157,6 +354,12 @@ function M.hls(n, spans, sel)
         end
         if sp and sp.hl and sp.c1 > sp.c0 then
             out[#out + 1] = { i - 1, sp.c0, sp.c1, sp.hl, 220 }
+        end
+        if sp and sp.name then
+            out[#out + 1] = { i - 1, sp.name[1], sp.name[2], cfg.hl.project_name, 215 }
+        end
+        if sp and sp.path then
+            out[#out + 1] = { i - 1, sp.path[1], sp.path[2], cfg.hl.project_path, 215 }
         end
         if sp and sp.mark then
             -- an image mark inside the text (a remote project's): its own group above the stripe / accent

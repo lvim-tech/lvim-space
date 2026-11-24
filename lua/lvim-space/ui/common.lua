@@ -275,13 +275,29 @@ local function safe_get_cursor(win)
     return ok and cur[1] or 1, ok and cur[2] or 0
 end
 
+---The icon of a thing that is missing or went wrong (an empty list, an error): the Material red folder with a cross
+---through the shared provider — the one the other lvim tools show for it — plus a space; the configured
+---`icons.empty` glyph (an image in "material" mode) when the provider has none.
+---@return string icon, string|nil hl
+local function missing_icon()
+    local ok, r = pcall(require("lvim-utils.icons").get, "error", {
+        kind = "directory",
+        provider = (config.ui or {}).icon_provider,
+        color_mode = (config.ui or {}).icon_color_mode,
+    })
+    if ok and r and r.glyph and r.glyph ~= "" then
+        return r.glyph .. " ", r.hl
+    end
+    local glyph = (config.ui and config.ui.icons and config.ui.icons.empty) or "󰇘 "
+    return rows.image_cells(glyph)
+end
+
 ---Prepend the configured empty/error icon to a message string.
 ---@param message string  Human-readable error description to decorate
 ---@return string  Icon-prefixed error message
 ---@return table[]|nil spans  the icon's row span when it is an image (lvim-icons "material")
 local function format_error_message(message)
-    local error_icon = (config.ui and config.ui.icons and config.ui.icons.empty) or "󰇘 "
-    local icon, img_hl = rows.image_cells(error_icon)
+    local icon, img_hl = missing_icon()
     return icon .. message, img_hl and { { c0 = 0, c1 = #icon, hl = img_hl, active = false } } or nil
 end
 
@@ -394,7 +410,7 @@ M.init_entity_list = function(
 
     if is_list_empty then
         -- the empty icon is a UI glyph: in "material" mode its image, with a span so the image group paints it
-        local icon, img_hl = rows.image_cells(M.get_entity_icon(entity_def.name, false, true))
+        local icon, img_hl = missing_icon()
         table.insert(display_lines, icon .. (state.lang[entity_def.empty_message] or "List is empty."))
         if img_hl then
             row_spans[#display_lines] = { c0 = 0, c1 = #icon, hl = img_hl, active = false }

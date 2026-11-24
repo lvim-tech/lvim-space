@@ -138,7 +138,7 @@ M.refresh = function()
         local is_active = tostring(project_entry.id) == tostring(state.project_id)
         local display_text = format_project(project_entry)
         -- Through the ONE row renderer, like the first paint (`common.format_line`) — no second row format.
-        new_lines[i], new_spans[i] = rows.line(display_text, "project", is_active, nil)
+        new_lines[i], new_spans[i] = rows.line(display_text, "project", is_active, project_entry.path)
     end
 
     local success = pcall(function()
