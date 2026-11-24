@@ -580,6 +580,8 @@ local function open_panel(spec)
         -- WITHOUT a preview opens the block PARKED (`"hide"`): the block exists but takes no room, and the
         -- first view that has one docks it on the configured side via `state.set_preview_visible`.
         preview_side = (#blocks > 1) and (spec.preview and preview_side() or "hide") or nil,
+        -- the divider between the list and the preview is dragged with the mouse and remembered under ONE name for every view
+        split_key = "lvim-space",
         footer = { bars = { { text = spec.footer or "", hl = "LvimSpaceInfo" } } },
         -- Sector navigation is the surface chassis default: <C-j> descends (list → footer bar → … messages),
         -- <C-k> ascends (footer → list → editor), exactly like the lvim-utils picker. The list keeps these for
