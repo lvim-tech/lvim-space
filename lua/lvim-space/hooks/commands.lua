@@ -227,7 +227,8 @@ local function tab_navigate(offset)
 end
 
 ---@param tab_name string|nil
-local function tab_new(tab_name)
+---@param on_created? fun()  runs once the new tab is the current one (its layout is a single empty window)
+local function tab_new(tab_name, on_created)
     local data = get_data()
     local ws_id = state.workspace_id
     if not ws_id then
@@ -265,6 +266,9 @@ local function tab_new(tab_name)
         state.tab_active = newid
         notify.info("Created new tab: " .. tab_name)
         open_empty_window()
+        if on_created then
+            on_created()
+        end
     end)
 end
 
@@ -482,6 +486,17 @@ local COMMANDS = {
                         end
                     end)
                 end
+            elseif op == "edit" then
+                -- :LvimSpace tab edit {file}: the file in a NEW tab named after it (a file manager's "open in a tab")
+                local file = table.concat(args, " ", 2)
+                if file == "" then
+                    notify.warn("tab edit needs a file.")
+                    return
+                end
+                local name = vim.fn.fnamemodify(vim.fn.expand((file:gsub("\\ ", " "))), ":t")
+                tab_new(name, function()
+                    vim.cmd("edit " .. file)
+                end)
             elseif op == "close" then
                 tab_close(arg ~= nil and tonumber(arg) or nil)
             elseif op == "move-next" then
@@ -536,7 +551,7 @@ local COMMANDS = {
             end
         end,
         complete = function()
-            return { "next", "prev", "new", "close", "move-next", "move-prev", "goto", "rename", "info" }
+            return { "next", "prev", "new", "edit", "close", "move-next", "move-prev", "goto", "rename", "info" }
         end,
     },
 
